@@ -1,6 +1,7 @@
 name: tests
 
-on: [push, pull_request]
+on:
+  pull_request:
 
 jobs:
   docs:
@@ -50,6 +51,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python:
+          - "3.12-dev"
           - "3.11"
           - "3.10"
           - "3.9"
@@ -130,12 +132,14 @@ jobs:
         uses: docker/setup-qemu-action@v2
       - name: Build wheels
         env:
+          CIBW_BUILD_FRONTEND: build
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_BEFORE_BUILD: python scripts/fetch-vendor.py /tmp/vendor
           CIBW_BEFORE_BUILD_WINDOWS: python scripts\fetch-vendor.py C:\cibw\vendor
           CIBW_ENVIRONMENT: AIOQUIC_SKIP_TESTS=ipv6,loss CFLAGS=-I/tmp/vendor/include LDFLAGS=-L/tmp/vendor/lib
           CIBW_ENVIRONMENT_WINDOWS: AIOQUIC_SKIP_TESTS=ipv6,loss INCLUDE=C:\\cibw\\vendor\\include LIB=C:\\cibw\\vendor\\lib
-          CIBW_SKIP: cp36-* pp36-* *-musllinux*
+          CIBW_SKIP: "*-musllinux*"
+          CIBW_BUILD: cp37-*
           CIBW_TEST_COMMAND: python -m unittest discover -t {project} -s {project}/tests
           # there are no wheels for cryptography on these platforms
           CIBW_TEST_SKIP: "*-{manylinux_i686,win32} pp*"
