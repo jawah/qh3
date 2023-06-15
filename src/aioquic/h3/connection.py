@@ -3,7 +3,14 @@ import re
 from enum import Enum, IntEnum
 from typing import Dict, FrozenSet, List, Optional, Set
 
-import pylsqpack
+from .._vendor.pylsqpack import (
+    Decoder,
+    Encoder,
+    DecompressionFailed,
+    StreamBlocked,
+    DecoderStreamError,
+    EncoderStreamError,
+)
 
 from aioquic.buffer import UINT_VAR_MAX_SIZE, Buffer, BufferReadError, encode_uint_var
 from aioquic.h3.events import (
@@ -304,12 +311,12 @@ class H3Connection:
         self._is_done = False
         self._quic = quic
         self._quic_logger: Optional[QuicLoggerTrace] = quic._quic_logger
-        self._decoder = pylsqpack.Decoder(
+        self._decoder = Decoder(
             self._max_table_capacity, self._blocked_streams
         )
         self._decoder_bytes_received = 0
         self._decoder_bytes_sent = 0
-        self._encoder = pylsqpack.Encoder()
+        self._encoder = Encoder()
         self._encoder_bytes_received = 0
         self._encoder_bytes_sent = 0
         self._settings_received = False
@@ -534,7 +541,7 @@ class H3Connection:
                 decoder, headers = self._decoder.feed_header(stream_id, frame_data)
             self._decoder_bytes_sent += len(decoder)
             self._quic.send_stream_data(self._local_decoder_stream_id, decoder)
-        except pylsqpack.DecompressionFailed as exc:
+        except DecompressionFailed as exc:
             raise QpackDecompressionFailed() from exc
 
         return headers
@@ -906,7 +913,7 @@ class H3Connection:
                         stream_ended=stream.ended and buf.eof(),
                     )
                 )
-            except pylsqpack.StreamBlocked:
+            except StreamBlocked:
                 stream.blocked = True
                 stream.blocked_frame_size = len(frame_data)
                 break
@@ -1027,7 +1034,7 @@ class H3Connection:
                 consumed = buf.tell()
                 try:
                     self._encoder.feed_decoder(data)
-                except pylsqpack.DecoderStreamError as exc:
+                except DecoderStreamError as exc:
                     raise QpackDecoderStreamError() from exc
                 self._decoder_bytes_received += len(data)
             elif stream.stream_type == StreamType.QPACK_ENCODER:
@@ -1036,7 +1043,7 @@ class H3Connection:
                 consumed = buf.tell()
                 try:
                     unblocked_streams.update(self._decoder.feed_encoder(data))
-                except pylsqpack.EncoderStreamError as exc:
+                except EncoderStreamError as exc:
                     raise QpackEncoderStreamError() from exc
                 self._encoder_bytes_received += len(data)
             else:

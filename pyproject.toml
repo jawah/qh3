@@ -28,7 +28,6 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
 ]
 dependencies = [
-    "pylsqpack>=0.3.3,<0.4.0",
     "cryptography>=41.0.0,<42.0.0",
 ]
 dynamic = ["version"]
