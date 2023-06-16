@@ -2,6 +2,7 @@ name: tests
 
 on:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   docs:
@@ -73,12 +74,19 @@ jobs:
           echo "AIOQUIC_SKIP_TESTS=chacha20" >> $GITHUB_ENV
           echo "CFLAGS=-I/usr/local/opt/openssl/include" >> $GITHUB_ENV
           echo "LDFLAGS=-L/usr/local/opt/openssl/lib" >> $GITHUB_ENV
+#      - name: Install OpenSSL
+#        if: matrix.os == 'windows-latest'
+#        run: |
+#          choco install openssl --no-progress --verbose
+#          echo "INCLUDE=C:\\Progra~1\\OpenSSL-Win64\\include" >> $GITHUB_ENV
+#          echo "LIB=C:\\Progra~1\\OpenSSL-Win64\\lib" >> $GITHUB_ENV
+#        shell: bash
       - name: Install OpenSSL
         if: matrix.os == 'windows-latest'
         run: |
-          choco install openssl --no-progress
-          echo "INCLUDE=C:\Progra~1\OpenSSL-Win64\include\openssl" >> $GITHUB_ENV
-          echo "LIB=C:\Progra~1\OpenSSL-Win64\lib" >> $GITHUB_ENV
+          python scripts\fetch-vendor.py C:\cibw\vendor
+          echo "INCLUDE=C:\\cibw\\vendor\\include" >> $GITHUB_ENV
+          echo "LIB=C:\\cibw\\vendor\\lib" >> $GITHUB_ENV
         shell: bash
       - name: Run tests
         run: |
@@ -170,7 +178,7 @@ jobs:
           name: dist
           path: dist/
       - name: Publish to PyPI
-        if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/')
+        if: startsWith(github.event.ref, 'refs/tags/')
         uses: pypa/gh-action-pypi-publish@master
         with:
           user: __token__
