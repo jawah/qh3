@@ -6,7 +6,7 @@ import setuptools
 
 include_dirs = [
     os.path.join("vendor", "ls-qpack"),
-    os.path.join("vendor", "ls-qpack", "xxhash"),
+    os.path.join("vendor", "ls-qpack", "deps", "xxhash"),
 ]
 
 if sys.platform == "win32":
