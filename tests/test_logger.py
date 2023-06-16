@@ -3,7 +3,7 @@ import os
 import tempfile
 from unittest import TestCase
 
-from aioquic.quic.logger import QuicFileLogger, QuicLogger
+from qh3.quic.logger import QuicFileLogger, QuicLogger
 
 SINGLE_TRACE = {
     "qlog_format": "JSON",
@@ -14,7 +14,7 @@ SINGLE_TRACE = {
                 "ODCID": "0000000000000000",
             },
             "events": [],
-            "vantage_point": {"name": "aioquic", "type": "client"},
+            "vantage_point": {"name": "qh3", "type": "client"},
         }
     ],
 }

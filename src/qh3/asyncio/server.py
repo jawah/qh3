@@ -177,15 +177,15 @@ async def serve(
     """
     Start a QUIC server at the given `host` and `port`.
 
-    :func:`serve` requires a :class:`~aioquic.quic.configuration.QuicConfiguration`
+    :func:`serve` requires a :class:`~qh3.quic.configuration.QuicConfiguration`
     containing TLS certificate and private key as the ``configuration`` argument.
 
     :func:`serve` also accepts the following optional arguments:
 
     * ``create_protocol`` allows customizing the :class:`~asyncio.Protocol` that
       manages the connection. It should be a callable or class accepting the same
-      arguments as :class:`~aioquic.asyncio.QuicConnectionProtocol` and returning
-      an instance of :class:`~aioquic.asyncio.QuicConnectionProtocol` or a subclass.
+      arguments as :class:`~qh3.asyncio.QuicConnectionProtocol` and returning
+      an instance of :class:`~qh3.asyncio.QuicConnectionProtocol` or a subclass.
     * ``session_ticket_fetcher`` is a callback which is invoked by the TLS
       engine when a session ticket is presented by the peer. It should return
       the session ticket with the specified ID or `None` if it is not found.

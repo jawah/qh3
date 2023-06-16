@@ -4,7 +4,7 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 
-#define MODULE_NAME "aioquic._crypto"
+#define MODULE_NAME "qh3._crypto"
 
 #define AEAD_KEY_LENGTH_MAX 32
 #define AEAD_NONCE_LENGTH 12

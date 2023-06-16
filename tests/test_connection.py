@@ -5,11 +5,11 @@ import time
 from typing import List, Tuple
 from unittest import TestCase, skipIf
 
-from aioquic import tls
-from aioquic.buffer import UINT_VAR_MAX, Buffer, encode_uint_var
-from aioquic.quic import events
-from aioquic.quic.configuration import QuicConfiguration
-from aioquic.quic.connection import (
+from qh3 import tls
+from qh3.buffer import UINT_VAR_MAX, Buffer, encode_uint_var
+from qh3.quic import events
+from qh3.quic.configuration import QuicConfiguration
+from qh3.quic.connection import (
     STREAM_COUNT_MAX,
     NetworkAddress,
     QuicConnection,
@@ -17,9 +17,9 @@ from aioquic.quic.connection import (
     QuicNetworkPath,
     QuicReceiveContext,
 )
-from aioquic.quic.crypto import CryptoPair
-from aioquic.quic.logger import QuicLogger
-from aioquic.quic.packet import (
+from qh3.quic.crypto import CryptoPair
+from qh3.quic.logger import QuicLogger
+from qh3.quic.packet import (
     PACKET_TYPE_INITIAL,
     QuicErrorCode,
     QuicFrameType,
@@ -29,8 +29,8 @@ from aioquic.quic.packet import (
     encode_quic_version_negotiation,
     push_quic_transport_parameters,
 )
-from aioquic.quic.packet_builder import QuicDeliveryState, QuicPacketBuilder
-from aioquic.quic.recovery import QuicPacketPacer
+from qh3.quic.packet_builder import QuicDeliveryState, QuicPacketBuilder
+from qh3.quic.recovery import QuicPacketPacer
 
 from .utils import (
     SERVER_CACERTFILE,

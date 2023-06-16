@@ -1,6 +1,6 @@
 from unittest import TestCase
 
-from aioquic.buffer import Buffer, BufferReadError, BufferWriteError, size_uint_var
+from qh3.buffer import Buffer, BufferReadError, BufferWriteError, size_uint_var
 
 
 class BufferTest(TestCase):

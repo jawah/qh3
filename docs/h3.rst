@@ -8,7 +8,7 @@ the concurrency model you are using.
 Connection
 ----------
 
-.. automodule:: aioquic.h3.connection
+.. automodule:: qh3.h3.connection
 
     .. autoclass:: H3Connection
         :members:
@@ -17,7 +17,7 @@ Connection
 Events
 ------
 
-.. automodule:: aioquic.h3.events
+.. automodule:: qh3.h3.events
 
     .. autoclass:: H3Event
         :members:
@@ -41,7 +41,7 @@ Events
 Exceptions
 ----------
 
-.. automodule:: aioquic.h3.exceptions
+.. automodule:: qh3.h3.exceptions
 
     .. autoclass:: H3Error
         :members:

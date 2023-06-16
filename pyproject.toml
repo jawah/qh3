@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aioquic"
+name = "qh3"
 description = "An implementation of QUIC and HTTP/3"
 readme = "README.rst"
 requires-python = ">=3.7"
@@ -11,8 +11,11 @@ license = { text = "BSD-3-Clause" }
 authors = [
     { name = "Jeremy Lainé", email = "jeremy.laine@m4x.org" },
 ]
+maintainers = [
+  {name = "Ahmed R. TAHRI", email="ahmed.tahri@cloudnursery.dev"},
+]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Web Environment",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: BSD License",
@@ -38,11 +41,11 @@ dev = [
 ]
 
 [project.urls]
-homepage = "https://github.com/aiortc/aioquic"
+homepage = "https://github.com/Ousret/qh3"
 documentation = "https://aioquic.readthedocs.io/"
 
 [tool.coverage.run]
-source = ["aioquic"]
+source = ["qh3"]
 
 [tool.mypy]
 disallow_untyped_calls = true
@@ -61,4 +64,4 @@ select = [
 ]
 
 [tool.setuptools.dynamic]
-version = {attr = "aioquic.__version__"}
+version = {attr = "qh3.__version__"}

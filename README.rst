@@ -1,5 +1,5 @@
-aioquic
-=======
+qh3
+===
 
 |rtd| |pypi-v| |pypi-pyversions| |pypi-l| |tests| |codecov| |black|
 
@@ -24,8 +24,15 @@ aioquic
 .. |black| image:: https://img.shields.io/badge/code%20style-black-000000.svg
     :target: https://github.com/python/black
 
-What is ``aioquic``?
---------------------
+What is ``qh3``?
+----------------
+
+``qh3`` is a fork of the awesome ``aioquic`` library pending its author return.
+Important changes / improvements are:
+- Made abi3 compatible, no need to build the wheel all over again on each interpreter version.
+- Only one dependency left! Cryptography will remain as long as Python does not ship with proper QUIC implementation.
+- Mitigated deprecated match_hostname.
+- Mimic load_default_certs ssl context.
 
 ``aioquic`` is a library for the QUIC network protocol in Python. It features
 a minimal TLS 1.3 implementation, a QUIC stack and an HTTP/3 stack.

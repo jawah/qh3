@@ -40,26 +40,26 @@ class bdist_wheel_abi3(bdist_wheel):
 setuptools.setup(
     ext_modules=[
         setuptools.Extension(
-            "aioquic._buffer",
+            "qh3._buffer",
             extra_compile_args=extra_compile_args,
-            sources=["src/aioquic/_buffer.c"],
+            sources=["src/qh3/_buffer.c"],
             define_macros=[("Py_LIMITED_API", "0x03070000")],
             py_limited_api=True,
         ),
         setuptools.Extension(
-            "aioquic._crypto",
+            "qh3._crypto",
             extra_compile_args=extra_compile_args,
             libraries=libraries,
-            sources=["src/aioquic/_crypto.c"],
+            sources=["src/qh3/_crypto.c"],
             define_macros=[("Py_LIMITED_API", "0x03070000")],
             py_limited_api=True,
         ),
         setuptools.Extension(
-            "aioquic._vendor.pylsqpack._binding",
+            "qh3._vendor.pylsqpack._binding",
             extra_compile_args=extra_compile_args,
             include_dirs=include_dirs,
             sources=[
-                "src/aioquic/_vendor/pylsqpack/binding.c",
+                "src/qh3/_vendor/pylsqpack/binding.c",
                 "vendor/ls-qpack/lsqpack.c",
                 "vendor/ls-qpack/deps/xxhash/xxhash.c",
             ],

@@ -1,8 +1,8 @@
 from unittest import TestCase
 
-from aioquic.h0.connection import H0_ALPN, H0Connection
-from aioquic.h3.events import DataReceived, HeadersReceived
-from aioquic.quic.events import StreamDataReceived
+from qh3.h0.connection import H0_ALPN, H0Connection
+from qh3.h3.events import DataReceived, HeadersReceived
+from qh3.quic.events import StreamDataReceived
 
 from .test_connection import client_and_server, transfer
 
