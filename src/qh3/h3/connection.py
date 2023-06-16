@@ -3,7 +3,18 @@ import re
 from enum import Enum, IntEnum
 from typing import Dict, FrozenSet, List, Optional, Set
 
+from .._vendor.pylsqpack import (
+    Decoder,
+    DecoderStreamError,
+    DecompressionFailed,
+    Encoder,
+    EncoderStreamError,
+    StreamBlocked,
+)
 from ..buffer import UINT_VAR_MAX_SIZE, Buffer, BufferReadError, encode_uint_var
+from ..quic.connection import QuicConnection, stream_is_unidirectional
+from ..quic.events import DatagramFrameReceived, QuicEvent, StreamDataReceived
+from ..quic.logger import QuicLoggerTrace
 from .events import (
     DatagramReceived,
     DataReceived,
@@ -14,18 +25,6 @@ from .events import (
     WebTransportStreamDataReceived,
 )
 from .exceptions import NoAvailablePushIDError
-from ..quic.connection import QuicConnection, stream_is_unidirectional
-from ..quic.events import DatagramFrameReceived, QuicEvent, StreamDataReceived
-from ..quic.logger import QuicLoggerTrace
-
-from .._vendor.pylsqpack import (
-    Decoder,
-    DecoderStreamError,
-    DecompressionFailed,
-    Encoder,
-    EncoderStreamError,
-    StreamBlocked,
-)
 
 logger = logging.getLogger("http3")
 
