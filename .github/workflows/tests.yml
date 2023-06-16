@@ -84,7 +84,7 @@ jobs:
       - name: Install OpenSSL
         if: matrix.os == 'windows-latest'
         run: |
-          python scripts\fetch-vendor.py C:\cibw\vendor
+          python scripts\\fetch-vendor.py C:\\cibw\\vendor
           echo "INCLUDE=C:\\cibw\\vendor\\include" >> $GITHUB_ENV
           echo "LIB=C:\\cibw\\vendor\\lib" >> $GITHUB_ENV
         shell: bash
