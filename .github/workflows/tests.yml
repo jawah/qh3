@@ -59,6 +59,8 @@ jobs:
           - "3.7"
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: 'true'
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python }}
@@ -91,6 +93,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: 'true'
       - uses: actions/setup-python@v4
         with:
           python-version: 3.7
@@ -124,6 +128,8 @@ jobs:
             arch: x86
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: 'true'
       - uses: actions/setup-python@v4
         with:
           python-version: 3.7
