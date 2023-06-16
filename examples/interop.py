@@ -14,13 +14,13 @@ from enum import Flag
 from typing import Optional, cast
 
 import httpx
+from http3_client import HttpClient
 from qh3.asyncio import connect
 from qh3.h0.connection import H0_ALPN
 from qh3.h3.connection import H3_ALPN, H3Connection
 from qh3.h3.events import DataReceived, HeadersReceived, PushPromiseReceived
 from qh3.quic.configuration import QuicConfiguration
 from qh3.quic.logger import QuicFileLogger, QuicLogger
-from http3_client import HttpClient
 
 
 class Result(Flag):

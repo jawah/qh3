@@ -8,7 +8,7 @@ the concurrency model you are using.
 Connection
 ----------
 
-.. automodule:: aioquic.quic.connection
+.. automodule:: qh3.quic.connection
 
     .. autoclass:: QuicConnection
         :members:
@@ -17,12 +17,12 @@ Connection
 Configuration
 -------------
 
-.. automodule:: aioquic.quic.configuration
+.. automodule:: qh3.quic.configuration
 
     .. autoclass:: QuicConfiguration
         :members:
 
-.. automodule:: aioquic.quic.logger
+.. automodule:: qh3.quic.logger
 
     .. autoclass:: QuicLogger
         :members:
@@ -30,7 +30,7 @@ Configuration
 Events
 ------
 
-.. automodule:: aioquic.quic.events
+.. automodule:: qh3.quic.events
 
     .. autoclass:: QuicEvent
         :members:

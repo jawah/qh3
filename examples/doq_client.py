@@ -6,12 +6,12 @@ import ssl
 import struct
 from typing import Optional, cast
 
+from dnslib.dns import QTYPE, DNSHeader, DNSQuestion, DNSRecord
 from qh3.asyncio.client import connect
 from qh3.asyncio.protocol import QuicConnectionProtocol
 from qh3.quic.configuration import QuicConfiguration
 from qh3.quic.events import QuicEvent, StreamDataReceived
 from qh3.quic.logger import QuicFileLogger
-from dnslib.dns import QTYPE, DNSHeader, DNSQuestion, DNSRecord
 
 logger = logging.getLogger("client")
 

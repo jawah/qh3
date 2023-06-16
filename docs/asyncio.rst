@@ -13,7 +13,7 @@ The examples can be browsed on GitHub:
 
 https://github.com/aiortc/aioquic/tree/main/examples
 
-.. automodule:: aioquic.asyncio
+.. automodule:: qh3.asyncio
 
 Client
 ------

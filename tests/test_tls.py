@@ -4,6 +4,9 @@ import ssl
 from unittest import TestCase
 from unittest.mock import patch
 
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from qh3 import tls
 from qh3.buffer import Buffer, BufferReadError
 from qh3.quic.configuration import QuicConfiguration
@@ -35,9 +38,6 @@ from qh3.tls import (
     push_server_hello,
     verify_certificate,
 )
-from cryptography.exceptions import UnsupportedAlgorithm
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
 
 from .utils import (
     SERVER_CACERTFILE,
