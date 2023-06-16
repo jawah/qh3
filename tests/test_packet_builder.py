@@ -1,19 +1,19 @@
 from unittest import TestCase
 
-from aioquic.quic.crypto import CryptoPair
-from aioquic.quic.packet import (
+from qh3.quic.crypto import CryptoPair
+from qh3.quic.packet import (
     PACKET_TYPE_HANDSHAKE,
     PACKET_TYPE_INITIAL,
     PACKET_TYPE_ONE_RTT,
     QuicFrameType,
     QuicProtocolVersion,
 )
-from aioquic.quic.packet_builder import (
+from qh3.quic.packet_builder import (
     QuicPacketBuilder,
     QuicPacketBuilderStop,
     QuicSentPacket,
 )
-from aioquic.tls import Epoch
+from qh3.tls import Epoch
 
 
 def create_builder(is_client=False):

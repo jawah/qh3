@@ -1,15 +1,15 @@
 import binascii
 from unittest import TestCase, skipIf
 
-from aioquic.buffer import Buffer
-from aioquic.quic.crypto import (
+from qh3.buffer import Buffer
+from qh3.quic.crypto import (
     INITIAL_CIPHER_SUITE,
     CryptoError,
     CryptoPair,
     derive_key_iv_hp,
 )
-from aioquic.quic.packet import PACKET_FIXED_BIT, QuicProtocolVersion
-from aioquic.tls import CipherSuite
+from qh3.quic.packet import PACKET_FIXED_BIT, QuicProtocolVersion
+from qh3.tls import CipherSuite
 
 from .utils import SKIP_TESTS
 

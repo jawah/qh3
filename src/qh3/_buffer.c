@@ -3,7 +3,7 @@
 #include <Python.h>
 #include <stdint.h>
 
-#define MODULE_NAME "aioquic._buffer"
+#define MODULE_NAME "qh3._buffer"
 
 // https://foss.heptapod.net/pypy/pypy/-/issues/3770
 #ifndef Py_None

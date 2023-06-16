@@ -6,11 +6,11 @@ import ssl
 import struct
 from typing import Optional, cast
 
-from aioquic.asyncio.client import connect
-from aioquic.asyncio.protocol import QuicConnectionProtocol
-from aioquic.quic.configuration import QuicConfiguration
-from aioquic.quic.events import QuicEvent, StreamDataReceived
-from aioquic.quic.logger import QuicFileLogger
+from qh3.asyncio.client import connect
+from qh3.asyncio.protocol import QuicConnectionProtocol
+from qh3.quic.configuration import QuicConfiguration
+from qh3.quic.events import QuicEvent, StreamDataReceived
+from qh3.quic.logger import QuicFileLogger
 from dnslib.dns import QTYPE, DNSHeader, DNSQuestion, DNSRecord
 
 logger = logging.getLogger("client")

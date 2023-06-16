@@ -3,8 +3,8 @@ import re
 from enum import Enum, IntEnum
 from typing import Dict, FrozenSet, List, Optional, Set
 
-from aioquic.buffer import UINT_VAR_MAX_SIZE, Buffer, BufferReadError, encode_uint_var
-from aioquic.h3.events import (
+from ..buffer import UINT_VAR_MAX_SIZE, Buffer, BufferReadError, encode_uint_var
+from .events import (
     DatagramReceived,
     DataReceived,
     H3Event,
@@ -13,10 +13,10 @@ from aioquic.h3.events import (
     PushPromiseReceived,
     WebTransportStreamDataReceived,
 )
-from aioquic.h3.exceptions import NoAvailablePushIDError
-from aioquic.quic.connection import QuicConnection, stream_is_unidirectional
-from aioquic.quic.events import DatagramFrameReceived, QuicEvent, StreamDataReceived
-from aioquic.quic.logger import QuicLoggerTrace
+from .exceptions import NoAvailablePushIDError
+from ..quic.connection import QuicConnection, stream_is_unidirectional
+from ..quic.events import DatagramFrameReceived, QuicEvent, StreamDataReceived
+from ..quic.logger import QuicLoggerTrace
 
 from .._vendor.pylsqpack import (
     Decoder,
@@ -298,7 +298,7 @@ class H3Connection:
     """
     A low-level HTTP/3 connection object.
 
-    :param quic: A :class:`~aioquic.connection.QuicConnection` instance.
+    :param quic: A :class:`~qh3.connection.QuicConnection` instance.
     """
 
     def __init__(self, quic: QuicConnection, enable_webtransport: bool = False) -> None:
@@ -433,7 +433,7 @@ class H3Connection:
         Send data on the given stream.
 
         To retrieve datagram which need to be sent over the network call the QUIC
-        connection's :meth:`~aioquic.connection.QuicConnection.datagrams_to_send`
+        connection's :meth:`~qh3.connection.QuicConnection.datagrams_to_send`
         method.
 
         :param stream_id: The stream ID on which to send the data.
@@ -466,7 +466,7 @@ class H3Connection:
         Send headers on the given stream.
 
         To retrieve datagram which need to be sent over the network call the QUIC
-        connection's :meth:`~aioquic.connection.QuicConnection.datagrams_to_send`
+        connection's :meth:`~qh3.connection.QuicConnection.datagrams_to_send`
         method.
 
         :param stream_id: The stream ID on which to send the headers.

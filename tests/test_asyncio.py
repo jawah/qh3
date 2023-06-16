@@ -6,11 +6,11 @@ import socket
 from unittest import TestCase, skipIf
 from unittest.mock import patch
 
-from aioquic.asyncio.client import connect
-from aioquic.asyncio.protocol import QuicConnectionProtocol
-from aioquic.asyncio.server import serve
-from aioquic.quic.configuration import QuicConfiguration
-from aioquic.quic.logger import QuicLogger
+from qh3.asyncio.client import connect
+from qh3.asyncio.protocol import QuicConnectionProtocol
+from qh3.asyncio.server import serve
+from qh3.quic.configuration import QuicConfiguration
+from qh3.quic.logger import QuicLogger
 from cryptography.hazmat.primitives import serialization
 
 from .utils import (
@@ -295,7 +295,7 @@ class HighLevelTest(TestCase):
             with self.assertRaises(ConnectionError):
                 await self.run_client(port=server_port)
 
-    @patch("aioquic.quic.retry.QuicRetryTokenHandler.validate_token")
+    @patch("qh3.quic.retry.QuicRetryTokenHandler.validate_token")
     @asynctest
     async def test_connect_and_serve_with_retry_bad_token(self, mock_validate):
         mock_validate.side_effect = ValueError("Decryption failed.")

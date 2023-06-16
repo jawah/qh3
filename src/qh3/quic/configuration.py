@@ -53,7 +53,7 @@ class QuicConfiguration:
 
     quic_logger: Optional[QuicLogger] = None
     """
-    The :class:`~aioquic.quic.logger.QuicLogger` instance to log events to.
+    The :class:`~qh3.quic.logger.QuicLogger` instance to log events to.
     """
 
     secrets_log_file: TextIO = None

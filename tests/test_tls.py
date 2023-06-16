@@ -4,10 +4,10 @@ import ssl
 from unittest import TestCase
 from unittest.mock import patch
 
-from aioquic import tls
-from aioquic.buffer import Buffer, BufferReadError
-from aioquic.quic.configuration import QuicConfiguration
-from aioquic.tls import (
+from qh3 import tls
+from qh3.buffer import Buffer, BufferReadError
+from qh3.quic.configuration import QuicConfiguration
+from qh3.tls import (
     Certificate,
     CertificateVerify,
     ClientHello,
@@ -1276,7 +1276,7 @@ class VerifyCertificateTest(TestCase):
         with open(SERVER_CERTFILE, "rb") as fp:
             certificate = load_pem_x509_certificates(fp.read())[0]
 
-        with patch("aioquic.tls.utcnow") as mock_utcnow:
+        with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = certificate.not_valid_before
 
             # fail
@@ -1298,7 +1298,7 @@ class VerifyCertificateTest(TestCase):
             common_name="localhost", curve=ec.SECP256R1
         )
 
-        with patch("aioquic.tls.utcnow") as mock_utcnow:
+        with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = certificate.not_valid_before
 
             # fail
@@ -1326,7 +1326,7 @@ class VerifyCertificateTest(TestCase):
         cadata = certificate.public_bytes(serialization.Encoding.PEM)
 
         #  too early
-        with patch("aioquic.tls.utcnow") as mock_utcnow:
+        with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = (
                 certificate.not_valid_before - datetime.timedelta(seconds=1)
             )
@@ -1337,20 +1337,20 @@ class VerifyCertificateTest(TestCase):
             self.assertEqual(str(cm.exception), "Certificate is not valid yet")
 
         # valid
-        with patch("aioquic.tls.utcnow") as mock_utcnow:
+        with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = certificate.not_valid_before
             verify_certificate(
                 cadata=cadata, certificate=certificate, server_name="example.com"
             )
 
-        with patch("aioquic.tls.utcnow") as mock_utcnow:
+        with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = certificate.not_valid_after
             verify_certificate(
                 cadata=cadata, certificate=certificate, server_name="example.com"
             )
 
         # too late
-        with patch("aioquic.tls.utcnow") as mock_utcnow:
+        with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = certificate.not_valid_after + datetime.timedelta(
                 seconds=1
             )
@@ -1366,7 +1366,7 @@ class VerifyCertificateTest(TestCase):
         )
         cadata = certificate.public_bytes(serialization.Encoding.PEM)
 
-        with patch("aioquic.tls.utcnow") as mock_utcnow:
+        with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = certificate.not_valid_before
 
             # valid
@@ -1402,7 +1402,7 @@ class VerifyCertificateTest(TestCase):
         )
         cadata = certificate.public_bytes(serialization.Encoding.PEM)
 
-        with patch("aioquic.tls.utcnow") as mock_utcnow:
+        with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = certificate.not_valid_before
 
             # valid

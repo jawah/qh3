@@ -3,8 +3,8 @@ import contextlib
 import copy
 from unittest import TestCase
 
-from aioquic.buffer import Buffer, encode_uint_var
-from aioquic.h3.connection import (
+from qh3.buffer import Buffer, encode_uint_var
+from qh3.h3.connection import (
     H3_ALPN,
     ErrorCode,
     FrameType,
@@ -22,11 +22,11 @@ from aioquic.h3.connection import (
     validate_response_headers,
     validate_trailers,
 )
-from aioquic.h3.events import DataReceived, HeadersReceived, PushPromiseReceived
-from aioquic.h3.exceptions import NoAvailablePushIDError
-from aioquic.quic.configuration import QuicConfiguration
-from aioquic.quic.events import StreamDataReceived
-from aioquic.quic.logger import QuicLogger
+from qh3.h3.events import DataReceived, HeadersReceived, PushPromiseReceived
+from qh3.h3.exceptions import NoAvailablePushIDError
+from qh3.quic.configuration import QuicConfiguration
+from qh3.quic.events import StreamDataReceived
+from qh3.quic.logger import QuicLogger
 
 from .test_connection import client_and_server, transfer
 

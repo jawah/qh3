@@ -1,11 +1,11 @@
 import math
 from unittest import TestCase
 
-from aioquic import tls
-from aioquic.quic.packet import PACKET_TYPE_INITIAL, PACKET_TYPE_ONE_RTT
-from aioquic.quic.packet_builder import QuicSentPacket
-from aioquic.quic.rangeset import RangeSet
-from aioquic.quic.recovery import (
+from qh3 import tls
+from qh3.quic.packet import PACKET_TYPE_INITIAL, PACKET_TYPE_ONE_RTT
+from qh3.quic.packet_builder import QuicSentPacket
+from qh3.quic.rangeset import RangeSet
+from qh3.quic.recovery import (
     QuicPacketPacer,
     QuicPacketRecovery,
     QuicPacketSpace,

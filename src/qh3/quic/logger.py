@@ -49,7 +49,7 @@ class QuicLoggerTrace:
         self._odcid = odcid
         self._events: Deque[Dict[str, Any]] = deque()
         self._vantage_point = {
-            "name": "aioquic",
+            "name": "qh3",
             "type": "client" if is_client else "server",
         }
 
