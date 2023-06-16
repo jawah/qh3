@@ -2,4 +2,4 @@ include LICENSE
 recursive-include docs *.py *.rst Makefile
 recursive-include examples *.css *.html *.py *.txt
 recursive-include tests *.bin *.pem *.py
-recursive-include vendor
+recursive-include vendor *
