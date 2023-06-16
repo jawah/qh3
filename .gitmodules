@@ -1,0 +1,3 @@
+[submodule "vendor/ls-qpack"]
+	path = vendor/ls-qpack
+	url = https://github.com/litespeedtech/ls-qpack.git

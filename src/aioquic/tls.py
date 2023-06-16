@@ -44,8 +44,9 @@ from cryptography.hazmat.primitives.asymmetric import (
 )
 from cryptography.hazmat.primitives.kdf.hkdf import HKDFExpand
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from OpenSSL import crypto
 
+from ._vendor.OpenSSL import X509, X509Store, X509StoreContext, X509StoreContextError
+from ._vendor.OpenSSL import Error as CryptoError
 from .buffer import Buffer
 
 # candidates based on https://github.com/tiran/certifi-system-store by Christian Heimes
@@ -231,7 +232,7 @@ def _capath_contains_certs(capath: str) -> bool:
 
 def _dnsname_match(
     dn: Any, hostname: str, max_wildcards: int = 1
-) -> Match[str] | None | bool:
+) -> Optional[Union[Match[str], bool]]:
     """Matching according to RFC 6125, section 6.4.3
 
     http://tools.ietf.org/html/rfc6125#section-6.4.3
@@ -286,7 +287,7 @@ def _dnsname_match(
 
 
 def _ipaddress_match(
-    ipname: str, host_ip: ipaddress.IPv4Address | ipaddress.IPv6Address
+    ipname: str, host_ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 ) -> bool:
     """Exact matching of IP addresses.
 
@@ -303,8 +304,8 @@ def _ipaddress_match(
 
 
 def match_hostname(
-    subject: tuple[tuple[tuple[str, str], ...], ...],
-    subject_alt_name: tuple[tuple[str, str], ...],
+    subject: Tuple[Tuple[Tuple[str, str], ...], ...],
+    subject_alt_name: Tuple[Tuple[str, str], ...],
     hostname: str,
     hostname_checks_common_name: bool = False,
 ) -> None:
@@ -331,7 +332,7 @@ def match_hostname(
         # Not an IP address (common case)
         host_ip = None
     dnsnames = []
-    san: tuple[tuple[str, str], ...] = subject_alt_name
+    san: Tuple[Tuple[str, str], ...] = subject_alt_name
     key: str
     value: str
     for key, value in san:
@@ -409,7 +410,7 @@ def verify_certificate(
             raise AlertBadCertificate("\n".join(exc.args)) from exc
 
     # load CAs
-    store = crypto.X509Store()
+    store = X509Store()
 
     # you'll have to install certifi yourself to get moz root CAs
     # automatically injected
@@ -418,7 +419,7 @@ def verify_certificate(
 
     if cadata is not None:
         for cert in load_pem_x509_certificates(cadata):
-            store.add_cert(crypto.X509.from_cryptography(cert))
+            store.add_cert(X509.from_cryptography(cert))
 
     if cafile is not None or capath is not None:
         store.load_locations(cafile, capath)
@@ -434,9 +435,11 @@ def verify_certificate(
         ):
             try:
                 store.load_locations(defaults.cafile)
-            except crypto.Error:
+            except CryptoError:
                 pass
         else:
+            # that part is optional, let's say nice to have.
+            # failure are skipped silently.
             if hasattr(ssl, "enum_certificates"):
                 for storename in (
                     "CA",
@@ -450,10 +453,8 @@ def verify_certificate(
                             if encoding == "x509_asn":
                                 if trust is True:
                                     for _cert in load_pem_x509_certificates(cacert_raw):
-                                        store.add_cert(
-                                            crypto.X509.from_cryptography(_cert)
-                                        )
-                    except PermissionError:
+                                        store.add_cert(X509.from_cryptography(_cert))
+                    except (PermissionError, ValueError):
                         pass
             else:
                 # Let's search other common locations instead.
@@ -463,14 +464,14 @@ def verify_certificate(
                         break
 
     # verify certificate chain
-    store_ctx = crypto.X509StoreContext(
+    store_ctx = X509StoreContext(
         store,
-        crypto.X509.from_cryptography(certificate),
-        [crypto.X509.from_cryptography(cert) for cert in chain],
+        X509.from_cryptography(certificate),
+        [X509.from_cryptography(cert) for cert in chain],
     )
     try:
         store_ctx.verify_certificate()
-    except crypto.X509StoreContextError as exc:
+    except X509StoreContextError as exc:
         raise AlertBadCertificate(exc.args[0])
 
 
