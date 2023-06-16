@@ -3,15 +3,6 @@ import re
 from enum import Enum, IntEnum
 from typing import Dict, FrozenSet, List, Optional, Set
 
-from .._vendor.pylsqpack import (
-    Decoder,
-    Encoder,
-    DecompressionFailed,
-    StreamBlocked,
-    DecoderStreamError,
-    EncoderStreamError,
-)
-
 from aioquic.buffer import UINT_VAR_MAX_SIZE, Buffer, BufferReadError, encode_uint_var
 from aioquic.h3.events import (
     DatagramReceived,
@@ -26,6 +17,15 @@ from aioquic.h3.exceptions import NoAvailablePushIDError
 from aioquic.quic.connection import QuicConnection, stream_is_unidirectional
 from aioquic.quic.events import DatagramFrameReceived, QuicEvent, StreamDataReceived
 from aioquic.quic.logger import QuicLoggerTrace
+
+from .._vendor.pylsqpack import (
+    Decoder,
+    DecoderStreamError,
+    DecompressionFailed,
+    Encoder,
+    EncoderStreamError,
+    StreamBlocked,
+)
 
 logger = logging.getLogger("http3")
 
@@ -311,9 +311,7 @@ class H3Connection:
         self._is_done = False
         self._quic = quic
         self._quic_logger: Optional[QuicLoggerTrace] = quic._quic_logger
-        self._decoder = Decoder(
-            self._max_table_capacity, self._blocked_streams
-        )
+        self._decoder = Decoder(self._max_table_capacity, self._blocked_streams)
         self._decoder_bytes_received = 0
         self._decoder_bytes_sent = 0
         self._encoder = Encoder()
