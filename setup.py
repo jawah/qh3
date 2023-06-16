@@ -63,6 +63,8 @@ setuptools.setup(
                 "vendor/ls-qpack/lsqpack.c",
                 "vendor/ls-qpack/deps/xxhash/xxhash.c",
             ],
+            define_macros=[("Py_LIMITED_API", "0x03070000")],
+            py_limited_api=True,
         ),
     ],
     cmdclass={"bdist_wheel": bdist_wheel_abi3},
