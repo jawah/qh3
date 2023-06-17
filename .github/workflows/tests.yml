@@ -157,7 +157,6 @@ jobs:
           CIBW_BEFORE_BUILD_WINDOWS: python scripts\fetch-vendor.py C:\cibw\vendor
           CIBW_ENVIRONMENT: AIOQUIC_SKIP_TESTS=ipv6,loss CFLAGS=-I/tmp/vendor/include LDFLAGS=-L/tmp/vendor/lib
           CIBW_ENVIRONMENT_WINDOWS: AIOQUIC_SKIP_TESTS=ipv6,loss INCLUDE=C:\\cibw\\vendor\\include LIB=C:\\cibw\\vendor\\lib
-          CIBW_SKIP: "*-musllinux*"
           CIBW_BUILD: cp39-*
           CIBW_TEST_COMMAND: python -m unittest discover -t {project} -s {project}/tests
           # there are no wheels for cryptography on these platforms
