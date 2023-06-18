@@ -26,6 +26,7 @@ Important changes/improvements are:
 - Mitigated deprecated match_hostname.
 - Mimic load_default_certs SSL context from native Python.
 - Remove the need for OpenSSL development headers.
+- Many, many more pre-built wheel for your convenience! Including PyPy 3.8 and 3.9 and musl linux distributions.
 
 ``qh3`` is a library for the QUIC network protocol in Python. It features
 a minimal TLS 1.3 implementation, a QUIC stack and an HTTP/3 stack.

@@ -67,3 +67,11 @@ select = [
 
 [tool.setuptools.dynamic]
 version = {attr = "qh3.__version__"}
+
+# neat trick to add bsd compat headers only in musllinux images
+[tool.cibuildwheel.linux]
+before-all = "echo"
+
+[[tool.cibuildwheel.overrides]]
+select = "*-musllinux*"
+before-all = "apk add bsd-compat-headers"
