@@ -141,7 +141,7 @@ jobs:
           CIBW_BUILD: cp39-* pp39-* pp38-*
           CIBW_TEST_COMMAND: python -m unittest discover -t {project} -s {project}/tests
           # there are no wheels for cryptography on these platforms
-          CIBW_TEST_SKIP: "*-{manylinux_i686}"
+          CIBW_TEST_SKIP: "*-{manylinux_i686,win32} pp*"
         run: |
           pip install cibuildwheel
           cibuildwheel --output-dir dist
