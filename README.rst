@@ -6,14 +6,14 @@ qh3
 .. |rtd| image:: https://readthedocs.org/projects/aioquic/badge/?version=latest
     :target: https://aioquic.readthedocs.io/
 
-.. |pypi-v| image:: https://img.shields.io/pypi/v/aioquic.svg
-    :target: https://pypi.python.org/pypi/aioquic
+.. |pypi-v| image:: https://img.shields.io/pypi/v/qh3.svg
+    :target: https://pypi.python.org/pypi/qh3
 
-.. |pypi-pyversions| image:: https://img.shields.io/pypi/pyversions/aioquic.svg
-    :target: https://pypi.python.org/pypi/aioquic
+.. |pypi-pyversions| image:: https://img.shields.io/pypi/pyversions/qh3.svg
+    :target: https://pypi.python.org/pypi/qh3
 
-.. |pypi-l| image:: https://img.shields.io/pypi/l/aioquic.svg
-    :target: https://pypi.python.org/pypi/aioquic
+.. |pypi-l| image:: https://img.shields.io/pypi/l/qh3.svg
+    :target: https://pypi.python.org/pypi/qh3
 
 .. |tests| image:: https://github.com/aiortc/aioquic/workflows/tests/badge.svg
     :target: https://github.com/aiortc/aioquic/actions
@@ -28,11 +28,12 @@ What is ``qh3``?
 ----------------
 
 ``qh3`` is a fork of the awesome ``aioquic`` library pending its author return.
-Important changes / improvements are:
+Important changes/improvements are:
+
 - Made abi3 compatible, no need to build the wheel all over again on each interpreter version.
 - Only one dependency left! Cryptography will remain as long as Python does not ship with proper QUIC implementation.
 - Mitigated deprecated match_hostname.
-- Mimic load_default_certs ssl context.
+- Mimic load_default_certs SSL context.
 
 ``aioquic`` is a library for the QUIC network protocol in Python. It features
 a minimal TLS 1.3 implementation, a QUIC stack and an HTTP/3 stack.
