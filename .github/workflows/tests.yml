@@ -75,22 +75,6 @@ jobs:
         run: |
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
           echo "AIOQUIC_SKIP_TESTS=chacha20" >> $GITHUB_ENV
-          echo "CFLAGS=-I/usr/local/opt/openssl/include" >> $GITHUB_ENV
-          echo "LDFLAGS=-L/usr/local/opt/openssl/lib" >> $GITHUB_ENV
-#      - name: Install OpenSSL
-#        if: matrix.os == 'windows-latest'
-#        run: |
-#          choco install openssl --no-progress --verbose
-#          echo "INCLUDE=C:\\Progra~1\\OpenSSL-Win64\\include" >> $GITHUB_ENV
-#          echo "LIB=C:\\Progra~1\\OpenSSL-Win64\\lib" >> $GITHUB_ENV
-#        shell: bash
-      - name: Install OpenSSL
-        if: matrix.os == 'windows-latest'
-        run: |
-          python scripts\\fetch-vendor.py C:\\cibw\\vendor
-          echo "INCLUDE=C:\\cibw\\vendor\\include" >> $GITHUB_ENV
-          echo "LIB=C:\\cibw\\vendor\\lib" >> $GITHUB_ENV
-        shell: bash
       - name: Run tests
         run: |
           python -m pip install -U pip setuptools wheel
@@ -153,12 +137,9 @@ jobs:
         env:
           CIBW_BUILD_FRONTEND: build
           CIBW_ARCHS: ${{ matrix.arch }}
-          CIBW_BEFORE_BUILD: python scripts/fetch-vendor.py /tmp/vendor
-          CIBW_BEFORE_BUILD_WINDOWS: python scripts\fetch-vendor.py C:\cibw\vendor
-          CIBW_ENVIRONMENT: AIOQUIC_SKIP_TESTS=ipv6,loss CFLAGS=-I/tmp/vendor/include LDFLAGS=-L/tmp/vendor/lib
-          CIBW_ENVIRONMENT_WINDOWS: AIOQUIC_SKIP_TESTS=ipv6,loss INCLUDE=C:\\cibw\\vendor\\include LIB=C:\\cibw\\vendor\\lib
+          CIBW_ENVIRONMENT: AIOQUIC_SKIP_TESTS=ipv6,loss
           CIBW_SKIP: "*-musllinux*"
-          CIBW_BUILD: cp39-*
+          CIBW_BUILD: cp39-* pp39-* pp38-*
           CIBW_TEST_COMMAND: python -m unittest discover -t {project} -s {project}/tests
           # there are no wheels for cryptography on these platforms
           CIBW_TEST_SKIP: "*-{manylinux_i686,win32} pp*"

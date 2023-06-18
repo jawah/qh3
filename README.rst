@@ -1,7 +1,7 @@
 qh3
 ===
 
-|rtd| |pypi-v| |pypi-pyversions| |pypi-l| |tests| |codecov| |black|
+|rtd| |pypi-v| |pypi-pyversions| |pypi-l| |codecov|
 
 .. |rtd| image:: https://readthedocs.org/projects/aioquic/badge/?version=latest
     :target: https://aioquic.readthedocs.io/
@@ -15,14 +15,8 @@ qh3
 .. |pypi-l| image:: https://img.shields.io/pypi/l/qh3.svg
     :target: https://pypi.python.org/pypi/qh3
 
-.. |tests| image:: https://github.com/aiortc/aioquic/workflows/tests/badge.svg
-    :target: https://github.com/aiortc/aioquic/actions
-
-.. |codecov| image:: https://img.shields.io/codecov/c/github/aiortc/aioquic.svg
+.. |codecov| image:: https://img.shields.io/codecov/c/github/Ousret/qh3.svg
     :target: https://codecov.io/gh/aiortc/aioquic
-
-.. |black| image:: https://img.shields.io/badge/code%20style-black-000000.svg
-    :target: https://github.com/python/black
 
 What is ``qh3``?
 ----------------
@@ -33,7 +27,8 @@ Important changes/improvements are:
 - Made abi3 compatible, no need to build the wheel all over again on each interpreter version.
 - Only one dependency left! Cryptography will remain as long as Python does not ship with proper QUIC implementation.
 - Mitigated deprecated match_hostname.
-- Mimic load_default_certs SSL context.
+- Mimic load_default_certs SSL context from native Python.
+- Remove the need for OpenSSL development headers.
 
 ``aioquic`` is a library for the QUIC network protocol in Python. It features
 a minimal TLS 1.3 implementation, a QUIC stack and an HTTP/3 stack.
@@ -71,54 +66,7 @@ Features
 Requirements
 ------------
 
-``aioquic`` requires Python 3.7 or better, and the OpenSSL development headers.
-
-Linux
-.....
-
-On Debian/Ubuntu run:
-
-.. code-block:: console
-
-   sudo apt install libssl-dev python3-dev
-
-On Alpine Linux run:
-
-.. code-block:: console
-
-   sudo apk add openssl-dev python3-dev bsd-compat-headers libffi-dev
-
-OS X
-....
-
-On OS X run:
-
-.. code-block:: console
-
-   brew install openssl
-
-You will need to set some environment variables to link against OpenSSL:
-
-.. code-block:: console
-
-   export CFLAGS=-I/usr/local/opt/openssl/include
-   export LDFLAGS=-L/usr/local/opt/openssl/lib
-
-Windows
-.......
-
-On Windows the easiest way to install OpenSSL is to use `Chocolatey`_.
-
-.. code-block:: console
-
-   choco install openssl
-
-You will need to set some environment variables to link against OpenSSL:
-
-.. code-block:: console
-
-  $Env:INCLUDE = "C:\Progra~1\OpenSSL-Win64\include"
-  $Env:LIB = "C:\Progra~1\OpenSSL-Win64\lib"
+``aioquic`` requires Python 3.7 or greater.
 
 Running the examples
 --------------------

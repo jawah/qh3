@@ -1,5 +1,6 @@
 import sys
 import os
+import platform
 from wheel.bdist_wheel import bdist_wheel
 
 import setuptools
@@ -37,22 +38,22 @@ class bdist_wheel_abi3(bdist_wheel):
         return python, abi, plat
 
 
+if platform.python_implementation() == "CPython":
+    extra_kwarg = {
+        "py_limited_api": True,
+        "define_macros": [("Py_LIMITED_API", "0x03070000")]
+    }
+else:
+    extra_kwarg = dict()
+
+
 setuptools.setup(
     ext_modules=[
         setuptools.Extension(
             "qh3._buffer",
             extra_compile_args=extra_compile_args,
             sources=["src/qh3/_buffer.c"],
-            define_macros=[("Py_LIMITED_API", "0x03070000")],
-            py_limited_api=True,
-        ),
-        setuptools.Extension(
-            "qh3._crypto",
-            extra_compile_args=extra_compile_args,
-            libraries=libraries,
-            sources=["src/qh3/_crypto.c"],
-            define_macros=[("Py_LIMITED_API", "0x03070000")],
-            py_limited_api=True,
+            **extra_kwarg
         ),
         setuptools.Extension(
             "qh3._vendor.pylsqpack._binding",
@@ -63,8 +64,7 @@ setuptools.setup(
                 "vendor/ls-qpack/lsqpack.c",
                 "vendor/ls-qpack/deps/xxhash/xxhash.c",
             ],
-            define_macros=[("Py_LIMITED_API", "0x03070000")],
-            py_limited_api=True,
+            **extra_kwarg
         ),
     ],
     cmdclass={"bdist_wheel": bdist_wheel_abi3},
