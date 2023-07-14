@@ -1295,7 +1295,7 @@ class VerifyCertificateTest(TestCase):
 
     def test_verify_certificate_chain_self_signed(self):
         certificate, _ = generate_ec_certificate(
-            common_name="localhost", curve=ec.SECP256R1
+            common_name="localhost", curve=ec.SECP256R1, alternative_names=["localhost"]
         )
 
         with patch("qh3.tls.utcnow") as mock_utcnow:
@@ -1321,7 +1321,9 @@ class VerifyCertificateTest(TestCase):
 
     def test_verify_dates(self):
         certificate, _ = generate_ec_certificate(
-            common_name="example.com", curve=ec.SECP256R1
+            common_name="example.com",
+            curve=ec.SECP256R1,
+            alternative_names=["example.com"],
         )
         cadata = certificate.public_bytes(serialization.Encoding.PEM)
 
@@ -1362,7 +1364,9 @@ class VerifyCertificateTest(TestCase):
 
     def test_verify_subject(self):
         certificate, _ = generate_ec_certificate(
-            common_name="example.com", curve=ec.SECP256R1
+            common_name="example.com",
+            curve=ec.SECP256R1,
+            alternative_names=["example.com"],
         )
         cadata = certificate.public_bytes(serialization.Encoding.PEM)
 
@@ -1371,7 +1375,10 @@ class VerifyCertificateTest(TestCase):
 
             # valid
             verify_certificate(
-                cadata=cadata, certificate=certificate, server_name="example.com"
+                cadata=cadata,
+                certificate=certificate,
+                server_name="example.com",
+                hostname_checks_common_name=True,
             )
 
             # invalid
@@ -1380,6 +1387,7 @@ class VerifyCertificateTest(TestCase):
                     cadata=cadata,
                     certificate=certificate,
                     server_name="test.example.com",
+                    hostname_checks_common_name=True,
                 )
             self.assertEqual(
                 str(cm.exception),
@@ -1388,7 +1396,10 @@ class VerifyCertificateTest(TestCase):
 
             with self.assertRaises(tls.AlertBadCertificate) as cm:
                 verify_certificate(
-                    cadata=cadata, certificate=certificate, server_name="acme.com"
+                    cadata=cadata,
+                    certificate=certificate,
+                    server_name="acme.com",
+                    hostname_checks_common_name=True,
                 )
             self.assertEqual(
                 str(cm.exception), "hostname 'acme.com' doesn't match 'example.com'"

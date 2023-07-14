@@ -28,8 +28,13 @@ def generate_certificate(*, alternative_names, common_name, hash_algorithm, key)
         .issuer_name(issuer)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.datetime.utcnow())
-        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=10))
+        .not_valid_before(
+            datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        )
+        .not_valid_after(
+            datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            + datetime.timedelta(days=10)
+        )
     )
     if alternative_names:
         builder = builder.add_extension(
@@ -42,7 +47,9 @@ def generate_certificate(*, alternative_names, common_name, hash_algorithm, key)
     return cert, key
 
 
-def generate_ec_certificate(common_name, alternative_names=[], curve=ec.SECP256R1):
+def generate_ec_certificate(common_name, alternative_names=None, curve=ec.SECP256R1):
+    if alternative_names is None:
+        alternative_names = []
     key = ec.generate_private_key(curve=curve)
     return generate_certificate(
         alternative_names=alternative_names,
@@ -52,7 +59,9 @@ def generate_ec_certificate(common_name, alternative_names=[], curve=ec.SECP256R
     )
 
 
-def generate_ed25519_certificate(common_name, alternative_names=[]):
+def generate_ed25519_certificate(common_name, alternative_names=None):
+    if alternative_names is None:
+        alternative_names = []
     key = ed25519.Ed25519PrivateKey.generate()
     return generate_certificate(
         alternative_names=alternative_names,
@@ -62,7 +71,9 @@ def generate_ed25519_certificate(common_name, alternative_names=[]):
     )
 
 
-def generate_ed448_certificate(common_name, alternative_names=[]):
+def generate_ed448_certificate(common_name, alternative_names=None):
+    if alternative_names is None:
+        alternative_names = []
     key = ed448.Ed448PrivateKey.generate()
     return generate_certificate(
         alternative_names=alternative_names,

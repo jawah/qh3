@@ -18,7 +18,7 @@ qh3
 What is ``qh3``?
 ----------------
 
-``qh3`` is a fork of the awesome ``aioquic`` library pending its author return (or not).
+``qh3`` is a maintained fork of the awesome ``aioquic`` library.
 Important changes/improvements are:
 
 - Made abi3 compatible, no need to build the wheel all over again on each interpreter version.
@@ -37,7 +37,7 @@ QUIC was standardised in `RFC 9000`_ and HTTP/3 in `RFC 9114`_.
 
 To learn more about ``qh3`` please `read the documentation`_.
 
-Why should I use ``aioquic``?
+Why should I use ``qh3``?
 -----------------------------
 
 ``qh3`` has been designed to be embedded into Python client and server

@@ -75,6 +75,9 @@ class QuicConfiguration:
     The TLS session ticket which should be used for session resumption.
     """
 
+    hostname_checks_common_name: bool = False
+    assert_fingerprint: Optional[str] = None
+
     cadata: Optional[bytes] = None
     cafile: Optional[str] = None
     capath: Optional[str] = None

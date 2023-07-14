@@ -5,6 +5,7 @@ import os
 import re
 import ssl
 import struct
+from binascii import unhexlify
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
@@ -70,8 +71,13 @@ TLS_VERSION_1_3_DRAFT_26 = 0x7F1A
 
 T = TypeVar("T")
 
+# Maps the length of a digest to a possible hash function producing this digest
+HASHFUNC_MAP = {32: hashes.MD5, 40: hashes.SHA1, 64: hashes.SHA256}
+
+
 # facilitate mocking for the test suite
-utcnow = datetime.datetime.utcnow
+def utcnow() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
 
 class AlertDescription(IntEnum):
@@ -375,6 +381,7 @@ def verify_certificate(
     cadata: Optional[bytes] = None,
     cafile: Optional[str] = None,
     capath: Optional[str] = None,
+    hostname_checks_common_name: bool = False,
 ) -> None:
     if chain is None:
         chain = []
@@ -388,11 +395,11 @@ def verify_certificate(
 
     # verify subject
     if server_name is not None:
-        subject = []
+        subject: List[Tuple[Tuple[str, str]]] = []
         subjectAltName: List[Tuple[str, str]] = []
         for attr in certificate.subject:
             if attr.oid == x509.NameOID.COMMON_NAME:
-                subject.append((("commonName", attr.value),))
+                subject.append((("commonName", str(attr.value)),))
         for ext in certificate.extensions:
             if isinstance(ext.value, x509.SubjectAlternativeName):
                 for name in ext.value:
@@ -406,7 +413,7 @@ def verify_certificate(
                 tuple(subject),
                 tuple(subjectAltName),
                 server_name,
-                hostname_checks_common_name=not bool(subjectAltName),
+                hostname_checks_common_name=hostname_checks_common_name,
             )
         except ssl.CertificateError as exc:
             raise AlertBadCertificate("\n".join(exc.args)) from exc
@@ -1331,12 +1338,16 @@ class Context:
         max_early_data: Optional[int] = None,
         server_name: Optional[str] = None,
         verify_mode: Optional[int] = None,
+        hostname_checks_common_name: bool = False,
+        assert_fingerprint: Optional[str] = None,
     ):
         # configuration
         self._alpn_protocols = alpn_protocols
         self._cadata = cadata
         self._cafile = cafile
         self._capath = capath
+        self._hostname_checks_common_name = hostname_checks_common_name
+        self._assert_fingerprint = assert_fingerprint
         self.certificate: Optional[x509.Certificate] = None
         self.certificate_chain: List[x509.Certificate] = []
         self.certificate_private_key: Optional[
@@ -1738,7 +1749,29 @@ class Context:
                 certificate=self._peer_certificate,
                 chain=self._peer_certificate_chain,
                 server_name=self._server_name,
+                hostname_checks_common_name=self._hostname_checks_common_name,
             )
+
+        if self._assert_fingerprint is not None:
+            fingerprint = self._assert_fingerprint.replace(":", "").lower()
+            digest_length = len(fingerprint)
+            hashfunc = HASHFUNC_MAP.get(digest_length)()
+
+            if not hashfunc:
+                raise AlertBadCertificate(
+                    f"Fingerprint of invalid length: {fingerprint}"
+                )
+
+            expect_fingerprint = unhexlify(fingerprint.encode())
+
+            peer_fingerprint = self._peer_certificate.fingerprint(hashfunc)
+
+            if peer_fingerprint != expect_fingerprint:
+                raise AlertBadCertificate(
+                    "Fingerprints did not match. "
+                    f'Expected "{expect_fingerprint.hex()}", '
+                    f'got "{peer_fingerprint.hex()}"'
+                )
 
         self.key_schedule.update_hash(input_buf.data)
 

@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: 3.7
       - name: Install packages
-        run: pip install black mypy ruff types-certifi types-cryptography types-pyopenssl
+        run: pip install black mypy ruff types-cryptography types-pyopenssl
       - name: Run linters
         run: |
           ruff examples src tests
@@ -84,6 +84,8 @@ jobs:
         shell: bash
       - name: Upload coverage report
         uses: codecov/codecov-action@v3
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         if: matrix.python != 'pypy3'
 
   package-source:
