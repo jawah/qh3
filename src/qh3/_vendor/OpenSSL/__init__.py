@@ -1498,7 +1498,7 @@ class X509:
         time_string = time_bytes.decode("utf-8")
         not_after = datetime.datetime.strptime(time_string, "%Y%m%d%H%M%SZ")
 
-        return not_after < datetime.datetime.utcnow()
+        return not_after < datetime.datetime.now(datetime.timezone.utc)
 
     def _get_boundary_time(self, which: Any) -> Optional[bytes]:
         return _get_asn1_time(which(self._x509))

@@ -1331,6 +1331,8 @@ class QuicConnection:
             max_early_data=None if self._is_client else MAX_EARLY_DATA,
             server_name=self._configuration.server_name,
             verify_mode=self._configuration.verify_mode,
+            hostname_checks_common_name=self._configuration.hostname_checks_common_name,
+            assert_fingerprint=self._configuration.assert_fingerprint,
         )
         self.tls.certificate = self._configuration.certificate
         self.tls.certificate_chain = self._configuration.certificate_chain
