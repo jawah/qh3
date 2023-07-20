@@ -77,6 +77,7 @@ class QuicConfiguration:
 
     hostname_checks_common_name: bool = False
     assert_fingerprint: Optional[str] = None
+    verify_hostname: bool = True
 
     cadata: Optional[bytes] = None
     cafile: Optional[str] = None

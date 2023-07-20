@@ -374,49 +374,47 @@ def match_hostname(
         raise ssl.CertificateError("no appropriate subjectAltName fields were found")
 
 
+def cert_subject(certificate: x509.Certificate) -> List[Tuple[Tuple[str, str]]]:
+    subject: List[Tuple[Tuple[str, str]]] = []
+
+    for attr in certificate.subject:
+        if attr.oid == x509.NameOID.COMMON_NAME:
+            subject.append((("commonName", str(attr.value)),))
+
+    return subject
+
+
+def cert_alt_subject(certificate: x509.Certificate) -> List[Tuple[str, str]]:
+    subjectAltName: List[Tuple[str, str]] = []
+
+    for ext in certificate.extensions:
+        if isinstance(ext.value, x509.SubjectAlternativeName):
+            for name in ext.value:
+                if isinstance(name, x509.DNSName):
+                    subjectAltName.append(("DNS", name.value))
+                elif isinstance(name, x509.IPAddress):
+                    subjectAltName.append(("IP Address", str(name.value)))
+
+    return subjectAltName
+
+
 def verify_certificate(
     certificate: x509.Certificate,
     chain: List[x509.Certificate] = None,
-    server_name: Optional[str] = None,
     cadata: Optional[bytes] = None,
     cafile: Optional[str] = None,
     capath: Optional[str] = None,
-    hostname_checks_common_name: bool = False,
 ) -> None:
     if chain is None:
         chain = []
 
     # verify dates
     now = utcnow()
+
     if now < certificate.not_valid_before:
         raise AlertCertificateExpired("Certificate is not valid yet")
     if now > certificate.not_valid_after:
         raise AlertCertificateExpired("Certificate is no longer valid")
-
-    # verify subject
-    if server_name is not None:
-        subject: List[Tuple[Tuple[str, str]]] = []
-        subjectAltName: List[Tuple[str, str]] = []
-        for attr in certificate.subject:
-            if attr.oid == x509.NameOID.COMMON_NAME:
-                subject.append((("commonName", str(attr.value)),))
-        for ext in certificate.extensions:
-            if isinstance(ext.value, x509.SubjectAlternativeName):
-                for name in ext.value:
-                    if isinstance(name, x509.DNSName):
-                        subjectAltName.append(("DNS", name.value))
-                    elif isinstance(name, x509.IPAddress):
-                        subjectAltName.append(("IP Address", str(name.value)))
-
-        try:
-            match_hostname(
-                tuple(subject),
-                tuple(subjectAltName),
-                server_name,
-                hostname_checks_common_name=hostname_checks_common_name,
-            )
-        except ssl.CertificateError as exc:
-            raise AlertBadCertificate("\n".join(exc.args)) from exc
 
     # load CAs
     store = X509Store()
@@ -1340,6 +1338,7 @@ class Context:
         verify_mode: Optional[int] = None,
         hostname_checks_common_name: bool = False,
         assert_fingerprint: Optional[str] = None,
+        verify_hostname: bool = True,
     ):
         # configuration
         self._alpn_protocols = alpn_protocols
@@ -1348,6 +1347,7 @@ class Context:
         self._capath = capath
         self._hostname_checks_common_name = hostname_checks_common_name
         self._assert_fingerprint = assert_fingerprint
+        self._verify_hostname = verify_hostname
         self.certificate: Optional[x509.Certificate] = None
         self.certificate_chain: List[x509.Certificate] = []
         self.certificate_private_key: Optional[
@@ -1740,6 +1740,17 @@ class Context:
         except InvalidSignature:
             raise AlertDecryptError
 
+        if self._verify_hostname and self._server_name is not None:
+            try:
+                match_hostname(
+                    tuple(cert_subject(self._peer_certificate)),
+                    tuple(cert_alt_subject(self._peer_certificate)),
+                    self._server_name,
+                    hostname_checks_common_name=self._hostname_checks_common_name,
+                )
+            except ssl.CertificateError as exc:
+                raise AlertBadCertificate("\n".join(exc.args)) from exc
+
         # check certificate
         if self._verify_mode != ssl.CERT_NONE:
             verify_certificate(
@@ -1748,8 +1759,6 @@ class Context:
                 capath=self._capath,
                 certificate=self._peer_certificate,
                 chain=self._peer_certificate_chain,
-                server_name=self._server_name,
-                hostname_checks_common_name=self._hostname_checks_common_name,
             )
 
         if self._assert_fingerprint is not None:
