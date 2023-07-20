@@ -20,7 +20,10 @@ from qh3.tls import (
     NewSessionTicket,
     ServerHello,
     State,
+    cert_alt_subject,
+    cert_subject,
     load_pem_x509_certificates,
+    match_hostname,
     pull_block,
     pull_certificate,
     pull_certificate_verify,
@@ -441,6 +444,7 @@ class ContextTest(TestCase):
         client = self.create_client(cafile=None)
         server = self.create_server()
 
+        print("HELO?")
         with self.assertRaises(tls.AlertBadCertificate) as cm:
             self._handshake(client, server)
         self.assertEqual(str(cm.exception), "unable to get local issuer certificate")
@@ -1281,7 +1285,7 @@ class VerifyCertificateTest(TestCase):
 
             # fail
             with self.assertRaises(tls.AlertBadCertificate) as cm:
-                verify_certificate(certificate=certificate, server_name="localhost")
+                verify_certificate(certificate=certificate)
             self.assertEqual(
                 str(cm.exception), "unable to get local issuer certificate"
             )
@@ -1290,7 +1294,6 @@ class VerifyCertificateTest(TestCase):
             verify_certificate(
                 cafile=SERVER_CACERTFILE,
                 certificate=certificate,
-                server_name="localhost",
             )
 
     def test_verify_certificate_chain_self_signed(self):
@@ -1303,7 +1306,7 @@ class VerifyCertificateTest(TestCase):
 
             # fail
             with self.assertRaises(tls.AlertBadCertificate) as cm:
-                verify_certificate(certificate=certificate, server_name="localhost")
+                verify_certificate(certificate=certificate)
             self.assertIn(
                 str(cm.exception),
                 (
@@ -1316,7 +1319,6 @@ class VerifyCertificateTest(TestCase):
             verify_certificate(
                 cadata=certificate.public_bytes(serialization.Encoding.PEM),
                 certificate=certificate,
-                server_name="localhost",
             )
 
     def test_verify_dates(self):
@@ -1333,23 +1335,17 @@ class VerifyCertificateTest(TestCase):
                 certificate.not_valid_before - datetime.timedelta(seconds=1)
             )
             with self.assertRaises(tls.AlertCertificateExpired) as cm:
-                verify_certificate(
-                    cadata=cadata, certificate=certificate, server_name="example.com"
-                )
+                verify_certificate(cadata=cadata, certificate=certificate)
             self.assertEqual(str(cm.exception), "Certificate is not valid yet")
 
         # valid
         with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = certificate.not_valid_before
-            verify_certificate(
-                cadata=cadata, certificate=certificate, server_name="example.com"
-            )
+            verify_certificate(cadata=cadata, certificate=certificate)
 
         with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = certificate.not_valid_after
-            verify_certificate(
-                cadata=cadata, certificate=certificate, server_name="example.com"
-            )
+            verify_certificate(cadata=cadata, certificate=certificate)
 
         # too late
         with patch("qh3.tls.utcnow") as mock_utcnow:
@@ -1357,9 +1353,7 @@ class VerifyCertificateTest(TestCase):
                 seconds=1
             )
             with self.assertRaises(tls.AlertCertificateExpired) as cm:
-                verify_certificate(
-                    cadata=cadata, certificate=certificate, server_name="example.com"
-                )
+                verify_certificate(cadata=cadata, certificate=certificate)
             self.assertEqual(str(cm.exception), "Certificate is no longer valid")
 
     def test_verify_subject(self):
@@ -1373,36 +1367,42 @@ class VerifyCertificateTest(TestCase):
         with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = certificate.not_valid_before
 
-            # valid
-            verify_certificate(
-                cadata=cadata,
-                certificate=certificate,
-                server_name="example.com",
+            # both valid
+            match_hostname(
+                tuple(cert_subject(certificate)),
+                tuple(cert_alt_subject(certificate)),
+                hostname="example.com",
                 hostname_checks_common_name=True,
             )
 
+            verify_certificate(
+                cadata=cadata,
+                certificate=certificate,
+            )
+
             # invalid
-            with self.assertRaises(tls.AlertBadCertificate) as cm:
-                verify_certificate(
-                    cadata=cadata,
-                    certificate=certificate,
-                    server_name="test.example.com",
+            with self.assertRaises(ssl.CertificateError) as cm:
+                match_hostname(
+                    tuple(cert_subject(certificate)),
+                    tuple(cert_alt_subject(certificate)),
+                    hostname="test.example.com",
                     hostname_checks_common_name=True,
                 )
             self.assertEqual(
-                str(cm.exception),
+                "\n".join(cm.exception.args),
                 "hostname 'test.example.com' doesn't match 'example.com'",
             )
 
-            with self.assertRaises(tls.AlertBadCertificate) as cm:
-                verify_certificate(
-                    cadata=cadata,
-                    certificate=certificate,
-                    server_name="acme.com",
+            with self.assertRaises(ssl.CertificateError) as cm:
+                match_hostname(
+                    tuple(cert_subject(certificate)),
+                    tuple(cert_alt_subject(certificate)),
+                    hostname="acme.com",
                     hostname_checks_common_name=True,
                 )
             self.assertEqual(
-                str(cm.exception), "hostname 'acme.com' doesn't match 'example.com'"
+                "\n".join(cm.exception.args),
+                "hostname 'acme.com' doesn't match 'example.com'",
             )
 
     def test_verify_subject_with_subjaltname(self):
@@ -1417,20 +1417,28 @@ class VerifyCertificateTest(TestCase):
             mock_utcnow.return_value = certificate.not_valid_before
 
             # valid
-            verify_certificate(
-                cadata=cadata, certificate=certificate, server_name="example.com"
+            match_hostname(
+                tuple(cert_subject(certificate)),
+                tuple(cert_alt_subject(certificate)),
+                hostname="example.com",
             )
-            verify_certificate(
-                cadata=cadata, certificate=certificate, server_name="test.example.com"
+            verify_certificate(cadata=cadata, certificate=certificate)
+            match_hostname(
+                tuple(cert_subject(certificate)),
+                tuple(cert_alt_subject(certificate)),
+                hostname="test.example.com",
             )
+            verify_certificate(cadata=cadata, certificate=certificate)
 
             # invalid
-            with self.assertRaises(tls.AlertBadCertificate) as cm:
-                verify_certificate(
-                    cadata=cadata, certificate=certificate, server_name="acme.com"
+            with self.assertRaises(ssl.CertificateError) as cm:
+                match_hostname(
+                    tuple(cert_subject(certificate)),
+                    tuple(cert_alt_subject(certificate)),
+                    hostname="acme.com",
                 )
             self.assertEqual(
-                str(cm.exception),
+                "\n".join(cm.exception.args),
                 "hostname 'acme.com' doesn't match either of '*.example.com', "
                 "'example.com'",
             )
