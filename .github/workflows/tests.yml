@@ -131,7 +131,7 @@ jobs:
           submodules: 'true'
       - uses: actions/setup-python@v4
         with:
-          python-version: 3.7
+          python-version: 3.8
       - name: Install QEMU
         if: matrix.os == 'ubuntu-latest'
         uses: docker/setup-qemu-action@v2
@@ -140,7 +140,7 @@ jobs:
           CIBW_BUILD_FRONTEND: build
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_ENVIRONMENT: AIOQUIC_SKIP_TESTS=ipv6,loss
-          CIBW_BUILD: cp39-* pp39-* pp38-*
+          CIBW_BUILD: cp39-* pp310-* pp39-* pp38-*
           CIBW_TEST_COMMAND: python -m unittest discover -t {project} -s {project}/tests
           # there are no wheels for cryptography on these platforms
           CIBW_TEST_SKIP: "*-{manylinux_i686,win32} pp* *-musllinux*"
