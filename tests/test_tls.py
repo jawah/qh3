@@ -26,6 +26,7 @@ from qh3.tls import (
     match_hostname,
     pull_block,
     pull_certificate,
+    pull_certificate_request,
     pull_certificate_verify,
     pull_client_hello,
     pull_encrypted_extensions,
@@ -1223,6 +1224,18 @@ class TlsTest(TestCase):
 
         self.assertEqual(certificate.request_context, b"")
         self.assertEqual(certificate.certificates, [(CERTIFICATE_DATA, b"")])
+
+    def test_pull_certificate_request(self):
+        buf = Buffer(data=load("tls_certificate_request.bin"))
+        certificate_request = pull_certificate_request(buf)
+        self.assertTrue(buf.eof())
+
+        self.assertEqual(certificate_request.request_context, b"")
+        self.assertEqual(
+            certificate_request.signature_algorithms,
+            [1027, 2052, 1025, 1283, 515, 2053, 2053, 1281, 2054, 1537, 513],
+        )
+        self.assertEqual(certificate_request.other_extensions, [])
 
     def test_push_certificate(self):
         certificate = Certificate(

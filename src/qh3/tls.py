@@ -1038,6 +1038,13 @@ class Certificate:
     certificates: List[CertificateEntry] = field(default_factory=list)
 
 
+@dataclass
+class CertificateRequest:
+    request_context: bytes = b""
+    signature_algorithms: Optional[List[int]] = None
+    other_extensions: List[Tuple[int, bytes]] = field(default_factory=list)
+
+
 def pull_certificate(buf: Buffer) -> Certificate:
     certificate = Certificate()
 
@@ -1055,6 +1062,30 @@ def pull_certificate(buf: Buffer) -> Certificate:
         )
 
     return certificate
+
+
+def pull_certificate_request(buf: Buffer) -> CertificateRequest:
+    certificate_request = CertificateRequest()
+
+    assert buf.pull_uint8() == HandshakeType.CERTIFICATE_REQUEST
+    with pull_block(buf, 3):
+        certificate_request.request_context = pull_opaque(buf, 1)
+
+        def pull_extension() -> None:
+            extension_type = buf.pull_uint16()
+            extension_length = buf.pull_uint16()
+            if extension_type == ExtensionType.SIGNATURE_ALGORITHMS:
+                certificate_request.signature_algorithms = pull_list(
+                    buf, 2, buf.pull_uint16
+                )
+            else:
+                certificate_request.other_extensions.append(
+                    (extension_type, buf.pull_bytes(extension_length))
+                )
+
+        pull_list(buf, 2, pull_extension)
+
+    return certificate_request
 
 
 def push_certificate(buf: Buffer, certificate: Certificate) -> None:
@@ -1412,6 +1443,7 @@ class Context:
         self._session_resumed = False
         self._enc_key: Optional[bytes] = None
         self._dec_key: Optional[bytes] = None
+        self._certificate_request: Optional[CertificateRequest] = None
         self.__logger = logger
 
         self._ec_private_key: Optional[ec.EllipticCurvePrivateKey] = None
@@ -1472,8 +1504,9 @@ class Context:
             elif self.state == State.CLIENT_EXPECT_CERTIFICATE_REQUEST_OR_CERTIFICATE:
                 if message_type == HandshakeType.CERTIFICATE:
                     self._client_handle_certificate(input_buf)
+                elif message_type == HandshakeType.CERTIFICATE_REQUEST:
+                    self._client_handle_certificate_request(input_buf)
                 else:
-                    # FIXME: handle certificate request
                     raise AlertUnexpectedMessage
             elif self.state == State.CLIENT_EXPECT_CERTIFICATE_VERIFY:
                 if message_type == HandshakeType.CERTIFICATE_VERIFY:
@@ -1723,6 +1756,11 @@ class Context:
 
         self._set_state(State.CLIENT_EXPECT_CERTIFICATE_VERIFY)
 
+    def _client_handle_certificate_request(self, input_buf: Buffer) -> None:
+        self._certificate_request = pull_certificate_request(input_buf)
+        self.key_schedule.update_hash(input_buf.data)
+        self._set_state(State.CLIENT_EXPECT_CERTIFICATE_REQUEST_OR_CERTIFICATE)
+
     def _client_handle_certificate_verify(self, input_buf: Buffer) -> None:
         verify = pull_certificate_verify(input_buf)
 
@@ -1802,6 +1840,42 @@ class Context:
             Direction.DECRYPT, Epoch.ONE_RTT, b"s ap traffic"
         )
         next_enc_key = self.key_schedule.derive_secret(b"c ap traffic")
+
+        if self._certificate_request is not None:
+            with push_message(self.key_schedule, output_buf):
+                push_certificate(
+                    output_buf,
+                    Certificate(
+                        request_context=self._certificate_request.request_context,
+                        certificates=[
+                            (cert.public_bytes(Encoding.DER), b"")
+                            for cert in [self.certificate] + self.certificate_chain
+                            if cert is not None
+                        ],
+                    ),
+                )
+
+            if None not in (self.certificate, self.certificate_private_key):
+                signature_algorithm = negotiate(
+                    self._signature_algorithms,
+                    self._certificate_request.signature_algorithms,
+                    AlertHandshakeFailure("No supported signature algorithm"),
+                )
+
+                signature = self.certificate_private_key.sign(
+                    self.key_schedule.certificate_verify_data(
+                        b"TLS 1.3, client CertificateVerify"
+                    ),
+                    *signature_algorithm_params(signature_algorithm),
+                )
+
+                with push_message(self.key_schedule, output_buf):
+                    push_certificate_verify(
+                        output_buf,
+                        CertificateVerify(
+                            algorithm=signature_algorithm, signature=signature
+                        ),
+                    )
 
         # send finished
         with push_message(self.key_schedule, output_buf):

@@ -5,6 +5,8 @@
 .eggs
 .mypy_cache
 .vscode
+.idea
+bob.bin
 /build
 /dist
 /docs/_build
