@@ -43,8 +43,8 @@ dev = [
 ]
 
 [project.urls]
-homepage = "https://github.com/Ousret/qh3"
-documentation = "https://aioquic.readthedocs.io/"
+homepage = "https://github.com/jawah/qh3"
+documentation = "https://qh3.readthedocs.io/"
 
 [tool.coverage.run]
 source = ["qh3"]

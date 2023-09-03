@@ -49,6 +49,11 @@ leaving actual I/O operations to the API user. This approach has a number of
 advantages including making the code testable and allowing integration with
 different concurrency models.
 
+This library is the lowest-level you can find on handling QUIC and HTTP/3. Here are higher libraries:
+
+- mid-way: `urllib3.future`_
+- highest and easiest: `niquests`_
+
 Features
 --------
 
@@ -64,7 +69,7 @@ Features
 Requirements
 ------------
 
-``aioquic`` requires Python 3.7 or greater.
+``qh3`` requires Python 3.7 or greater.
 
 Running the examples
 --------------------
@@ -86,3 +91,5 @@ License
 .. _RFC 8446: https://datatracker.ietf.org/doc/html/rfc8446
 .. _RFC 9000: https://datatracker.ietf.org/doc/html/rfc9000
 .. _RFC 9114: https://datatracker.ietf.org/doc/html/rfc9114
+.. _niquests: https://github.com/jawah/niquests
+.. _urllib3.future: https://github.com/jawah/urllib3.future
