@@ -24,11 +24,6 @@ from typing import (
     Union,
 )
 
-try:
-    import certifi
-except ImportError:
-    certifi = None
-
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.backends import default_backend
@@ -211,7 +206,7 @@ def load_pem_private_key(
     """
     Load a PEM-encoded private key.
     """
-    return serialization.load_pem_private_key(data, password=password)
+    return serialization.load_pem_private_key(data, password=password)  # type: ignore[return-value]
 
 
 def load_pem_x509_certificates(data: bytes) -> List[x509.Certificate]:
@@ -418,11 +413,6 @@ def verify_certificate(
 
     # load CAs
     store = X509Store()
-
-    # you'll have to install certifi yourself to get moz root CAs
-    # automatically injected
-    if certifi is not None:
-        store.load_locations(certifi.where())
 
     if cadata is not None:
         for cert in load_pem_x509_certificates(cadata):
@@ -1246,7 +1236,7 @@ CURVE_TO_GROUP = dict((v, k) for k, v in GROUP_TO_CURVE.items())
 
 
 def cipher_suite_hash(cipher_suite: CipherSuite) -> hashes.HashAlgorithm:
-    return CIPHER_SUITES[cipher_suite]()
+    return CIPHER_SUITES[cipher_suite]()  # type: ignore[abstract]
 
 
 def decode_public_key(
@@ -1768,7 +1758,7 @@ class Context:
 
         # check signature
         try:
-            self._peer_certificate.public_key().verify(
+            self._peer_certificate.public_key().verify(  # type: ignore[union-attr]
                 verify.signature,
                 self.key_schedule.certificate_verify_data(
                     b"TLS 1.3, server CertificateVerify"
@@ -1802,7 +1792,7 @@ class Context:
         if self._assert_fingerprint is not None:
             fingerprint = self._assert_fingerprint.replace(":", "").lower()
             digest_length = len(fingerprint)
-            hashfunc = HASHFUNC_MAP.get(digest_length)()
+            hashfunc = HASHFUNC_MAP.get(digest_length)()  # type: ignore[abstract]
 
             if not hashfunc:
                 raise AlertBadCertificate(

@@ -350,10 +350,10 @@ class PKey:
 
         if self._only_public:
             der = dump_publickey(FILETYPE_ASN1, self)
-            return load_der_public_key(der)
+            return load_der_public_key(der)  # type: ignore[return-value]
         else:
             der = dump_privatekey(FILETYPE_ASN1, self)
-            return load_der_private_key(der, None)
+            return load_der_private_key(der, None)  # type: ignore[return-value]
 
     @classmethod
     def from_cryptography_key(cls, crypto_key: _Key) -> "PKey":
@@ -396,7 +396,7 @@ class PKey:
                 ),
             )
         else:
-            der = crypto_key.private_bytes(  # type: ignore[union-attr]
+            der = crypto_key.private_bytes(
                 Encoding.DER, PrivateFormat.PKCS8, NoEncryption()
             )
             return load_privatekey(FILETYPE_ASN1, der)

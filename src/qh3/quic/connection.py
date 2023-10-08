@@ -527,7 +527,7 @@ class QuicConnection:
                         frame_type=self._close_event.frame_type,
                         reason_phrase=self._close_event.reason_phrase,
                     )
-            self._logger.info(
+            self._logger.debug(
                 "Connection close sent (code 0x%X, reason %s)",
                 self._close_event.error_code,
                 self._close_event.reason_phrase,
@@ -801,7 +801,7 @@ class QuicConnection:
                 self._packet_number = 0
                 self._version = QuicProtocolVersion(common[0])
                 self._version_negotiation_count += 1
-                self._logger.info("Retrying with %s", self._version)
+                self._logger.debug("Retrying with %s", self._version)
                 self._connect(now=now)
                 return
             elif (
@@ -851,7 +851,7 @@ class QuicConnection:
                     self._peer_token = header.token
                     self._retry_count += 1
                     self._retry_source_connection_id = header.source_cid
-                    self._logger.info(
+                    self._logger.debug(
                         "Retrying with token (%d bytes)" % len(header.token)
                     )
                     self._connect(now=now)
@@ -1479,7 +1479,7 @@ class QuicConnection:
                 )
             )
 
-        self._logger.info(
+        self._logger.debug(
             "Connection close received (code 0x%X, reason %s)",
             error_code,
             reason_phrase,
@@ -1569,11 +1569,11 @@ class QuicConnection:
                 )
                 self._unblock_streams(is_unidirectional=False)
                 self._unblock_streams(is_unidirectional=True)
-                self._logger.info(
+                self._logger.debug(
                     "ALPN negotiated protocol %s", self.tls.alpn_negotiated
                 )
         else:
-            self._logger.info(
+            self._logger.debug(
                 "Duplicate CRYPTO data received for epoch %s", context.epoch
             )
 
@@ -1978,7 +1978,7 @@ class QuicConnection:
             )
 
         # process reset
-        self._logger.info(
+        self._logger.debug(
             "Stream %d reset by peer (error code %d, final size %d)",
             stream_id,
             error_code,

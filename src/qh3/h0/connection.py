@@ -1,3 +1,4 @@
+import warnings
 from typing import Dict, List
 
 from ..h3.events import DataReceived, H3Event, Headers, HeadersReceived
@@ -5,6 +6,13 @@ from ..quic.connection import QuicConnection
 from ..quic.events import QuicEvent, StreamDataReceived
 
 H0_ALPN = ["hq-interop", "hq-32", "hq-31", "hq-30", "hq-29"]
+
+warnings.warn(
+    """H0Connection module is deprecated and will be removed in qh3 v1.0.
+    It is recommended to use HTTP client Niquests instead.""",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 class H0Connection:
