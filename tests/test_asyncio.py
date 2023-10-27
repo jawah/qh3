@@ -419,7 +419,17 @@ class HighLevelTest(TestCase):
     async def test_combined_key(self):
         config1 = QuicConfiguration()
         config2 = QuicConfiguration()
+        config3 = QuicConfiguration()
+        config4 = QuicConfiguration()
         config1.load_cert_chain(SERVER_CERTFILE, SERVER_KEYFILE)
         config2.load_cert_chain(SERVER_COMBINEDFILE)
+        config3.load_cert_chain(
+            open(SERVER_CERTFILE, "r").read(), open(SERVER_KEYFILE, "r").read()
+        )
+        config4.load_cert_chain(
+            open(SERVER_CERTFILE, "rb").read(), open(SERVER_KEYFILE, "rb").read()
+        )
 
         self.assertEqual(config1.certificate, config2.certificate)
+        self.assertEqual(config1.certificate, config3.certificate)
+        self.assertEqual(config1.certificate, config4.certificate)

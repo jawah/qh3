@@ -102,31 +102,45 @@ class QuicConfiguration:
 
     def load_cert_chain(
         self,
-        certfile: PathLike,
-        keyfile: Optional[PathLike] = None,
+        certfile: Union[str, bytes, PathLike],
+        keyfile: Optional[Union[str, bytes, PathLike]] = None,
         password: Optional[Union[bytes, str]] = None,
     ) -> None:
         """
         Load a private key and the corresponding certificate.
         """
-        with open(certfile, "rb") as fp:
-            boundary = b"-----BEGIN PRIVATE KEY-----\n"
-            chunks = split(b"\n" + boundary, fp.read())
-            certificates = load_pem_x509_certificates(chunks[0])
-            if len(chunks) == 2:
-                private_key = boundary + chunks[1]
-                self.private_key = load_pem_private_key(private_key)
+
+        if isinstance(certfile, str):
+            certfile = certfile.encode("ascii")
+
+        if keyfile is not None and isinstance(keyfile, str):
+            keyfile = keyfile.encode("ascii")
+
+        if b"-----BEGIN" not in certfile:
+            with open(certfile, "rb") as fp:
+                certfile = fp.read()
+            if keyfile is not None:
+                with open(keyfile, "rb") as fp:
+                    keyfile = fp.read()
+
+        boundary = b"-----BEGIN PRIVATE KEY-----\n"
+        chunks = split(b"\n" + boundary, certfile)
+        certificates = load_pem_x509_certificates(chunks[0])
+
+        if len(chunks) == 2:
+            private_key = boundary + chunks[1]
+            self.private_key = load_pem_private_key(private_key)
+
         self.certificate = certificates[0]
         self.certificate_chain = certificates[1:]
 
         if keyfile is not None:
-            with open(keyfile, "rb") as fp:
-                self.private_key = load_pem_private_key(
-                    fp.read(),
-                    password=password.encode("utf8")
-                    if isinstance(password, str)
-                    else password,
-                )
+            self.private_key = load_pem_private_key(
+                keyfile,
+                password=password.encode("utf8")
+                if isinstance(password, str)
+                else password,
+            )
 
     def load_verify_locations(
         self,
