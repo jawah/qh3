@@ -1450,6 +1450,14 @@ class Context:
             self.state = State.SERVER_EXPECT_CLIENT_HELLO
 
     @property
+    def peer_certificate(self) -> Optional[x509.Certificate]:
+        return self._peer_certificate
+
+    @property
+    def peer_certificate_chain(self) -> List[x509.Certificate]:
+        return self._peer_certificate_chain
+
+    @property
     def session_resumed(self) -> bool:
         """
         Returns True if session resumption was successfully used.

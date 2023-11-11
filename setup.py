@@ -50,12 +50,6 @@ else:
 setuptools.setup(
     ext_modules=[
         setuptools.Extension(
-            "qh3._buffer",
-            extra_compile_args=extra_compile_args,
-            sources=["src/qh3/_buffer.c"],
-            **extra_kwarg
-        ),
-        setuptools.Extension(
             "qh3._vendor.pylsqpack._binding",
             extra_compile_args=extra_compile_args,
             include_dirs=include_dirs,
