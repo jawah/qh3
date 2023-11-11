@@ -18,20 +18,13 @@ qh3
 What is ``qh3``?
 ----------------
 
-``qh3`` is a maintained fork of the awesome ``aioquic`` library.
-Important changes/improvements are:
-
-- Made abi3 compatible, no need to build the wheel all over again on each interpreter version.
-- Only one dependency left! Cryptography will remain as long as Python does not ship with proper QUIC implementation.
-- Mitigated deprecated match_hostname.
-- Mimic load_default_certs SSL context from native Python.
-- Remove the need for OpenSSL development headers.
-- Many, many more pre-built wheel for your convenience! Including PyPy 3.8 and 3.9 and musl linux distributions.
+``qh3`` is a maintained fork of the ``aioquic`` library.
+It is lighter, faster, and more adapted to mass usage. Regularly improved and expect a better time to initial response in issues and PRs.
 
 ``qh3`` is a library for the QUIC network protocol in Python. It features
-a minimal TLS 1.3 implementation, a QUIC stack and an HTTP/3 stack.
+a minimal TLS 1.3 implementation, a QUIC stack, and an HTTP/3 stack.
 
-QUIC was standardised in `RFC 9000`_ and HTTP/3 in `RFC 9114`_.
+QUIC was standardized in `RFC 9000`_ and HTTP/3 in `RFC 9114`_.
 ``qh3`` is regularly tested for interoperability against other
 `QUIC implementations`_.
 
@@ -41,7 +34,7 @@ Why should I use ``qh3``?
 -----------------------------
 
 ``qh3`` has been designed to be embedded into Python client and server
-libraries wishing to support QUIC and / or HTTP/3. The goal is to provide a
+libraries wishing to support QUIC and/or HTTP/3. The goal is to provide a
 common codebase for Python libraries in the hope of avoiding duplicated effort.
 
 Both the QUIC and the HTTP/3 APIs follow the "bring your own I/O" pattern,
@@ -49,10 +42,10 @@ leaving actual I/O operations to the API user. This approach has a number of
 advantages including making the code testable and allowing integration with
 different concurrency models.
 
-This library is the lowest-level you can find on handling QUIC and HTTP/3. Here are higher libraries:
+This library is the lowest level you can find for handling QUIC and HTTP/3. Here are higher libraries:
 
 - mid-way: `urllib3.future`_
-- highest and easiest: `niquests`_
+- highest and easiest: `niquests`_ (Recommended!)
 
 Features
 --------
@@ -74,7 +67,7 @@ Requirements
 Running the examples
 --------------------
 
-`qh3` comes with a number of examples illustrating various QUIC use-cases.
+`qh3` comes with a number of examples illustrating various QUIC use cases.
 
 You can browse these examples here: https://github.com/Ousret/qh3/tree/main/examples
 
