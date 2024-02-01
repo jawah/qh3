@@ -1294,7 +1294,7 @@ class VerifyCertificateTest(TestCase):
             certificate = load_pem_x509_certificates(fp.read())[0]
 
         with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_before
+            mock_utcnow.return_value = certificate.not_valid_before_utc
 
             # fail
             with self.assertRaises(tls.AlertBadCertificate) as cm:
@@ -1315,7 +1315,7 @@ class VerifyCertificateTest(TestCase):
         )
 
         with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_before
+            mock_utcnow.return_value = certificate.not_valid_before_utc
 
             # fail
             with self.assertRaises(tls.AlertBadCertificate) as cm:
@@ -1345,7 +1345,7 @@ class VerifyCertificateTest(TestCase):
         #  too early
         with patch("qh3.tls.utcnow") as mock_utcnow:
             mock_utcnow.return_value = (
-                certificate.not_valid_before - datetime.timedelta(seconds=1)
+                certificate.not_valid_before_utc - datetime.timedelta(seconds=1)
             )
             with self.assertRaises(tls.AlertCertificateExpired) as cm:
                 verify_certificate(cadata=cadata, certificate=certificate)
@@ -1353,17 +1353,17 @@ class VerifyCertificateTest(TestCase):
 
         # valid
         with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_before
+            mock_utcnow.return_value = certificate.not_valid_before_utc
             verify_certificate(cadata=cadata, certificate=certificate)
 
         with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_after
+            mock_utcnow.return_value = certificate.not_valid_after_utc
             verify_certificate(cadata=cadata, certificate=certificate)
 
         # too late
         with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_after + datetime.timedelta(
-                seconds=1
+            mock_utcnow.return_value = (
+                certificate.not_valid_after_utc + datetime.timedelta(seconds=1)
             )
             with self.assertRaises(tls.AlertCertificateExpired) as cm:
                 verify_certificate(cadata=cadata, certificate=certificate)
@@ -1378,7 +1378,7 @@ class VerifyCertificateTest(TestCase):
         cadata = certificate.public_bytes(serialization.Encoding.PEM)
 
         with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_before
+            mock_utcnow.return_value = certificate.not_valid_before_utc
 
             # both valid
             match_hostname(
@@ -1427,7 +1427,7 @@ class VerifyCertificateTest(TestCase):
         cadata = certificate.public_bytes(serialization.Encoding.PEM)
 
         with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_before
+            mock_utcnow.return_value = certificate.not_valid_before_utc
 
             # valid
             match_hostname(

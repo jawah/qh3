@@ -84,9 +84,11 @@ class QuicLoggerTrace:
             return {
                 "frame_type": "max_streams",
                 "maximum": maximum,
-                "stream_type": "unidirectional"
-                if frame_type == QuicFrameType.MAX_STREAMS_UNI
-                else "bidirectional",
+                "stream_type": (
+                    "unidirectional"
+                    if frame_type == QuicFrameType.MAX_STREAMS_UNI
+                    else "bidirectional"
+                ),
             }
 
     def encode_crypto_frame(self, frame: QuicStreamFrame) -> Dict:

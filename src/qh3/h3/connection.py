@@ -652,9 +652,11 @@ class H3Connection:
                     category="http",
                     event="frame_parsed",
                     data=self._quic_logger.encode_http3_headers_frame(
-                        length=stream.blocked_frame_size
-                        if frame_data is None
-                        else len(frame_data),
+                        length=(
+                            stream.blocked_frame_size
+                            if frame_data is None
+                            else len(frame_data)
+                        ),
                         headers=headers,
                         stream_id=stream.stream_id,
                     ),

@@ -1,3 +1,13 @@
+0.15.0 (2023-02-01)
+===================
+
+**Changed**
+- Highly simplified ``_crypto`` module based on upstream work https://github.com/aiortc/aioquic/pull/457
+- Bump upper bound ``cryptography`` version to 42.x
+
+**Fixed**
+- Mitigate deprecation originating from ``cryptography`` about datetime naïve timezone.
+
 0.14.0 (2023-11-11)
 ===================
 
