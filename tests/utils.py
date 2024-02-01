@@ -28,12 +28,9 @@ def generate_certificate(*, alternative_names, common_name, hash_algorithm, key)
         .issuer_name(issuer)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(
-            datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-        )
+        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
         .not_valid_after(
-            datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-            + datetime.timedelta(days=10)
+            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=10)
         )
     )
     if alternative_names:

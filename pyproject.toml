@@ -33,7 +33,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
 ]
 dependencies = [
-    "cryptography>=41.0.0,<42.0.0",
+    "cryptography>=41.0.0,<43",
 ]
 dynamic = ["version"]
 

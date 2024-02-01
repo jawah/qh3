@@ -137,9 +137,9 @@ class QuicConfiguration:
         if keyfile is not None:
             self.private_key = load_pem_private_key(
                 keyfile,
-                password=password.encode("utf8")
-                if isinstance(password, str)
-                else password,
+                password=(
+                    password.encode("utf8") if isinstance(password, str) else password
+                ),
             )
 
     def load_verify_locations(

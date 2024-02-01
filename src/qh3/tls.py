@@ -71,8 +71,9 @@ HASHFUNC_MAP = {32: hashes.MD5, 40: hashes.SHA1, 64: hashes.SHA256}
 
 
 # facilitate mocking for the test suite
-def utcnow() -> datetime.datetime:
-    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+def utcnow(remove_tz: bool = True) -> datetime.datetime:
+    dt = datetime.datetime.now(datetime.timezone.utc)
+    return dt.replace(tzinfo=None) if remove_tz else dt
 
 
 class AlertDescription(IntEnum):
@@ -403,12 +404,23 @@ def verify_certificate(
     if chain is None:
         chain = []
 
-    # verify dates
-    now = utcnow()
+    use_naive_dt = hasattr(certificate, "not_valid_before_utc") is False
 
-    if now < certificate.not_valid_before:
+    # verify dates
+    now = utcnow(remove_tz=use_naive_dt)
+
+    not_valid_before = (
+        certificate.not_valid_before
+        if use_naive_dt
+        else certificate.not_valid_before_utc
+    )
+    not_valid_after = (
+        certificate.not_valid_after if use_naive_dt else certificate.not_valid_after_utc
+    )
+
+    if now < not_valid_before:
         raise AlertCertificateExpired("Certificate is not valid yet")
-    if now > certificate.not_valid_after:
+    if now > not_valid_after:
         raise AlertCertificateExpired("Certificate is no longer valid")
 
     # load CAs
@@ -1604,9 +1616,11 @@ class Context:
             legacy_compression_methods=self._legacy_compression_methods,
             alpn_protocols=self._alpn_protocols,
             key_share=key_share,
-            psk_key_exchange_modes=self._psk_key_exchange_modes
-            if (self.session_ticket or self.new_session_ticket_cb is not None)
-            else None,
+            psk_key_exchange_modes=(
+                self._psk_key_exchange_modes
+                if (self.session_ticket or self.new_session_ticket_cb is not None)
+                else None
+            ),
             server_name=self._server_name,
             signature_algorithms=self._signature_algorithms,
             supported_groups=supported_groups,
