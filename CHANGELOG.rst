@@ -1,3 +1,13 @@
+0.15.1 (2023-03-21)
+===================
+
+**Fixed**
+- Improved stream write scheduling. (upstream patch https://github.com/aiortc/aioquic/pull/475)
+
+**Misc**
+- CI now prepare a complete sdist with required vendors
+- aarch64 linux is now served
+
 0.15.0 (2023-02-01)
 ===================
 

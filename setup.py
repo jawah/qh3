@@ -12,20 +12,11 @@ include_dirs = [
 
 if sys.platform == "win32":
     extra_compile_args = []
-    libraries = [
-        "libcrypto",
-        "advapi32",
-        "crypt32",
-        "gdi32",
-        "user32",
-        "ws2_32",
-    ]
     include_dirs.append(
         os.path.join("vendor", "ls-qpack", "wincompat"),
     )
 else:
     extra_compile_args = ["-std=c99"]
-    libraries = ["crypto"]
 
 
 class bdist_wheel_abi3(bdist_wheel):
@@ -38,13 +29,15 @@ class bdist_wheel_abi3(bdist_wheel):
         return python, abi, plat
 
 
+extra_kwarg = {}
+
 if platform.python_implementation() == "CPython":
-    extra_kwarg = {
-        "py_limited_api": True,
-        "define_macros": [("Py_LIMITED_API", "0x03070000")]
-    }
-else:
-    extra_kwarg = dict()
+    extra_kwarg.update(
+        {
+            "py_limited_api": True,
+            "define_macros": [("Py_LIMITED_API", "0x03070000")],
+        }
+    )
 
 
 setuptools.setup(
@@ -58,7 +51,7 @@ setuptools.setup(
                 "vendor/ls-qpack/lsqpack.c",
                 "vendor/ls-qpack/deps/xxhash/xxhash.c",
             ],
-            **extra_kwarg
+            **extra_kwarg,
         ),
     ],
     cmdclass={"bdist_wheel": bdist_wheel_abi3},

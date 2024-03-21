@@ -9,7 +9,7 @@ readme = "README.rst"
 requires-python = ">=3.7"
 license = { text = "BSD-3-Clause" }
 authors = [
-    { name = "Jeremy Lainé", email = "jeremy.laine@m4x.org" },
+  {name = "Jeremy Lainé", email = "jeremy.laine@m4x.org"},
 ]
 maintainers = [
   {name = "Ahmed R. TAHRI", email="ahmed.tahri@cloudnursery.dev"},
