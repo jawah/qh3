@@ -19,7 +19,8 @@ What is ``qh3``?
 ----------------
 
 ``qh3`` is a maintained fork of the ``aioquic`` library.
-It is lighter, faster, and more adapted to mass usage. Regularly improved and expect a better time to initial response in issues and PRs.
+It is lighter, and more adapted to mass usage.
+Regularly improved and expect a better time to initial response in issues and PRs.
 
 ``qh3`` is a library for the QUIC network protocol in Python. It features
 a minimal TLS 1.3 implementation, a QUIC stack, and an HTTP/3 stack.
