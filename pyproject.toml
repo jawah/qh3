@@ -1,13 +1,13 @@
 [build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.2,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "qh3"
-description = "An implementation of QUIC and HTTP/3"
+description = "A lightway and fast implementation of QUIC and HTTP/3"
 readme = "README.rst"
 requires-python = ">=3.7"
-license = { text = "BSD-3-Clause" }
+license = { file = "LICENSE" }
 authors = [
   {name = "Jeremy Lainé", email = "jeremy.laine@m4x.org"},
 ]
@@ -32,15 +32,13 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Internet :: WWW/HTTP",
 ]
-dependencies = [
-    "cryptography>=41.0.0,<43",
+dynamic = [
+    'version'
 ]
-dynamic = ["version"]
 
-[project.optional-dependencies]
-dev = [
-    "coverage[toml]>=7.2.2",
-]
+[tool.maturin]
+features = ["pyo3/extension-module", "pyo3/generate-import-lib"]
+module-name = "qh3._hazmat"
 
 [project.urls]
 homepage = "https://github.com/jawah/qh3"
@@ -65,13 +63,17 @@ select = [
     "I",  # isort
 ]
 
-[tool.setuptools.dynamic]
-version = {attr = "qh3.__version__"}
-
 # neat trick to add bsd compat headers only in musllinux images
 [tool.cibuildwheel.linux]
-before-all = "echo"
+before-all = [
+    "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain=stable --profile=minimal -y",
+    "yum install -y clang clang-devel",
+    "yum install -y kernel-devel",
+]
+
+[tool.cibuildwheel.windows]
+before-all = "choco install llvm nasm -y"
 
 [[tool.cibuildwheel.overrides]]
 select = "*-musllinux*"
-before-all = "apk add bsd-compat-headers"
+before-all = "apk add bsd-compat-headers rustup clang clang-dev"

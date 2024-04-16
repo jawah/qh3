@@ -1,7 +1,7 @@
 qh3
 ===
 
-|pypi-v| |pypi-pyversions| |pypi-l| |codecov|
+|pypi-pyversions|
 
 .. |pypi-v| image:: https://img.shields.io/pypi/v/qh3.svg
     :target: https://pypi.python.org/pypi/qh3
@@ -9,27 +9,33 @@ qh3
 .. |pypi-pyversions| image:: https://img.shields.io/pypi/pyversions/qh3.svg
     :target: https://pypi.python.org/pypi/qh3
 
-.. |pypi-l| image:: https://img.shields.io/pypi/l/qh3.svg
-    :target: https://pypi.python.org/pypi/qh3
-
-.. |codecov| image:: https://img.shields.io/codecov/c/github/Ousret/qh3.svg
-    :target: https://codecov.io/gh/Ousret/qh3
 
 What is ``qh3``?
 ----------------
 
 ``qh3`` is a maintained fork of the ``aioquic`` library.
-It is lighter, and more adapted to mass usage.
+
+It is lighter, and a bit faster, and more adapted to a broader audience as this package has no external dependency
+and does not rely on mainstream OpenSSL.
+
+While it is a compatible fork, it is not a drop-in replacement since the first major. See the CHANGELOG for details.
+
 Regularly improved and expect a better time to initial response in issues and PRs.
 
 ``qh3`` is a library for the QUIC network protocol in Python. It features
 a minimal TLS 1.3 implementation, a QUIC stack, and an HTTP/3 stack.
 
 QUIC was standardized in `RFC 9000`_ and HTTP/3 in `RFC 9114`_.
-``qh3`` is regularly tested for interoperability against other
-`QUIC implementations`_.
+``qh3`` follow the standardized version of QUIC and HTTP/3.
 
 To learn more about ``qh3`` please `read the documentation`_.
+
+``qh3`` stands for **Q** UIC . **H** TTP/ **3**.
+
+Our primary goal with this fork is mainly about the client aspect, while the
+server side code is maintained, we do not have enough time to add feature to it at the moment.
+
+PR are welcomed for any improvement (server or client).
 
 Why should I use ``qh3``?
 -----------------------------
@@ -63,25 +69,24 @@ Features
 Requirements
 ------------
 
-``qh3`` requires Python 3.7 or greater.
+``qh3`` requires Python and PyPy 3.7 or greater.
 
 Running the examples
 --------------------
 
 `qh3` comes with a number of examples illustrating various QUIC use cases.
 
-You can browse these examples here: https://github.com/Ousret/qh3/tree/main/examples
+You can browse these examples here: https://github.com/jawah/qh3/tree/main/examples
 
 License
 -------
 
 ``qh3`` is released under the `BSD license`_.
 
-.. _read the documentation: https://aioquic.readthedocs.io/en/latest/
+.. _read the documentation: https://qh3.readthedocs.io/en/latest/
 .. _QUIC implementations: https://github.com/quicwg/base-drafts/wiki/Implementations
 .. _cryptography: https://cryptography.io/
-.. _Chocolatey: https://chocolatey.org/
-.. _BSD license: https://aioquic.readthedocs.io/en/latest/license.html
+.. _BSD license: https://qh3.readthedocs.io/en/latest/license.html
 .. _RFC 8446: https://datatracker.ietf.org/doc/html/rfc8446
 .. _RFC 9000: https://datatracker.ietf.org/doc/html/rfc9000
 .. _RFC 9114: https://datatracker.ietf.org/doc/html/rfc9114

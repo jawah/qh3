@@ -5,6 +5,7 @@ import struct
 from typing import Dict, Optional
 
 from dnslib.dns import DNSRecord
+
 from qh3.asyncio import QuicConnectionProtocol, serve
 from qh3.quic.configuration import QuicConfiguration
 from qh3.quic.events import QuicEvent, StreamDataReceived

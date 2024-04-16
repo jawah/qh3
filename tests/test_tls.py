@@ -1,13 +1,12 @@
 import binascii
-import datetime
 import ssl
 from unittest import TestCase
-from unittest.mock import patch
 
-from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+
 from qh3 import tls
+from qh3._hazmat import Certificate as InnerCertificate
+from qh3._hazmat import CryptoError, EcPrivateKey, Ed25519PrivateKey
 from qh3.buffer import Buffer, BufferReadError
 from qh3.quic.configuration import QuicConfiguration
 from qh3.tls import (
@@ -20,10 +19,6 @@ from qh3.tls import (
     NewSessionTicket,
     ServerHello,
     State,
-    cert_alt_subject,
-    cert_subject,
-    load_pem_x509_certificates,
-    match_hostname,
     pull_block,
     pull_certificate,
     pull_certificate_request,
@@ -40,7 +35,6 @@ from qh3.tls import (
     push_finished,
     push_new_session_ticket,
     push_server_hello,
-    verify_certificate,
 )
 
 from .utils import (
@@ -48,7 +42,6 @@ from .utils import (
     SERVER_CERTFILE,
     SERVER_KEYFILE,
     generate_ec_certificate,
-    generate_ed448_certificate,
     generate_ed25519_certificate,
     load,
 )
@@ -331,7 +324,7 @@ class ContextTest(TestCase):
         self.assertEqual(client.state, State.CLIENT_EXPECT_SERVER_HELLO)
         server_input = merge_buffers(client_buf)
         self.assertGreaterEqual(len(server_input), 181)
-        self.assertLessEqual(len(server_input), 358)
+        self.assertLessEqual(len(server_input), 369)
         reset_buffers(client_buf)
 
         # Handle client hello.
@@ -342,7 +335,7 @@ class ContextTest(TestCase):
         server.handle_message(server_input, server_buf)
         self.assertEqual(server.state, State.SERVER_EXPECT_FINISHED)
         client_input = merge_buffers(server_buf)
-        self.assertGreaterEqual(len(client_input), 587)
+        self.assertGreaterEqual(len(client_input), 539)
         self.assertLessEqual(len(client_input), 2316)
 
         reset_buffers(server_buf)
@@ -354,7 +347,7 @@ class ContextTest(TestCase):
         client.handle_message(client_input, client_buf)
         self.assertEqual(client.state, State.CLIENT_POST_HANDSHAKE)
         server_input = merge_buffers(client_buf)
-        self.assertEqual(len(server_input), 52)
+        self.assertEqual(len(server_input), 36)
         reset_buffers(client_buf)
 
         # Handle finished.
@@ -369,10 +362,10 @@ class ContextTest(TestCase):
 
         # check cipher suite
         self.assertEqual(
-            client.key_schedule.cipher_suite, tls.CipherSuite.AES_256_GCM_SHA384
+            client.key_schedule.cipher_suite, tls.CipherSuite.AES_128_GCM_SHA256
         )
         self.assertEqual(
-            server.key_schedule.cipher_suite, tls.CipherSuite.AES_256_GCM_SHA384
+            server.key_schedule.cipher_suite, tls.CipherSuite.AES_128_GCM_SHA256
         )
 
     def test_handshake(self):
@@ -387,11 +380,30 @@ class ContextTest(TestCase):
 
     def _test_handshake_with_certificate(self, certificate, private_key):
         server = self.create_server()
-        server.certificate = certificate
-        server.certificate_private_key = private_key
+        server.certificate = InnerCertificate(
+            certificate.public_bytes(serialization.Encoding.DER)
+        )
+
+        if hasattr(private_key, "curve"):
+            server.certificate_private_key = EcPrivateKey(
+                private_key.private_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                ),
+                256,
+            )
+        else:
+            server.certificate_private_key = Ed25519PrivateKey(
+                private_key.private_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                )
+            )
 
         client = self.create_client(
-            cadata=server.certificate.public_bytes(serialization.Encoding.PEM),
+            cadata=certificate.public_bytes(serialization.Encoding.PEM),
             cafile=None,
         )
 
@@ -403,17 +415,16 @@ class ContextTest(TestCase):
 
     def test_handshake_with_ec_certificate(self):
         self._test_handshake_with_certificate(
-            *generate_ec_certificate(common_name="example.com")
+            *generate_ec_certificate(
+                common_name="example.com", alternative_names=["example.com"]
+            )
         )
 
     def test_handshake_with_ed25519_certificate(self):
         self._test_handshake_with_certificate(
-            *generate_ed25519_certificate(common_name="example.com")
-        )
-
-    def test_handshake_with_ed448_certificate(self):
-        self._test_handshake_with_certificate(
-            *generate_ed448_certificate(common_name="example.com")
+            *generate_ed25519_certificate(
+                common_name="example.com", alternative_names=["example.com"]
+            )
         )
 
     def test_handshake_with_alpn(self):
@@ -445,7 +456,6 @@ class ContextTest(TestCase):
         client = self.create_client(cafile=None)
         server = self.create_server()
 
-        print("HELO?")
         with self.assertRaises(tls.AlertBadCertificate) as cm:
             self._handshake(client, server)
         self.assertEqual(str(cm.exception), "unable to get local issuer certificate")
@@ -470,17 +480,7 @@ class ContextTest(TestCase):
 
         try:
             self._handshake(client, server)
-        except UnsupportedAlgorithm as exc:
-            self.skipTest(str(exc))
-
-    def test_handshake_with_x448(self):
-        client = self.create_client()
-        client._supported_groups = [tls.Group.X448]
-        server = self.create_server()
-
-        try:
-            self._handshake(client, server)
-        except UnsupportedAlgorithm as exc:
+        except CryptoError as exc:
             self.skipTest(str(exc))
 
     def test_session_ticket(self):
@@ -543,7 +543,7 @@ class ContextTest(TestCase):
             server.handle_message(server_input, server_buf)
             self.assertEqual(server.state, State.SERVER_EXPECT_FINISHED)
             client_input = merge_buffers(server_buf)
-            self.assertEqual(len(client_input), 275)
+            self.assertEqual(len(client_input), 226)
             reset_buffers(server_buf)
 
             # Handle server hello, encrypted extensions, certificate,
@@ -553,7 +553,7 @@ class ContextTest(TestCase):
             client.handle_message(client_input, client_buf)
             self.assertEqual(client.state, State.CLIENT_POST_HANDSHAKE)
             server_input = merge_buffers(client_buf)
-            self.assertEqual(len(server_input), 52)
+            self.assertEqual(len(server_input), 36)
             reset_buffers(client_buf)
 
             # Handle finished.
@@ -626,7 +626,7 @@ class ContextTest(TestCase):
             buf.seek(buf.tell() - 1)
             buf.push_uint8(1)
             client_input = merge_buffers(server_buf)
-            self.assertEqual(len(client_input), 275)
+            self.assertEqual(len(client_input), 226)
             reset_buffers(server_buf)
 
             # handle server hello and bomb
@@ -700,19 +700,6 @@ class TlsTest(TestCase):
             hello.supported_versions,
             [
                 tls.TLS_VERSION_1_3,
-                tls.TLS_VERSION_1_3_DRAFT_28,
-                tls.TLS_VERSION_1_3_DRAFT_27,
-                tls.TLS_VERSION_1_3_DRAFT_26,
-            ],
-        )
-
-        self.assertEqual(
-            hello.other_extensions,
-            [
-                (
-                    tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS_DRAFT,
-                    CLIENT_QUIC_TRANSPORT_PARAMETERS,
-                )
             ],
         )
 
@@ -887,22 +874,14 @@ class TlsTest(TestCase):
         self.assertEqual(hello.supported_groups, [tls.Group.SECP256R1])
         self.assertEqual(
             hello.supported_versions,
-            [
-                tls.TLS_VERSION_1_3,
-                tls.TLS_VERSION_1_3_DRAFT_28,
-                tls.TLS_VERSION_1_3_DRAFT_27,
-                tls.TLS_VERSION_1_3_DRAFT_26,
-            ],
+            [tls.TLS_VERSION_1_3, 32540, 32539, 32538],  # old removed draft support
         )
 
+        self.assertEqual(len(hello.other_extensions), 1)
+
         self.assertEqual(
-            hello.other_extensions,
-            [
-                (
-                    tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS_DRAFT,
-                    CLIENT_QUIC_TRANSPORT_PARAMETERS,
-                )
-            ],
+            hello.other_extensions[0][0],
+            65445,
         )
 
         # serialize
@@ -944,13 +923,10 @@ class TlsTest(TestCase):
             supported_groups=[tls.Group.SECP256R1],
             supported_versions=[
                 tls.TLS_VERSION_1_3,
-                tls.TLS_VERSION_1_3_DRAFT_28,
-                tls.TLS_VERSION_1_3_DRAFT_27,
-                tls.TLS_VERSION_1_3_DRAFT_26,
             ],
             other_extensions=[
                 (
-                    tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS_DRAFT,
+                    tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
                     CLIENT_QUIC_TRANSPORT_PARAMETERS,
                 )
             ],
@@ -1153,7 +1129,7 @@ class TlsTest(TestCase):
             EncryptedExtensions(
                 other_extensions=[
                     (
-                        tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS_DRAFT,
+                        tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
                         SERVER_QUIC_TRANSPORT_PARAMETERS,
                     )
                 ]
@@ -1179,7 +1155,7 @@ class TlsTest(TestCase):
                 other_extensions=[
                     (tls.ExtensionType.SERVER_NAME, b""),
                     (
-                        tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS_DRAFT,
+                        tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
                         SERVER_QUIC_TRANSPORT_PARAMETERS_2,
                     ),
                 ],
@@ -1205,7 +1181,7 @@ class TlsTest(TestCase):
                 other_extensions=[
                     (tls.ExtensionType.SERVER_NAME, b""),
                     (
-                        tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS_DRAFT,
+                        tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
                         SERVER_QUIC_TRANSPORT_PARAMETERS_3,
                     ),
                 ],
@@ -1286,172 +1262,3 @@ class TlsTest(TestCase):
         buf = Buffer(128)
         push_finished(buf, finished)
         self.assertEqual(buf.data, load("tls_finished.bin"))
-
-
-class VerifyCertificateTest(TestCase):
-    def test_verify_certificate_chain(self):
-        with open(SERVER_CERTFILE, "rb") as fp:
-            certificate = load_pem_x509_certificates(fp.read())[0]
-
-        with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_before_utc
-
-            # fail
-            with self.assertRaises(tls.AlertBadCertificate) as cm:
-                verify_certificate(certificate=certificate)
-            self.assertEqual(
-                str(cm.exception), "unable to get local issuer certificate"
-            )
-
-            # ok
-            verify_certificate(
-                cafile=SERVER_CACERTFILE,
-                certificate=certificate,
-            )
-
-    def test_verify_certificate_chain_self_signed(self):
-        certificate, _ = generate_ec_certificate(
-            common_name="localhost", curve=ec.SECP256R1, alternative_names=["localhost"]
-        )
-
-        with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_before_utc
-
-            # fail
-            with self.assertRaises(tls.AlertBadCertificate) as cm:
-                verify_certificate(certificate=certificate)
-            self.assertIn(
-                str(cm.exception),
-                (
-                    "self signed certificate",
-                    "self-signed certificate",
-                ),
-            )
-
-            # ok
-            verify_certificate(
-                cadata=certificate.public_bytes(serialization.Encoding.PEM),
-                certificate=certificate,
-            )
-
-    def test_verify_dates(self):
-        certificate, _ = generate_ec_certificate(
-            common_name="example.com",
-            curve=ec.SECP256R1,
-            alternative_names=["example.com"],
-        )
-        cadata = certificate.public_bytes(serialization.Encoding.PEM)
-
-        #  too early
-        with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = (
-                certificate.not_valid_before_utc - datetime.timedelta(seconds=1)
-            )
-            with self.assertRaises(tls.AlertCertificateExpired) as cm:
-                verify_certificate(cadata=cadata, certificate=certificate)
-            self.assertEqual(str(cm.exception), "Certificate is not valid yet")
-
-        # valid
-        with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_before_utc
-            verify_certificate(cadata=cadata, certificate=certificate)
-
-        with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_after_utc
-            verify_certificate(cadata=cadata, certificate=certificate)
-
-        # too late
-        with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = (
-                certificate.not_valid_after_utc + datetime.timedelta(seconds=1)
-            )
-            with self.assertRaises(tls.AlertCertificateExpired) as cm:
-                verify_certificate(cadata=cadata, certificate=certificate)
-            self.assertEqual(str(cm.exception), "Certificate is no longer valid")
-
-    def test_verify_subject(self):
-        certificate, _ = generate_ec_certificate(
-            common_name="example.com",
-            curve=ec.SECP256R1,
-            alternative_names=["example.com"],
-        )
-        cadata = certificate.public_bytes(serialization.Encoding.PEM)
-
-        with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_before_utc
-
-            # both valid
-            match_hostname(
-                tuple(cert_subject(certificate)),
-                tuple(cert_alt_subject(certificate)),
-                hostname="example.com",
-                hostname_checks_common_name=True,
-            )
-
-            verify_certificate(
-                cadata=cadata,
-                certificate=certificate,
-            )
-
-            # invalid
-            with self.assertRaises(ssl.CertificateError) as cm:
-                match_hostname(
-                    tuple(cert_subject(certificate)),
-                    tuple(cert_alt_subject(certificate)),
-                    hostname="test.example.com",
-                    hostname_checks_common_name=True,
-                )
-            self.assertEqual(
-                "\n".join(cm.exception.args),
-                "hostname 'test.example.com' doesn't match 'example.com'",
-            )
-
-            with self.assertRaises(ssl.CertificateError) as cm:
-                match_hostname(
-                    tuple(cert_subject(certificate)),
-                    tuple(cert_alt_subject(certificate)),
-                    hostname="acme.com",
-                    hostname_checks_common_name=True,
-                )
-            self.assertEqual(
-                "\n".join(cm.exception.args),
-                "hostname 'acme.com' doesn't match 'example.com'",
-            )
-
-    def test_verify_subject_with_subjaltname(self):
-        certificate, _ = generate_ec_certificate(
-            alternative_names=["*.example.com", "example.com"],
-            common_name="example.com",
-            curve=ec.SECP256R1,
-        )
-        cadata = certificate.public_bytes(serialization.Encoding.PEM)
-
-        with patch("qh3.tls.utcnow") as mock_utcnow:
-            mock_utcnow.return_value = certificate.not_valid_before_utc
-
-            # valid
-            match_hostname(
-                tuple(cert_subject(certificate)),
-                tuple(cert_alt_subject(certificate)),
-                hostname="example.com",
-            )
-            verify_certificate(cadata=cadata, certificate=certificate)
-            match_hostname(
-                tuple(cert_subject(certificate)),
-                tuple(cert_alt_subject(certificate)),
-                hostname="test.example.com",
-            )
-            verify_certificate(cadata=cadata, certificate=certificate)
-
-            # invalid
-            with self.assertRaises(ssl.CertificateError) as cm:
-                match_hostname(
-                    tuple(cert_subject(certificate)),
-                    tuple(cert_alt_subject(certificate)),
-                    hostname="acme.com",
-                )
-            self.assertEqual(
-                "\n".join(cm.exception.args),
-                "hostname 'acme.com' doesn't match either of '*.example.com', "
-                "'example.com'",
-            )

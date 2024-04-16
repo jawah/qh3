@@ -7,6 +7,9 @@ from unittest import TestCase, skipIf
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives import serialization
+
+from qh3._hazmat import Certificate as InnerCertificate
+from qh3._hazmat import EcPrivateKey, Ed25519PrivateKey
 from qh3.asyncio.client import connect
 from qh3.asyncio.protocol import QuicConnectionProtocol
 from qh3.asyncio.server import serve
@@ -21,7 +24,6 @@ from .utils import (
     SKIP_TESTS,
     asynctest,
     generate_ec_certificate,
-    generate_ed448_certificate,
     generate_ed25519_certificate,
 )
 
@@ -132,10 +134,32 @@ class HighLevelTest(TestCase):
             self.assertEqual(response, b"gnip")
 
     async def _test_connect_and_serve_with_certificate(self, certificate, private_key):
+        inner_certificate = InnerCertificate(
+            certificate.public_bytes(serialization.Encoding.DER)
+        )
+
+        if hasattr(private_key, "curve"):
+            inner_private_key = EcPrivateKey(
+                private_key.private_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                ),
+                256,
+            )
+        else:
+            inner_private_key = Ed25519PrivateKey(
+                private_key.private_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                )
+            )
+
         async with self.run_server(
             configuration=QuicConfiguration(
-                certificate=certificate,
-                private_key=private_key,
+                certificate=inner_certificate,
+                private_key=inner_private_key,
                 is_client=False,
             )
         ) as server_port:
@@ -158,14 +182,6 @@ class HighLevelTest(TestCase):
     async def test_connect_and_serve_with_ed25519_certificate(self):
         await self._test_connect_and_serve_with_certificate(
             *generate_ed25519_certificate(
-                common_name="localhost", alternative_names=["localhost"]
-            )
-        )
-
-    @asynctest
-    async def test_connect_and_serve_with_ed448_certificate(self):
-        await self._test_connect_and_serve_with_certificate(
-            *generate_ed448_certificate(
                 common_name="localhost", alternative_names=["localhost"]
             )
         )
@@ -424,7 +440,7 @@ class HighLevelTest(TestCase):
         config1.load_cert_chain(SERVER_CERTFILE, SERVER_KEYFILE)
         config2.load_cert_chain(SERVER_COMBINEDFILE)
         config3.load_cert_chain(
-            open(SERVER_CERTFILE, "r").read(), open(SERVER_KEYFILE, "r").read()
+            open(SERVER_CERTFILE).read(), open(SERVER_KEYFILE).read()
         )
         config4.load_cert_chain(
             open(SERVER_CERTFILE, "rb").read(), open(SERVER_KEYFILE, "rb").read()

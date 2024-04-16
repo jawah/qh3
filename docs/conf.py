@@ -37,7 +37,6 @@ extensions = [
     'sphinxcontrib.asyncio',
 ]
 intersphinx_mapping = {
-    'cryptography': ('https://cryptography.io/en/latest', None),
     'python': ('https://docs.python.org/3', None),
 }
 
@@ -55,8 +54,8 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'qh3'
-copyright = u'2019, Jeremy Lainé'
-author = u'Jeremy Lainé'
+copyright = '2019, Jeremy Lainé'
+author = 'Ahmed TAHRI'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -100,9 +99,9 @@ html_theme = 'alabaster'
 html_theme_options = {
     'description': 'A library for QUIC in Python.',
     'github_button': True,
-    'github_user': 'Ousret',
+    'github_user': 'jawah',
     'github_repo': 'qh3',
-    'logo': 'qh3.svg',
+    # 'logo': 'qh3.svg',
 }
 
 # Add any paths that contain custom static files (such as style sheets) here,
@@ -128,7 +127,7 @@ html_sidebars = {
 # -- Options for HTMLHelp output ------------------------------------------
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = 'aioquicdoc'
+htmlhelp_basename = 'qh3doc'
 
 
 # -- Options for LaTeX output ---------------------------------------------
@@ -155,7 +154,7 @@ latex_elements = {
 # (source start file, target name, title,
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
-    (master_doc, 'qh3.tex', 'qh3 Documentation',
+    (master_doc, 'qh3.tex', 'qh3 documentation',
      author, 'manual'),
 ]
 
@@ -165,7 +164,7 @@ latex_documents = [
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
 man_pages = [
-    (master_doc, 'qh3', 'qh3 Documentation',
+    (master_doc, 'qh3', 'qh3 documentation',
      [author], 1)
 ]
 
@@ -176,7 +175,7 @@ man_pages = [
 # (source start file, target name, title, author,
 #  dir menu entry, description, category)
 texinfo_documents = [
-    (master_doc, 'qh3', 'qh3 Documentation',
+    (master_doc, 'qh3', 'qh3 documentation',
      author, 'qh3', 'One line description of project.',
      'Miscellaneous'),
 ]

@@ -1,4 +1,38 @@
-0.15.1 (2023-03-21)
+1.0.0 (2024-04-18)
+=====================
+
+**Removed**
+- **Breaking:** Dependency on ``cryptography`` along with the indirect dependencies on cffi and pycparser.
+- **Breaking:** ``H0Connection`` class that was previously deprecated. Use either urllib3-future or niquests instead.
+- **Breaking:** Draft support for QUIC and H3 protocols.
+- **Breaking:** ``RSA_PKCS1_SHA1`` signature algorithm due to its inherent risk dealing with the unsafe SHA1.
+- **Breaking:** ED448/X448 signature and private key are no longer supported due to its absence in aws-lc-rs.
+- **Breaking:** You may no longer pass certificates (along with private keys) as object that comes from ``cryptography``. You have to encode them into PEM format.
+
+**Changed**
+- ls-qpack binding integration upgraded to v2.5.4 and migrated to Rust.
+- cryptographic bindings are rewritten in Rust using the PyO3 SDK, the underlying crypto library is aws-lc-rs 1.6.4
+- certificate chain control with dns name matching is delegated to rustls instead of previously half-vendored (py)OpenSSL (X509Store).
+
+**Added**
+- Exposed a public API for ``qh3`` (top-level import).
+- SECP384R1 key exchange algorithm as a supported group by default to make for the X448 removal.
+- SECP521R1 key exchange algorithm is also supported but not enabled by default per standards (NSA Suite B) recommendations.
+
+**Misc**
+- Noticeable performance improvement and memory safety thanks to the Rust migration. We tried to leverage pure Rust binding whenever we could do it safely.
+- Example scripts are adapted for this major version.
+- Using ``maturin`` as the build backend.
+- Published new compatible architectures for pre-built wheels.
+- Initial MSRV 1.75+
+
+If you rely on one aspect of enumerated breaking changes, please pin qh3 to
+exclude this major (eg. ``>=0.15,<1``) and inform us on how this release affected your program(s).
+We will listen.
+
+The semantic versioning will be respected excepted for the hazardous materials.
+
+0.15.1 (2024-03-21)
 ===================
 
 **Fixed**
@@ -131,4 +165,3 @@
 
 - Mitigate ssl.match_hostname deprecation by porting urllib3 match_hostname
 - Mimic ssl load_default_cert into the certification chain verification
-
