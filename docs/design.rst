@@ -15,8 +15,8 @@ TLS and encryption
 TLS 1.3
 +++++++
 
-``aioquic`` features a minimal TLS 1.3 implementation built upon the
-`cryptography`_ library. This is because QUIC requires some APIs which are
+``qh3`` features a minimal TLS 1.3 implementation built upon the
+`aws-lc-rs`_ library. This is because QUIC requires some APIs which are
 currently unavailable in mainstream TLS implementations such as OpenSSL:
 
 - the ability to extract traffic secrets
@@ -30,8 +30,7 @@ Header protection and payload encryption
 QUIC makes extensive use of cryptographic operations to protect QUIC packet
 headers and encrypt packet payloads. These operations occur for every single
 packet and are a determining factor for performance. For this reason, they
-are implemented as a C extension linked to `OpenSSL`_.
+are implemented in Rust.
 
 .. _sans I/O: https://sans-io.readthedocs.io/
-.. _cryptography: https://cryptography.io/
-.. _OpenSSL: https://www.openssl.org/
+.. _aws-lc-rs: https://github.com/aws/aws-lc-rs

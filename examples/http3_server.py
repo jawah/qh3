@@ -7,11 +7,11 @@ from collections import deque
 from email.utils import formatdate
 from typing import Callable, Deque, Dict, List, Optional, Union, cast
 
-import qh3
 import wsproto
 import wsproto.events
+
+import qh3
 from qh3.asyncio import QuicConnectionProtocol, serve
-from qh3.h0.connection import H0_ALPN, H0Connection
 from qh3.h3.connection import H3_ALPN, H3Connection
 from qh3.h3.events import (
     DatagramReceived,
@@ -32,7 +32,6 @@ except ImportError:
     uvloop = None
 
 AsgiApplication = Callable
-HttpConnection = Union[H0Connection, H3Connection]
 
 SERVER_NAME = "qh3/" + qh3.__version__
 
@@ -42,7 +41,7 @@ class HttpRequestHandler:
         self,
         *,
         authority: bytes,
-        connection: HttpConnection,
+        connection: H3Connection,
         protocol: QuicConnectionProtocol,
         scope: Dict,
         stream_ended: bool,
@@ -128,7 +127,7 @@ class WebSocketHandler:
     def __init__(
         self,
         *,
-        connection: HttpConnection,
+        connection: H3Connection,
         scope: Dict,
         stream_id: int,
         transmit: Callable[[], None],
@@ -228,7 +227,7 @@ class WebTransportHandler:
     def __init__(
         self,
         *,
-        connection: HttpConnection,
+        connection: H3Connection,
         scope: Dict,
         stream_id: int,
         transmit: Callable[[], None],
@@ -324,13 +323,13 @@ class HttpServerProtocol(QuicConnectionProtocol):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._handlers: Dict[int, Handler] = {}
-        self._http: Optional[HttpConnection] = None
+        self._http: Optional[H3Connection] = None
 
     def http_event_received(self, event: H3Event) -> None:
         if isinstance(event, HeadersReceived) and event.stream_id not in self._handlers:
             authority = None
             headers = []
-            http_version = "0.9" if isinstance(self._http, H0Connection) else "3"
+            http_version = "3"
             raw_path = b""
             method = ""
             protocol = None
@@ -448,13 +447,11 @@ class HttpServerProtocol(QuicConnectionProtocol):
         if isinstance(event, ProtocolNegotiated):
             if event.alpn_protocol in H3_ALPN:
                 self._http = H3Connection(self._quic, enable_webtransport=True)
-            elif event.alpn_protocol in H0_ALPN:
-                self._http = H0Connection(self._quic)
         elif isinstance(event, DatagramFrameReceived):
             if event.data == b"quack":
                 self._quic.send_datagram_frame(b"quack-ack")
 
-        #  pass event to the HTTP layer
+        # pass event to the HTTP layer
         if self._http is not None:
             for http_event in self._http.handle_event(event):
                 self.http_event_received(http_event)
@@ -573,7 +570,7 @@ if __name__ == "__main__":
         secrets_log_file = None
 
     configuration = QuicConfiguration(
-        alpn_protocols=H3_ALPN + H0_ALPN + ["siduck"],
+        alpn_protocols=H3_ALPN + ["siduck"],
         is_client=False,
         max_datagram_frame_size=65536,
         quic_logger=quic_logger,

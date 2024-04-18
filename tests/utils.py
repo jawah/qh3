@@ -6,7 +6,7 @@ import os
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 
 def asynctest(coro):
@@ -47,7 +47,7 @@ def generate_certificate(*, alternative_names, common_name, hash_algorithm, key)
 def generate_ec_certificate(common_name, alternative_names=None, curve=ec.SECP256R1):
     if alternative_names is None:
         alternative_names = []
-    key = ec.generate_private_key(curve=curve)
+    key = ec.generate_private_key(curve=curve())
     return generate_certificate(
         alternative_names=alternative_names,
         common_name=common_name,
@@ -68,22 +68,17 @@ def generate_ed25519_certificate(common_name, alternative_names=None):
     )
 
 
-def generate_ed448_certificate(common_name, alternative_names=None):
-    if alternative_names is None:
-        alternative_names = []
-    key = ed448.Ed448PrivateKey.generate()
-    return generate_certificate(
-        alternative_names=alternative_names,
-        common_name=common_name,
-        hash_algorithm=None,
-        key=key,
-    )
-
-
 def load(name: str) -> bytes:
     path = os.path.join(os.path.dirname(__file__), name)
     with open(path, "rb") as fp:
         return fp.read()
+
+
+def override(name: str, new_payload: bytes) -> None:
+    """Kept for updating binaries after a protocol update"""
+    path = os.path.join(os.path.dirname(__file__), name)
+    with open(path, "wb") as fp:
+        fp.write(new_payload)
 
 
 SERVER_CACERTFILE = os.path.join(os.path.dirname(__file__), "pycacert.pem")

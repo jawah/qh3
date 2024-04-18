@@ -1,4 +1,3 @@
-include LICENSE src/qh3/py.typed
+include LICENSE qh3/py.typed README.rst CHANGELOG.rst SECURITY.md
 recursive-include docs *.py *.rst Makefile
 recursive-include tests *.bin *.pem *.py
-recursive-include vendor *

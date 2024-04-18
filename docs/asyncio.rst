@@ -11,7 +11,7 @@ Python's standard asynchronous I/O framework.
 
 The examples can be browsed on GitHub:
 
-https://github.com/aiortc/aioquic/tree/main/examples
+https://github.com/jawah/qh3/tree/main/examples
 
 .. automodule:: qh3.asyncio
 

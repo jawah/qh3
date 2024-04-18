@@ -6,35 +6,23 @@ import pickle
 import ssl
 import time
 from collections import deque
-from typing import BinaryIO, Callable, Deque, Dict, List, Optional, Union, cast
+from typing import BinaryIO, Callable, Deque, Dict, List, Optional, cast
 from urllib.parse import urlparse
 
-import qh3
 import wsproto
 import wsproto.events
+
+import qh3
 from qh3.asyncio.client import connect
 from qh3.asyncio.protocol import QuicConnectionProtocol
-from qh3.h0.connection import H0_ALPN, H0Connection
 from qh3.h3.connection import H3_ALPN, ErrorCode, H3Connection
-from qh3.h3.events import (
-    DataReceived,
-    H3Event,
-    HeadersReceived,
-    PushPromiseReceived,
-)
+from qh3.h3.events import DataReceived, H3Event, HeadersReceived, PushPromiseReceived
 from qh3.quic.configuration import QuicConfiguration
 from qh3.quic.events import QuicEvent
 from qh3.quic.logger import QuicFileLogger
 from qh3.tls import CipherSuite, SessionTicket
 
-try:
-    import uvloop
-except ImportError:
-    uvloop = None
-
 logger = logging.getLogger("client")
-
-HttpConnection = Union[H0Connection, H3Connection]
 
 USER_AGENT = "qh3/" + qh3.__version__
 
@@ -69,7 +57,7 @@ class HttpRequest:
 
 class WebSocket:
     def __init__(
-        self, http: HttpConnection, stream_id: int, transmit: Callable[[], None]
+        self, http: H3Connection, stream_id: int, transmit: Callable[[], None]
     ) -> None:
         self.http = http
         self.queue: asyncio.Queue[str] = asyncio.Queue()
@@ -125,15 +113,11 @@ class HttpClient(QuicConnectionProtocol):
         super().__init__(*args, **kwargs)
 
         self.pushes: Dict[int, Deque[H3Event]] = {}
-        self._http: Optional[HttpConnection] = None
+        self._http: Optional[H3Connection] = None
         self._request_events: Dict[int, Deque[H3Event]] = {}
         self._request_waiter: Dict[int, asyncio.Future[Deque[H3Event]]] = {}
         self._websockets: Dict[int, WebSocket] = {}
-
-        if self._quic.configuration.alpn_protocols[0].startswith("hq-"):
-            self._http = H0Connection(self._quic)
-        else:
-            self._http = H3Connection(self._quic)
+        self._http = H3Connection(self._quic)
 
     async def get(self, url: str, headers: Optional[Dict] = None) -> Deque[H3Event]:
         """
@@ -270,8 +254,11 @@ async def perform_http_request(
     # print speed
     octets = 0
     for http_event in http_events:
+        if isinstance(http_event, HeadersReceived):
+            logger.info(str(http_event.headers))
         if isinstance(http_event, DataReceived):
             octets += len(http_event.data)
+            logger.info(str(http_event.data))
     logger.info(
         "Response received for %s %s : %d bytes in %.1f s (%.3f Mbps)"
         % (method, urlparse(url).path, octets, elapsed, octets * 8 / elapsed / 1000000)
@@ -380,7 +367,7 @@ async def main(
 
         # reconstruct url with new hostname and port
         _p = _p._replace(scheme=_scheme)
-        _p = _p._replace(netloc="{}:{}".format(_host, _port))
+        _p = _p._replace(netloc=f"{_host}:{_port}")
         _p = urlparse(_p.geturl())
         urls[i] = _p.geturl()
 
@@ -400,7 +387,7 @@ async def main(
 
             # send some messages and receive reply
             for i in range(2):
-                message = "Hello {}, WebSocket!".format(i)
+                message = f"Hello {i}, WebSocket!"
                 print("> " + message)
                 await ws.send(message)
 
@@ -518,9 +505,7 @@ if __name__ == "__main__":
         raise Exception("%s is not a directory" % args.output_dir)
 
     # prepare configuration
-    configuration = QuicConfiguration(
-        is_client=True, alpn_protocols=H0_ALPN if args.legacy_http else H3_ALPN
-    )
+    configuration = QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN)
     if args.ca_certs:
         configuration.load_verify_locations(args.ca_certs)
     if args.cipher_suites:
@@ -544,8 +529,6 @@ if __name__ == "__main__":
         except FileNotFoundError:
             pass
 
-    if uvloop is not None:
-        uvloop.install()
     asyncio.run(
         main(
             configuration=configuration,
