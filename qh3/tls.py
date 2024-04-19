@@ -307,6 +307,7 @@ def verify_certificate(
     cafile: str | None = None,
     capath: str | None = None,
     server_name: str | None = None,
+    assert_server_name: bool = True,
 ) -> None:
     if chain is None:
         chain = []
@@ -374,7 +375,7 @@ def verify_certificate(
                             for cert in load_pem_x509_certificates(fp.read()):
                                 authorities.append(cert.public_bytes())
 
-    if server_name is None:
+    if server_name is None or assert_server_name is False:
         for alt_name in certificate.get_subject_alt_names():
             server_name = alt_name.decode()
             server_name = server_name[server_name.find("(") + 1 : server_name.find(")")]
@@ -404,6 +405,8 @@ def verify_certificate(
         ExpiredCertificateError,
         UnacceptableCertificateError,
     ) as exc:
+        if isinstance(exc, InvalidNameCertificateError) and assert_server_name is False:
+            return
         raise AlertBadCertificate(exc.args[0])
 
 
@@ -1692,6 +1695,7 @@ class Context:
                 certificate=self._peer_certificate,
                 chain=self._peer_certificate_chain,
                 server_name=self._server_name,
+                assert_server_name=self._verify_hostname,
             )
 
         if self._assert_fingerprint is not None:

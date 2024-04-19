@@ -1,3 +1,5 @@
+import logging
+
 from .asyncio import QuicConnectionProtocol, connect, serve
 from .h3 import events as h3_events
 from .h3.connection import H3Connection, ProtocolError
@@ -9,7 +11,7 @@ from .quic.logger import QuicFileLogger, QuicLogger
 from .quic.packet import QuicProtocolVersion
 from .tls import CipherSuite, SessionTicket
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 __all__ = (
     "connect",
@@ -31,3 +33,8 @@ __all__ = (
     "SessionTicket",
     "__version__",
 )
+
+# Attach a NullHandler to the top level logger by default
+# https://docs.python.org/3.3/howto/logging.html#configuring-logging-for-a-library
+logging.getLogger("quic").addHandler(logging.NullHandler())
+logging.getLogger("http3").addHandler(logging.NullHandler())
