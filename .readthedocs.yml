@@ -7,7 +7,7 @@ build:
     python: "3.12"
     rust: "1.75"
   apt_packages:
-    - libclang
+    - clang
     - cmake
 sphinx:
   configuration: docs/conf.py
