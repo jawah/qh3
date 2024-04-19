@@ -7,6 +7,9 @@
 **Added**
 - Exposed ``CipherSuite`` and ``SessionTicket`` classes in the top-level import.
 
+**Misc**
+- Exposed a x509 helper to make for ``cryptography`` dependency removal, solely for Niquests usage.
+
 1.0.0 (2024-04-18)
 =====================
 
