@@ -62,18 +62,3 @@ select = [
     "W",  # pycodestyle
     "I",  # isort
 ]
-
-# neat trick to add bsd compat headers only in musllinux images
-[tool.cibuildwheel.linux]
-before-all = [
-    "curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain=stable --profile=minimal -y",
-    "yum install -y clang clang-devel",
-    "yum install -y kernel-devel",
-]
-
-[tool.cibuildwheel.windows]
-before-all = "choco install llvm nasm -y"
-
-[[tool.cibuildwheel.overrides]]
-select = "*-musllinux*"
-before-all = "apk add bsd-compat-headers rustup clang clang-dev"

@@ -5,14 +5,12 @@ use pyo3::pyclass;
 
 
 use rsa::{RsaPrivateKey, RsaPublicKey, Oaep, sha2::Sha256};
-use rand::rngs::ThreadRng;
 
 
-#[pyclass(module = "qh3._hazmat", unsendable)]
+#[pyclass(module = "qh3._hazmat")]
 pub struct Rsa {
     public_key: RsaPublicKey,
     private_key: RsaPrivateKey,
-    rng: ThreadRng,
 }
 
 #[pymethods]
@@ -27,7 +25,6 @@ impl Rsa {
         Rsa {
             public_key: public_key,
             private_key: private_key,
-            rng: rng
         }
     }
 
@@ -35,7 +32,9 @@ impl Rsa {
         let payload_to_enc = data.as_bytes();
 
         let padding = Oaep::new::<Sha256>();
-        let enc_data = self.public_key.encrypt(&mut (self.rng), padding, &payload_to_enc[..]).expect("failed to encrypt");
+        let mut rng = rand::thread_rng();
+
+        let enc_data = self.public_key.encrypt(&mut rng, padding, &payload_to_enc[..]).expect("failed to encrypt");
 
         return PyBytes::new(
             py,
