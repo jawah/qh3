@@ -6,24 +6,24 @@ use pyo3::pymethods;
 use pyo3::pyclass;
 
 
-#[pyclass(module = "qh3._hazmat", unsendable)]
+#[pyclass(module = "qh3._hazmat")]
 pub struct X25519KeyExchange {
     private: agreement::PrivateKey,
 }
 
 
-#[pyclass(module = "qh3._hazmat", unsendable)]
+#[pyclass(module = "qh3._hazmat")]
 pub struct ECDHP256KeyExchange {
     private: agreement::PrivateKey,
 }
 
 
-#[pyclass(module = "qh3._hazmat", unsendable)]
+#[pyclass(module = "qh3._hazmat")]
 pub struct ECDHP384KeyExchange {
     private: agreement::PrivateKey,
 }
 
-#[pyclass(module = "qh3._hazmat", unsendable)]
+#[pyclass(module = "qh3._hazmat")]
 pub struct ECDHP521KeyExchange {
     private: agreement::PrivateKey,
 }

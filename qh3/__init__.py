@@ -7,8 +7,9 @@ from .quic.configuration import QuicConfiguration
 from .quic.connection import QuicConnection, QuicConnectionError
 from .quic.logger import QuicFileLogger, QuicLogger
 from .quic.packet import QuicProtocolVersion
+from .tls import CipherSuite, SessionTicket
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 __all__ = (
     "connect",
@@ -26,5 +27,7 @@ __all__ = (
     "QuicFileLogger",
     "QuicLogger",
     "ProtocolError",
+    "CipherSuite",
+    "SessionTicket",
     "__version__",
 )

@@ -24,19 +24,19 @@ pyo3::create_exception!(_hazmat, ExpiredCertificateError, PyException);
 pyo3::create_exception!(_hazmat, UnacceptableCertificateError, PyException);
 
 
-#[pyclass(name = "Extension", module = "qh3._hazmat", unsendable, frozen)]
+#[pyclass(name = "Extension", module = "qh3._hazmat", frozen)]
 pub struct Extension {
     oid: String,
     value: Vec<u8>,
 }
 
-#[pyclass(name = "Subject", module = "qh3._hazmat", unsendable, frozen)]
+#[pyclass(name = "Subject", module = "qh3._hazmat", frozen)]
 pub struct Subject {
     oid: String,
     value: Vec<u8>
 }
 
-#[pyclass(name = "Certificate", module = "qh3._hazmat", unsendable, frozen)]
+#[pyclass(name = "Certificate", module = "qh3._hazmat", frozen)]
 pub struct Certificate {
     version: u8,
     serial_number: String,

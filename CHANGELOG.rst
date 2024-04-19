@@ -1,3 +1,12 @@
+1.0.1 (2024-04-19)
+=====================
+
+**Fixed**
+- PyO3 unsendable classes constraint has been relaxed. qh3 is not thread-safe and you should take appropriate measures in a concurrent environment.
+
+**Added**
+- Exposed ``CipherSuite`` and ``SessionTicket`` classes in the top-level import.
+
 1.0.0 (2024-04-18)
 =====================
 

@@ -13,15 +13,19 @@ pyo3::create_exception!(_hazmat, DecoderStreamError, PyException);
 pyo3::create_exception!(_hazmat, DecompressionFailed, PyException);
 
 
-#[pyclass(name = "QpackDecoder", module = "qh3._hazmat", unsendable)]
+
+#[pyclass(name = "QpackDecoder", module = "qh3._hazmat")]
 pub struct QpackDecoder {
     decoder: Decoder,
 }
 
-#[pyclass(name = "QpackEncoder", module = "qh3._hazmat", unsendable)]
+#[pyclass(name = "QpackEncoder", module = "qh3._hazmat")]
 pub struct QpackEncoder {
     encoder: Encoder,
 }
+
+unsafe impl Send for QpackDecoder {}
+unsafe impl Send for QpackEncoder {}
 
 #[pymethods]
 impl QpackEncoder {
