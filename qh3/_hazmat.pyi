@@ -167,3 +167,43 @@ class SignatureError(Exception): ...
 class QUICHeaderProtection:
     def __init__(self, key: bytes, algorithm: int) -> None: ...
     def mask(self, sample: bytes) -> bytes: ...
+
+class ReasonFlags(Enum):
+    unspecified = 0
+    key_compromise = 1
+    ca_compromise = 2
+    affiliation_changed = 3
+    superseded = 4
+    cessation_of_operation = 5
+    certificate_hold = 6
+    privilege_withdrawn = 9
+    aa_compromise = 10
+    remove_from_crl = 8
+
+class OCSPResponseStatus(Enum):
+    SUCCESSFUL = 0
+    MALFORMED_REQUEST = 1
+    INTERNAL_ERROR = 2
+    TRY_LATER = 3
+    SIG_REQUIRED = 5
+    UNAUTHORIZED = 6
+
+class OCSPCertStatus(Enum):
+    GOOD = 0
+    REVOKED = 1
+    UNKNOWN = 2
+
+class OCSPResponse:
+    def __init__(self, raw_response: bytes) -> None: ...
+    @property
+    def next_update(self) -> int: ...
+    @property
+    def response_status(self) -> OCSPResponseStatus: ...
+    @property
+    def certificate_status(self) -> OCSPCertStatus: ...
+    @property
+    def revocation_reason(self) -> ReasonFlags | None: ...
+
+class OCSPRequest:
+    def __init__(self, peer_certificate: bytes, issuer_certificate: bytes) -> None: ...
+    def public_bytes(self) -> bytes: ...

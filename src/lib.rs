@@ -9,6 +9,7 @@ mod agreement;
 mod private_key;
 mod pkcs8;
 mod hpk;
+mod ocsp;
 
 pub use self::headers::{QpackDecoder, QpackEncoder, StreamBlocked, EncoderStreamError, DecoderStreamError, DecompressionFailed};
 pub use self::aead::{AeadChaCha20Poly1305, AeadAes128Gcm, AeadAes256Gcm};
@@ -18,6 +19,7 @@ pub use self::private_key::{RsaPrivateKey, DsaPrivateKey, Ed25519PrivateKey, EcP
 pub use self::agreement::{X25519KeyExchange, ECDHP256KeyExchange, ECDHP384KeyExchange, ECDHP521KeyExchange};
 pub use self::pkcs8::{PrivateKeyInfo, KeyType};
 pub use self::hpk::{QUICHeaderProtection};
+pub use self::ocsp::{OCSPResponse, OCSPCertStatus, OCSPResponseStatus, ReasonFlags, OCSPRequest};
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
 
@@ -61,5 +63,11 @@ fn _hazmat(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<ECDHP521KeyExchange>()?;
     // General Crypto Error
     m.add("CryptoError", py.get_type::<CryptoError>())?;
+    // Niquests OCSP helper
+    m.add_class::<OCSPResponse>()?;
+    m.add_class::<OCSPCertStatus>()?;
+    m.add_class::<OCSPResponseStatus>()?;
+    m.add_class::<ReasonFlags>()?;
+    m.add_class::<OCSPRequest>()?;
     Ok(())
 }
