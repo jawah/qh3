@@ -1038,14 +1038,12 @@ class H3Connection:
                 # feed unframed data to decoder
                 data = buf.pull_bytes(buf.capacity - buf.tell())
                 consumed = buf.tell()
+                # todo: fix this in underlying rust binding.
+                #  we remain on a static table forever (encoder side)
                 # try:
                 #     self._encoder.feed_decoder(data)
                 # except DecoderStreamError as exc:
                 #     raise QpackDecoderStreamError() from exc
-                try:
-                    self._decoder.feed_encoder(data)
-                except EncoderStreamError as exc:
-                    raise QpackDecoderStreamError() from exc
                 self._decoder_bytes_received += len(data)
             elif stream.stream_type == StreamType.QPACK_ENCODER:
                 # feed unframed data to encoder

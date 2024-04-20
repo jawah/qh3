@@ -1,3 +1,14 @@
+1.0.2 (2024-04-20)
+=====================
+
+**Fixed**
+- qpack encoder/decoder blocking state in a rare condition.
+- missing (a default) NullHandler for ``quic`` and ``http3`` loggers causing a StreamHandler to write into stderr.
+- setting assert_hostname to False did not disable hostname verification / match with given certificate.
+
+**Changed**
+- Updated rustls to v0.23.5
+
 1.0.1 (2024-04-19)
 =====================
 

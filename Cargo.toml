@@ -1,6 +1,6 @@
 [package]
 name = "qh3"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 rust-version = "1.75"
 license = "BSD-3"
@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.20.3", features = ["abi3-py37"] }
 ls-qpack = "0.1.4"
-rustls = "0.23.4"
+rustls = "0.23.5"
 x509-parser = { version = "0.16.0", features = ["verify"] }
 rsa = { version = "0.9.6", features = ["sha2", "pem", "getrandom"] }
 dsa = { version = "0.6.3"}
