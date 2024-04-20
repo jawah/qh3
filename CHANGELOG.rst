@@ -1,3 +1,9 @@
+1.0.3 (2024-04-20)
+=====================
+
+**Fixed**
+- setting assert_hostname to False triggered an error when the peer certificate contained at least one IP in subject alt names.
+
 1.0.2 (2024-04-20)
 =====================
 

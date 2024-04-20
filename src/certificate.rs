@@ -344,6 +344,7 @@ impl ServerVerifier {
         }
     }
 
+    #[allow(unreachable_code)]
     pub fn verify(&mut self, peer: &PyBytes, intermediaries: Vec<&PyBytes>, server_name: String) -> PyResult<()> {
         let peer_der = CertificateDer::from(peer.as_bytes());
         let mut intermediaries_der = Vec::new();
@@ -352,26 +353,36 @@ impl ServerVerifier {
             intermediaries_der.push(CertificateDer::from(intermediary.as_bytes()));
         }
 
-        let res = self.inner.verify_server_cert(
-            &peer_der,
-            &intermediaries_der,
-            &ServerName::try_from(server_name).expect("invalid DNS name"),
-            &[],
-            UnixTime::now(),
-        );
+        let parsed_name_res = ServerName::try_from(server_name);
 
-        match res {
-            Ok(_) => Ok(()),
-            Err(Error::InvalidCertificate(err)) => {
-                match err {
-                    CertificateError::UnknownIssuer => Err(SelfSignedCertificateError::new_err("unable to get local issuer certificate")),
-                    CertificateError::NotValidForName => Err(InvalidNameCertificateError::new_err("invalid server name for certificate")),
-                    CertificateError::Expired => Err(ExpiredCertificateError::new_err("server certificate expired")),
-                    CertificateError::NotValidYet => Err(ExpiredCertificateError::new_err("server certificate is not yet valid")),
-                    _ => Err(UnacceptableCertificateError::new_err("the server certificate is unacceptable"))
+        return match parsed_name_res {
+            Ok(parsed_name) => {
+                let res = self.inner.verify_server_cert(
+                    &peer_der,
+                    &intermediaries_der,
+                    &parsed_name,
+                    &[],
+                    UnixTime::now(),
+                );
+
+                return match res {
+                    Ok(_) => Ok(()),
+                    Err(Error::InvalidCertificate(err)) => {
+                        match err {
+                            CertificateError::UnknownIssuer => Err(SelfSignedCertificateError::new_err("unable to get local issuer certificate")),
+                            CertificateError::NotValidForName => Err(InvalidNameCertificateError::new_err("invalid server name for certificate")),
+                            CertificateError::Expired => Err(ExpiredCertificateError::new_err("server certificate expired")),
+                            CertificateError::NotValidYet => Err(ExpiredCertificateError::new_err("server certificate is not yet valid")),
+                            _ => Err(UnacceptableCertificateError::new_err("the server certificate is unacceptable"))
+                        }
+                    },
+                    Err(_) => Err(CryptoError::new_err("the x509 certificate store encountered an error"))
                 }
             },
-            Err(_) => Err(CryptoError::new_err("the x509 certificate store encountered an error"))
+            Err(_) => {
+                return Err(InvalidNameCertificateError::new_err("unparseable server name"));
+            }
         }
+
     }
 }

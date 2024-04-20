@@ -376,10 +376,29 @@ def verify_certificate(
                                 authorities.append(cert.public_bytes())
 
     if server_name is None or assert_server_name is False:
+        # get_subject_alt_names()... caution for :
+        # IPAddress(20:01:48:60:48:60:00:00:00:00:00:00:00:00:00:64)
+        # or..
+        # IPAddress(08:08:08:08)
         for alt_name in certificate.get_subject_alt_names():
-            server_name = alt_name.decode()
-            server_name = server_name[server_name.find("(") + 1 : server_name.find(")")]
-            server_name.replace("*.", "unverified.")
+            server_name_candidate = alt_name.decode()
+            server_name_candidate = server_name_candidate[
+                server_name_candidate.find("(") + 1 : server_name_candidate.find(")")
+            ]
+            server_name_candidate.replace("*.", "unverified.")
+
+            if ":" in server_name_candidate:
+                if len(server_name_candidate) == 11:
+                    server_name = ".".join(
+                        str(int(p)) for p in server_name_candidate.split(":")
+                    )
+                else:
+                    continue
+
+            else:
+                server_name = server_name_candidate
+
+            break
 
     if server_name is None:
         raise AlertBadCertificate("unable to determine server name target")
