@@ -9,7 +9,7 @@ class BufferTest(TestCase):
         self.assertEqual(buf.data_slice(0, 8), b"\x08\x07\x06\x05\x04\x03\x02\x01")
         self.assertEqual(buf.data_slice(1, 3), b"\x07\x06")
 
-        with self.assertRaises(BufferReadError):
+        with self.assertRaises(OverflowError):
             buf.data_slice(-1, 3)
         with self.assertRaises(BufferReadError):
             buf.data_slice(0, 9)
@@ -20,9 +20,26 @@ class BufferTest(TestCase):
         buf = Buffer(data=b"\x08\x07\x06\x05\x04\x03\x02\x01")
         self.assertEqual(buf.pull_bytes(3), b"\x08\x07\x06")
 
+    def test_internal_fixed_size(self):
+        buf = Buffer(8)
+
+        buf.push_bytes(b"foobar")  # push 6 bytes, 2 left free bytes
+        self.assertEqual(buf.data, b"foobar")
+        buf.seek(8)  # setting cursor to the end of buf capacity
+        self.assertEqual(buf.data, b"foobar\x00\x00")  # the two NULL bytes should be there
+
+    def test_internal_push_zero_bytes(self):
+        buf = Buffer(6)
+
+        buf.push_bytes(b"foobar")  # push 6 bytes, 0 left free bytes
+        self.assertEqual(buf.data, b"foobar")
+        self.assertIsNone(buf.push_bytes(b""))  # this should not trigger any exception
+        with self.assertRaises(BufferWriteError):
+            buf.push_bytes(b"x")  # this should!
+
     def test_pull_bytes_negative(self):
         buf = Buffer(data=b"\x08\x07\x06\x05\x04\x03\x02\x01")
-        with self.assertRaises(BufferReadError):
+        with self.assertRaises(OverflowError):
             buf.pull_bytes(-1)
 
     def test_pull_bytes_truncated(self):
@@ -134,7 +151,7 @@ class BufferTest(TestCase):
         self.assertTrue(buf.eof())
         self.assertEqual(buf.tell(), 8)
 
-        with self.assertRaises(BufferReadError):
+        with self.assertRaises(OverflowError):
             buf.seek(-1)
         self.assertEqual(buf.tell(), 8)
         with self.assertRaises(BufferReadError):

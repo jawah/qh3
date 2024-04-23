@@ -10,6 +10,7 @@ mod private_key;
 mod pkcs8;
 mod hpk;
 mod ocsp;
+mod buffer;
 
 pub use self::headers::{QpackDecoder, QpackEncoder, StreamBlocked, EncoderStreamError, DecoderStreamError, DecompressionFailed};
 pub use self::aead::{AeadChaCha20Poly1305, AeadAes128Gcm, AeadAes256Gcm};
@@ -20,6 +21,7 @@ pub use self::agreement::{X25519KeyExchange, ECDHP256KeyExchange, ECDHP384KeyExc
 pub use self::pkcs8::{PrivateKeyInfo, KeyType};
 pub use self::hpk::{QUICHeaderProtection};
 pub use self::ocsp::{OCSPResponse, OCSPCertStatus, OCSPResponseStatus, ReasonFlags, OCSPRequest};
+pub use self::buffer::{Buffer, BufferReadError, BufferWriteError};
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
 
@@ -69,5 +71,9 @@ fn _hazmat(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<OCSPResponseStatus>()?;
     m.add_class::<ReasonFlags>()?;
     m.add_class::<OCSPRequest>()?;
+    // Buffer
+    m.add("BufferReadError", py.get_type::<BufferReadError>())?;
+    m.add("BufferWriteError", py.get_type::<BufferWriteError>())?;
+    m.add_class::<Buffer>()?;
     Ok(())
 }

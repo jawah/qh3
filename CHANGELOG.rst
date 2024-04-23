@@ -1,3 +1,9 @@
+1.0.4 (2024-04-23)
+=====================
+
+**Changed**
+- Buffer management has been migrated over to Rust in order to improve the overall performance.
+
 1.0.3 (2024-04-20)
 =====================
 
