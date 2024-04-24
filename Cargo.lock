@@ -1017,7 +1017,7 @@ dependencies = [
 
 [[package]]
 name = "qh3"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "aes",
  "aws-lc-rs",
