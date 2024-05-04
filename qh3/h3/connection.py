@@ -4,6 +4,7 @@ from enum import Enum, IntEnum
 from typing import Dict, FrozenSet, List, Optional, Set
 
 from .._hazmat import (
+    DecoderStreamError,
     DecompressionFailed,
     EncoderStreamError,
     QpackDecoder,
@@ -534,15 +535,15 @@ class H3Connection:
         """
         try:
             if frame_data is None:
-                headers = self._blocked_stream_map[stream_id]._headers  # type: ignore[attr-defined]
+                decoder, headers = b"", self._blocked_stream_map[stream_id]._headers  # type: ignore[attr-defined]
             else:
                 # todo: investigate why the underlying implementation
                 #  seems to ignore bad frames..
                 if not frame_data:
                     raise DecompressionFailed()
-                headers = self._decoder.feed_header(stream_id, frame_data)
-            # self._decoder_bytes_sent += len(decoder)
-            # self._quic.send_stream_data(self._local_decoder_stream_id, decoder)
+                decoder, headers = self._decoder.feed_header(stream_id, frame_data)
+            self._decoder_bytes_sent += len(decoder)
+            self._quic.send_stream_data(self._local_decoder_stream_id, decoder)
         except DecompressionFailed as exc:
             raise QpackDecompressionFailed() from exc
 
@@ -552,7 +553,11 @@ class H3Connection:
         """
         Encode a HEADERS block and send encoder updates on the encoder stream.
         """
-        encoder, frame_data = self._encoder.encode(stream_id, headers)
+        try:
+            encoder, frame_data = self._encoder.encode(stream_id, headers)
+        except EncoderStreamError as exc:
+            raise QpackEncoderStreamError() from exc
+
         self._encoder_bytes_sent += len(encoder)
         self._quic.send_stream_data(self._local_encoder_stream_id, encoder)
         return frame_data
@@ -1038,12 +1043,10 @@ class H3Connection:
                 # feed unframed data to decoder
                 data = buf.pull_bytes(buf.capacity - buf.tell())
                 consumed = buf.tell()
-                # todo: fix this in underlying rust binding.
-                #  we remain on a static table forever (encoder side)
-                # try:
-                #     self._encoder.feed_decoder(data)
-                # except DecoderStreamError as exc:
-                #     raise QpackDecoderStreamError() from exc
+                try:
+                    self._encoder.feed_decoder(data)
+                except DecoderStreamError as exc:
+                    raise QpackDecoderStreamError() from exc
                 self._decoder_bytes_received += len(data)
             elif stream.stream_type == StreamType.QPACK_ENCODER:
                 # feed unframed data to encoder

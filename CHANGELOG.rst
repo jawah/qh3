@@ -1,3 +1,9 @@
+1.0.5 (2024-05-04)
+=====================
+
+**Fixed**
+- Qpack encoder / decoder failure due to unfed stream data.
+
 1.0.4 (2024-04-23)
 =====================
 

@@ -1,7 +1,7 @@
 use ls_qpack::decoder::{Decoder, DecoderOutput};
 use ls_qpack::encoder::{Encoder};
 use ls_qpack::StreamId;
-use pyo3::{PyResult, Python};
+use pyo3::{PyResult, Python, ToPyObject};
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use pyo3::pymethods;
 use pyo3::pyclass;
@@ -42,6 +42,19 @@ impl QpackEncoder {
         return Ok(
             PyBytes::new(py, r.data())
         );
+    }
+
+    pub fn feed_decoder(&mut self, data: &PyBytes) -> PyResult<()> {
+        let res = self.encoder.feed(data.as_bytes());
+
+        match res {
+            Ok(_) => {
+                return Ok(());
+            },
+            Err(_) => {
+                return Err(DecoderStreamError::new_err("an error occurred while feeding data from decoder with qpack data"));
+            }
+        }
     }
 
     pub fn encode<'a>(&mut self, py: Python<'a>, stream_id: u64, headers: Vec<(&PyBytes, &PyBytes)>) -> PyResult<&'a PyTuple> {
@@ -109,14 +122,14 @@ impl QpackDecoder {
         }
     }
 
-    pub fn feed_header<'a>(&mut self, py: Python<'a>, stream_id: u64, data: &PyBytes) -> PyResult<&'a PyList> {
+    pub fn feed_header<'a>(&mut self, py: Python<'a>, stream_id: u64, data: &PyBytes) -> PyResult<&'a PyTuple> {
         let output = self.decoder.decode(StreamId::new(stream_id), data.as_bytes());
 
         match output {
-            Ok(DecoderOutput::Done(ref headers)) => {
+            Ok(DecoderOutput::Done(ref buffer)) => {
                 let decoded_headers = PyList::new(py, Vec::<(String, String)>::new());
 
-                for header in headers {
+                for header in buffer.headers() {
                     let _ = decoded_headers.append(
                         PyTuple::new(
                             py,
@@ -134,7 +147,13 @@ impl QpackDecoder {
                     );
                 }
 
-                return Ok(decoded_headers);
+                return Ok(PyTuple::new(
+                    py,
+                    [
+                        PyBytes::new(py, buffer.stream()).to_object(py),
+                        decoded_headers.to_object(py),
+                    ]
+                ));
             },
             Ok(DecoderOutput::BlockedStream) => {
                 return Err(StreamBlocked::new_err("stream is blocked, need more data to pursue decoding"));
@@ -155,10 +174,10 @@ impl QpackDecoder {
         let res = output.unwrap();
 
         match res {
-            Ok(DecoderOutput::Done(ref headers)) => {
+            Ok(DecoderOutput::Done(ref buffer)) => {
                 let decoded_headers = PyList::new(py, Vec::<(String, String)>::new());
 
-                for header in headers {
+                for header in buffer.headers() {
                     let _ = decoded_headers.append(
                         PyTuple::new(
                             py,
