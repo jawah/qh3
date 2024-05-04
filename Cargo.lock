@@ -666,8 +666,7 @@ checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 [[package]]
 name = "ls-qpack"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d7101cf896102b576d4fe739b72493d6c27089c21f8fc97fc10a37e6f2242c8"
+source = "git+https://github.com/Ousret/ls-qpack-rs.git#ca1389c62957997a744d03175e9ca7d6d9c97c7f"
 dependencies = [
  "libc",
  "ls-qpack-sys",
@@ -676,8 +675,7 @@ dependencies = [
 [[package]]
 name = "ls-qpack-sys"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1398bf2cba7057374bddc7f4de74dbd580292fda4c6db4091c716c9176eddfe6"
+source = "git+https://github.com/Ousret/ls-qpack-rs.git#ca1389c62957997a744d03175e9ca7d6d9c97c7f"
 dependencies = [
  "bindgen 0.66.1",
  "cmake",
@@ -1017,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "qh3"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "aes",
  "aws-lc-rs",

@@ -1,6 +1,6 @@
 [package]
 name = "qh3"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2021"
 rust-version = "1.75"
 license = "BSD-3"
@@ -31,6 +31,9 @@ x509-ocsp = {version = "0.2.1", features = ["builder"]}
 x509-cert = "0.2.5"
 der = {version = "0.7.9", features = ["alloc"]}
 sha1 = {version = "0.10.6", features = ["oid"]}
+
+[patch.crates-io]
+ls-qpack = { git = 'https://github.com/Ousret/ls-qpack-rs.git' }
 
 [package.metadata.maturin]
 python-source = "qh3"
