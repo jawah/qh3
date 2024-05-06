@@ -666,7 +666,7 @@ checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 [[package]]
 name = "ls-qpack"
 version = "0.1.4"
-source = "git+https://github.com/Ousret/ls-qpack-rs.git#ca1389c62957997a744d03175e9ca7d6d9c97c7f"
+source = "git+https://github.com/Ousret/ls-qpack-rs.git#86a836850b45593a1635e757439e291214573828"
 dependencies = [
  "libc",
  "ls-qpack-sys",
@@ -675,7 +675,7 @@ dependencies = [
 [[package]]
 name = "ls-qpack-sys"
 version = "0.1.4"
-source = "git+https://github.com/Ousret/ls-qpack-rs.git#ca1389c62957997a744d03175e9ca7d6d9c97c7f"
+source = "git+https://github.com/Ousret/ls-qpack-rs.git#86a836850b45593a1635e757439e291214573828"
 dependencies = [
  "bindgen 0.66.1",
  "cmake",
@@ -1015,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "qh3"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "aes",
  "aws-lc-rs",

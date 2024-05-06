@@ -535,7 +535,8 @@ class H3Connection:
         """
         try:
             if frame_data is None:
-                decoder, headers = b"", self._blocked_stream_map[stream_id]._headers  # type: ignore[attr-defined]
+                decoder, headers = self._blocked_stream_map[stream_id]._pending  # type: ignore[attr-defined]
+                del self._blocked_stream_map[stream_id]._pending  # type: ignore[attr-defined]
             else:
                 # todo: investigate why the underlying implementation
                 #  seems to ignore bad frames..
@@ -1059,8 +1060,11 @@ class H3Connection:
 
                 for blocked_id, blocked_stream in self._blocked_stream_map.items():
                     try:
-                        headers = self._decoder.resume_header(blocked_id)
-                        blocked_stream._headers = headers
+                        stream_data, headers = self._decoder.resume_header(blocked_id)
+                        blocked_stream._pending = (
+                            stream_data,
+                            headers,
+                        )
                         unblocked_streams.add(blocked_id)
                     except StreamBlocked:
                         continue

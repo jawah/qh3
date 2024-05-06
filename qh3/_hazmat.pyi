@@ -21,7 +21,9 @@ class QpackDecoder:
     def feed_header(
         self, stream_id: int, data: bytes
     ) -> tuple[bytes, list[tuple[bytes, bytes]]]: ...
-    def resume_header(self, stream_id: int) -> list[tuple[bytes, bytes]]: ...
+    def resume_header(
+        self, stream_id: int
+    ) -> tuple[bytes, list[tuple[bytes, bytes]]]: ...
 
 class QpackEncoder:
     def apply_settings(
