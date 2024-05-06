@@ -1,3 +1,9 @@
+1.0.6 (2024-05-06)
+=====================
+
+**Changed**
+- Further improved the reliability of the qpack encoder/decoder.
+
 1.0.5 (2024-05-04)
 =====================
 

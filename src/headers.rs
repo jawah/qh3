@@ -164,7 +164,7 @@ impl QpackDecoder {
         }
     }
 
-    pub fn resume_header<'a>(&mut self, py: Python<'a>, stream_id: u64) -> PyResult<&'a PyList> {
+    pub fn resume_header<'a>(&mut self, py: Python<'a>, stream_id: u64) -> PyResult<&'a PyTuple> {
         let output = self.decoder.unblocked(StreamId::new(stream_id));
 
         if !output.is_some() {
@@ -195,7 +195,13 @@ impl QpackDecoder {
                     );
                 }
 
-                return Ok(decoded_headers);
+                return Ok(PyTuple::new(
+                    py,
+                    [
+                        PyBytes::new(py, buffer.stream()).to_object(py),
+                        decoded_headers.to_object(py),
+                    ]
+                ));
             },
             Ok(DecoderOutput::BlockedStream) => {
                 return Err(StreamBlocked::new_err("stream is blocked, need more data to pursue decoding"))
