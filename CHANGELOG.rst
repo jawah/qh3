@@ -1,3 +1,9 @@
+1.0.7 (2024-05-08)
+=====================
+
+**Fixed**
+- Decryption error after receiving long (quic) header that required key derivation.
+
 1.0.6 (2024-05-06)
 =====================
 
