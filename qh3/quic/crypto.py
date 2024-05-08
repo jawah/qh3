@@ -146,7 +146,9 @@ def next_key_phase(self: CryptoContext) -> CryptoContext:
     crypto = CryptoContext(key_phase=int(not self.key_phase))
     crypto.setup(
         cipher_suite=self.cipher_suite,
-        secret=hkdf_expand_label(algorithm, self.secret, b"quic ku", b"", algorithm),
+        secret=hkdf_expand_label(
+            algorithm, self.secret, b"quic ku", b"", int(algorithm / 8)
+        ),
         version=self.version,
     )
     return crypto
