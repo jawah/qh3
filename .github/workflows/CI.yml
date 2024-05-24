@@ -303,16 +303,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ x64, ]  # aarch64
+        target: [ x64, aarch64-pc-windows-msvc ]
         python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10' ]
         exclude:
-          - target: aarch64
+          - target: aarch64-pc-windows-msvc
             python_version: pypy-3.7
-          - target: aarch64
+          - target: aarch64-pc-windows-msvc
             python_version: pypy-3.8
-          - target: aarch64
+          - target: aarch64-pc-windows-msvc
             python_version: pypy-3.9
-          - target: aarch64
+          - target: aarch64-pc-windows-msvc
             python_version: pypy-3.10
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
@@ -323,9 +323,9 @@ jobs:
       - uses: ilammy/setup-nasm@v1
       - name: Set up Clang (Cygwin)
         run: choco install llvm -y
-      - name: Add Ninja (aarch64 build requirement)
-        if: matrix.target == 'aarch64'
-        run: choco install ninja -y
+      - name: Install ninja-build tool
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        uses: seanmiddleditch/gha-setup-ninja@v4
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:

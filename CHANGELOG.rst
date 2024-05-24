@@ -1,3 +1,10 @@
+1.0.8 (2024-05-24)
+=====================
+
+**Added**
+- Support for Windows ARM64 in distributed pre-built wheels.
+- (Cargo) Remove indirect dependency on unused ring.
+
 1.0.7 (2024-05-08)
 =====================
 
