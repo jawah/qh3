@@ -1,3 +1,12 @@
+1.0.8 (2024-06-13)
+====================
+
+**Added**
+- Support for Windows ARM64 pre-built wheel in CD pipeline.
+
+**Changed**
+- Lighter build requirements by refactoring our Rust / Cargo dependencies.
+
 1.0.7 (2024-05-08)
 =====================
 

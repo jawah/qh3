@@ -303,7 +303,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ x64, ]  # aarch64
+        target: [ x64, aarch64 ]
         python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10' ]
         exclude:
           - target: aarch64
@@ -328,6 +328,8 @@ jobs:
         run: choco install ninja -y
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          XWIN_VERSION: 16  # fix for "no cab file specified by MSI" ...?
         with:
           target: ${{ matrix.target }}
           args: --release --out dist
