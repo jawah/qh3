@@ -1,3 +1,16 @@
+1.0.9 (2024-08-17)
+====================
+
+**Changed**
+- Bump ``aws-lc-rs`` from version 1.7.3 to 1.8.1
+- Bump ``rustls`` from 0.23.8 to 0.23.12
+
+**Fixed**
+- Incomplete Cargo manifest that can lead to a build error on specific platforms https://github.com/jawah/qh3/issues/37
+
+**Added**
+- Explicit support for Python 3.13
+
 1.0.8 (2024-06-13)
 ====================
 
