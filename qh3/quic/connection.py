@@ -2792,8 +2792,8 @@ class QuicConnection:
                 except QuicPacketBuilderStop:
                     break
 
-            sent: set[QuicStream] = set()
-            discarded: set[QuicStream] = set()
+            to_reshelve: list[QuicStream] = []
+            sent: list[QuicStream] = []
 
             try:
                 for stream in self._streams_queue:
@@ -2802,7 +2802,6 @@ class QuicConnection:
                         self._logger.debug("Stream %d discarded", stream.stream_id)
                         self._streams.pop(stream.stream_id)
                         self._streams_finished.add(stream.stream_id)
-                        discarded.add(stream)
                         continue
 
                     if stream.receiver.stop_pending:
@@ -2827,20 +2826,17 @@ class QuicConnection:
                         )
                         self._remote_max_data_used += used
                         if used > 0:
-                            sent.add(stream)
+                            sent.append(stream)
+                            continue
 
+                    to_reshelve.append(stream)
             finally:
                 # Make a new stream service order, putting served ones at the end.
                 #
                 # This method of updating the streams queue ensures that discarded
                 # streams are removed and ones which sent are moved to the end even
                 # if an exception occurs in the loop.
-                self._streams_queue = [
-                    stream
-                    for stream in self._streams_queue
-                    if not (stream in discarded or stream in sent)
-                ]
-                self._streams_queue.extend(sent)
+                self._streams_queue = to_reshelve + sent
 
             if builder.packet_is_empty:
                 break
