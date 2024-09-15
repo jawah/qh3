@@ -53,6 +53,7 @@ _CA_FILE_CANDIDATES = [
 ]
 _HASHED_CERT_FILENAME_RE = re.compile(r"^[0-9a-fA-F]{8}\.[0-9]$")
 
+TLS_VERSION_GREASE = 0x0A0A
 TLS_VERSION_1_2 = 0x0303
 TLS_VERSION_1_3 = 0x0304
 
@@ -442,6 +443,7 @@ class CipherSuite(IntEnum):
     AES_256_GCM_SHA384 = 0x1302
     CHACHA20_POLY1305_SHA256 = 0x1303
     EMPTY_RENEGOTIATION_INFO_SCSV = 0x00FF
+    GREASE = 0xDADA
 
 
 class CompressionMethod(IntEnum):
@@ -463,6 +465,7 @@ class ExtensionType(IntEnum):
     KEY_SHARE = 51
     QUIC_TRANSPORT_PARAMETERS = 0x0039
     ENCRYPTED_SERVER_NAME = 65486
+    GREASE = 0x0A0A
 
 
 class Group(IntEnum):
@@ -746,6 +749,9 @@ def push_client_hello(buf: Buffer, hello: ClientHello) -> None:
 
         # extensions
         with push_block(buf, 2):
+            with push_extension(buf, ExtensionType.GREASE):
+                pass
+
             with push_extension(buf, ExtensionType.KEY_SHARE):
                 push_list(buf, 2, partial(push_key_share, buf), hello.key_share)
 
@@ -1195,11 +1201,16 @@ def cipher_suite_hash(cipher_suite: CipherSuite) -> int:
 
 
 def negotiate(
-    supported: list[T], offered: list[Any] | None, exc: Alert | None = None
+    supported: list[T],
+    offered: list[Any] | None,
+    exc: Alert | None = None,
+    excl: T | None = None,
 ) -> T:
     if offered is not None:
         for c in supported:
             if c in offered:
+                if excl is not None and excl == c:
+                    continue
                 return c
 
     if exc is not None:
@@ -1211,7 +1222,7 @@ def signature_algorithm_params(signature_algorithm: int) -> tuple[Any, ...]:
     if signature_algorithm in (SignatureAlgorithm.ED25519, SignatureAlgorithm.ED448):
         return ()
 
-    is_pss, hash_size = SIGNATURE_ALGORITHMS[signature_algorithm]
+    is_pss, hash_size = SIGNATURE_ALGORITHMS[SignatureAlgorithm(signature_algorithm)]
 
     if is_pss is None:
         return ()
@@ -1295,7 +1306,7 @@ class Context:
         self.certificate: X509Certificate | None = None
         self.certificate_chain: list[X509Certificate] = []
         self.certificate_private_key: (
-            RsaPrivateKey | DsaPrivateKey | EcPrivateKey | None
+            EcPrivateKey | Ed25519PrivateKey | DsaPrivateKey | RsaPrivateKey | None
         ) = None
         self.handshake_extensions: list[Extension] = []
         self._max_early_data = max_early_data
@@ -1320,6 +1331,7 @@ class Context:
             self._cipher_suites = cipher_suites
         else:
             self._cipher_suites = [
+                CipherSuite.GREASE,
                 CipherSuite.AES_128_GCM_SHA256,
                 CipherSuite.CHACHA20_POLY1305_SHA256,
                 CipherSuite.AES_256_GCM_SHA384,
@@ -1335,6 +1347,7 @@ class Context:
         ]
 
         self._supported_groups = [
+            Group.GREASE,
             Group.X25519KYBER768DRAFT00,
             Group.X25519,
             Group.SECP256R1,
@@ -1342,7 +1355,7 @@ class Context:
             # Group.SECP521R1, not used by default, but we can serve it.
         ]
 
-        self._supported_versions = [TLS_VERSION_1_3]
+        self._supported_versions = [TLS_VERSION_GREASE, TLS_VERSION_1_3]
 
         # state
         self.alpn_negotiated: str | None = None
@@ -1601,7 +1614,9 @@ class Context:
                     early_key,
                 )
 
-        self._key_schedule_proxy = KeyScheduleProxy(self._cipher_suites)
+        self._key_schedule_proxy = KeyScheduleProxy(
+            [cs for cs in self._cipher_suites if cs != CipherSuite.GREASE]
+        )
         self._key_schedule_proxy.extract(None)
 
         with push_message(self._key_schedule_proxy, output_buf):
@@ -1616,6 +1631,7 @@ class Context:
             self._cipher_suites,
             [peer_hello.cipher_suite],
             AlertHandshakeFailure("Unsupported cipher suite"),
+            excl=CipherSuite.GREASE,
         )
         assert peer_hello.compression_method in self._legacy_compression_methods
         assert peer_hello.supported_version in self._supported_versions
@@ -1904,6 +1920,7 @@ class Context:
             self._cipher_suites,
             peer_hello.cipher_suites,
             AlertHandshakeFailure("No supported cipher suite"),
+            excl=CipherSuite.GREASE,
         )
         compression_method = negotiate(
             self._legacy_compression_methods,
