@@ -120,10 +120,15 @@ class QuicConfiguration:
         """
 
         if isinstance(certfile, str):
-            certfile = certfile.encode("ascii")
+            certfile = certfile.encode()
+        elif isinstance(certfile, PathLike):
+            certfile = str(certfile).encode()
 
-        if keyfile is not None and isinstance(keyfile, str):
-            keyfile = keyfile.encode("ascii")
+        if keyfile is not None:
+            if isinstance(keyfile, str):
+                keyfile = keyfile.encode()
+            elif isinstance(keyfile, PathLike):
+                keyfile = str(keyfile).encode()
 
         # we either have the certificate or a file path in certfile/keyfile.
         if b"-----BEGIN" not in certfile:

@@ -1061,7 +1061,7 @@ class H3Connection:
                 for blocked_id, blocked_stream in self._blocked_stream_map.items():
                     try:
                         stream_data, headers = self._decoder.resume_header(blocked_id)
-                        blocked_stream._pending = (
+                        blocked_stream._pending = (  # type: ignore[attr-defined]
                             stream_data,
                             headers,
                         )
