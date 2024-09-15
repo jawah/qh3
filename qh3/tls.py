@@ -59,7 +59,14 @@ TLS_VERSION_1_3 = 0x0304
 T = TypeVar("T")
 
 # Maps the length of a digest to a possible hash function producing this digest
-HASHFUNC_MAP = {32: hashlib.md5, 40: hashlib.sha1, 64: hashlib.sha256}
+HASHFUNC_MAP = {
+    length: getattr(hashlib, algorithm, None)
+    for length, algorithm in (
+        (32, "md5"),  # some algorithm may be unavailable
+        (40, "sha1"),
+        (64, "sha256"),
+    )
+}
 
 
 # facilitate mocking for the test suite
@@ -1737,7 +1744,7 @@ class Context:
         if self._assert_fingerprint is not None:
             fingerprint = self._assert_fingerprint.replace(":", "").lower()
             digest_length = len(fingerprint)
-            hashfunc = HASHFUNC_MAP.get(digest_length)()  # type: ignore[abstract]
+            hashfunc = HASHFUNC_MAP.get(digest_length)
 
             if not hashfunc:
                 raise AlertBadCertificate(
@@ -1745,7 +1752,7 @@ class Context:
                 )
 
             expect_fingerprint = unhexlify(fingerprint.encode())
-            peer_fingerprint = hashfunc(self._peer_certificate.public_bytes()).digiest()
+            peer_fingerprint = hashfunc(self._peer_certificate.public_bytes()).digest()
 
             if peer_fingerprint != expect_fingerprint:
                 raise AlertBadCertificate(
