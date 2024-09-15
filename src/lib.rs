@@ -17,7 +17,7 @@ pub use self::aead::{AeadChaCha20Poly1305, AeadAes128Gcm, AeadAes256Gcm};
 pub use self::certificate::{ServerVerifier, Certificate, SelfSignedCertificateError, InvalidNameCertificateError, ExpiredCertificateError, UnacceptableCertificateError};
 pub use self::rsa::{Rsa};
 pub use self::private_key::{RsaPrivateKey, DsaPrivateKey, Ed25519PrivateKey, EcPrivateKey, verify_with_public_key, SignatureError};
-pub use self::agreement::{X25519KeyExchange, ECDHP256KeyExchange, ECDHP384KeyExchange, ECDHP521KeyExchange};
+pub use self::agreement::{X25519KeyExchange, ECDHP256KeyExchange, ECDHP384KeyExchange, ECDHP521KeyExchange, X25519Kyber768Draft00KeyExchange};
 pub use self::pkcs8::{PrivateKeyInfo, KeyType};
 pub use self::hpk::{QUICHeaderProtection};
 pub use self::ocsp::{OCSPResponse, OCSPCertStatus, OCSPResponseStatus, ReasonFlags, OCSPRequest};
@@ -63,6 +63,7 @@ fn _hazmat(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<ECDHP256KeyExchange>()?;
     m.add_class::<ECDHP384KeyExchange>()?;
     m.add_class::<ECDHP521KeyExchange>()?;
+    m.add_class::<X25519Kyber768Draft00KeyExchange>()?;
     // General Crypto Error
     m.add("CryptoError", py.get_type::<CryptoError>())?;
     // Niquests OCSP helper

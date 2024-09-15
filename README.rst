@@ -65,6 +65,7 @@ Features
 - logging TLS traffic secrets
 - logging QUIC events in QLOG format
 - HTTP/3 server push support
+- Post-Quantum (KEM) Key-Exchange (Kyber R3 NIST)
 
 Requirements
 ------------
