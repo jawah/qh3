@@ -35,6 +35,7 @@ from ._hazmat import (
     SignatureError,
     UnacceptableCertificateError,
     X25519KeyExchange,
+    X25519Kyber768Draft00KeyExchange,
     verify_with_public_key,
 )
 from .buffer import Buffer
@@ -461,6 +462,7 @@ class Group(IntEnum):
     SECP256R1 = 0x0017
     SECP384R1 = 0x0018
     SECP521R1 = 0x0019
+    X25519KYBER768DRAFT00 = 0x6399
     X25519 = 0x001D
     X448 = 0x001E
     GREASE = 0xAAAA
@@ -1326,6 +1328,7 @@ class Context:
         ]
 
         self._supported_groups = [
+            Group.X25519KYBER768DRAFT00,
             Group.X25519,
             Group.SECP256R1,
             Group.SECP384R1,
@@ -1356,6 +1359,9 @@ class Context:
         self._ec_p384_private_key: ECDHP384KeyExchange | None = None
         self._ec_p521_private_key: ECDHP521KeyExchange | None = None
         self._x25519_private_key: X25519KeyExchange | None = None
+        self._x25519_kyber_768_private_key: X25519Kyber768Draft00KeyExchange | None = (
+            None
+        )
 
         if is_client:
             self.client_random = os.urandom(32)
@@ -1514,6 +1520,15 @@ class Context:
                 self._x25519_private_key = X25519KeyExchange()
                 key_share.append((Group.X25519, self._x25519_private_key.public_key()))
                 supported_groups.append(Group.X25519)
+            elif group == Group.X25519KYBER768DRAFT00:
+                self._x25519_kyber_768_private_key = X25519Kyber768Draft00KeyExchange()
+                key_share.append(
+                    (
+                        Group.X25519KYBER768DRAFT00,
+                        self._x25519_kyber_768_private_key.public_key(),
+                    )
+                )
+                supported_groups.append(Group.X25519KYBER768DRAFT00)
             elif group == Group.GREASE:
                 key_share.append((Group.GREASE, b"\x00"))
                 supported_groups.append(Group.GREASE)
@@ -1622,6 +1637,8 @@ class Context:
             and self._x25519_private_key is not None
         ):
             shared_key = self._x25519_private_key.exchange(peer_public_key)
+        elif peer_hello.key_share[0] == Group.X25519KYBER768DRAFT00:
+            shared_key = self._x25519_kyber_768_private_key.exchange(peer_public_key)
         elif (
             peer_hello.key_share[0] == Group.SECP256R1
             and self._ec_p256_private_key is not None
@@ -1874,8 +1891,6 @@ class Context:
                 signature_algorithms = [SignatureAlgorithm.ECDSA_SECP521R1_SHA512]
         elif isinstance(self.certificate_private_key, Ed25519PrivateKey):
             signature_algorithms = [SignatureAlgorithm.ED25519]
-        # elif isinstance(self.certificate_private_key, ed448.Ed448PrivateKey):
-        #     signature_algorithms = [SignatureAlgorithm.ED448]
 
         # negotiate parameters
         cipher_suite = negotiate(
@@ -1990,6 +2005,14 @@ class Context:
                 public_key = self._x25519_private_key.public_key()
                 shared_key = self._x25519_private_key.exchange(peer_public_key)
                 group_kx = Group.X25519
+                break
+            elif key_share[0] == Group.X25519KYBER768DRAFT00:
+                self._x25519_kyber_768_private_key = X25519Kyber768Draft00KeyExchange()
+                public_key = self._x25519_kyber_768_private_key.public_key()
+                shared_key = self._x25519_kyber_768_private_key.exchange(
+                    peer_public_key
+                )
+                group_kx = Group.X25519KYBER768DRAFT00
                 break
             elif key_share[0] == Group.SECP256R1:
                 self._ec_p256_private_key = ECDHP256KeyExchange()
