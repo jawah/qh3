@@ -83,9 +83,9 @@ class BufferTest(TestCase):
 
 def create_buffers():
     return {
-        tls.Epoch.INITIAL: Buffer(capacity=4096),
-        tls.Epoch.HANDSHAKE: Buffer(capacity=4096),
-        tls.Epoch.ONE_RTT: Buffer(capacity=4096),
+        tls.Epoch.INITIAL: Buffer(capacity=8192),
+        tls.Epoch.HANDSHAKE: Buffer(capacity=8192),
+        tls.Epoch.ONE_RTT: Buffer(capacity=8192),
     }
 
 
@@ -324,7 +324,7 @@ class ContextTest(TestCase):
         self.assertEqual(client.state, State.CLIENT_EXPECT_SERVER_HELLO)
         server_input = merge_buffers(client_buf)
         self.assertGreaterEqual(len(server_input), 181)
-        self.assertLessEqual(len(server_input), 369)
+        self.assertLessEqual(len(server_input), 1800)
         reset_buffers(client_buf)
 
         # Handle client hello.
@@ -336,7 +336,7 @@ class ContextTest(TestCase):
         self.assertEqual(server.state, State.SERVER_EXPECT_FINISHED)
         client_input = merge_buffers(server_buf)
         self.assertGreaterEqual(len(client_input), 539)
-        self.assertLessEqual(len(client_input), 2316)
+        self.assertLessEqual(len(client_input), 4000)
 
         reset_buffers(server_buf)
 
@@ -533,7 +533,7 @@ class ContextTest(TestCase):
             self.assertEqual(client.state, State.CLIENT_EXPECT_SERVER_HELLO)
             server_input = merge_buffers(client_buf)
             self.assertGreaterEqual(len(server_input), 383)
-            self.assertLessEqual(len(server_input), 483)
+            self.assertLessEqual(len(server_input), 1800)
             reset_buffers(client_buf)
 
             # Handle client hello.
@@ -543,7 +543,7 @@ class ContextTest(TestCase):
             server.handle_message(server_input, server_buf)
             self.assertEqual(server.state, State.SERVER_EXPECT_FINISHED)
             client_input = merge_buffers(server_buf)
-            self.assertEqual(len(client_input), 226)
+            self.assertEqual(len(client_input), 1410)
             reset_buffers(server_buf)
 
             # Handle server hello, encrypted extensions, certificate,
@@ -586,7 +586,7 @@ class ContextTest(TestCase):
             self.assertEqual(client.state, State.CLIENT_EXPECT_SERVER_HELLO)
             server_input = merge_buffers(client_buf)
             self.assertGreaterEqual(len(server_input), 383)
-            self.assertLessEqual(len(server_input), 483)
+            self.assertLessEqual(len(server_input), 1800)
             reset_buffers(client_buf)
 
             # tamper with binder
@@ -612,7 +612,7 @@ class ContextTest(TestCase):
             self.assertEqual(client.state, State.CLIENT_EXPECT_SERVER_HELLO)
             server_input = merge_buffers(client_buf)
             self.assertGreaterEqual(len(server_input), 383)
-            self.assertLessEqual(len(server_input), 483)
+            self.assertLessEqual(len(server_input), 1800)
             reset_buffers(client_buf)
 
             # handle client hello
@@ -626,7 +626,7 @@ class ContextTest(TestCase):
             buf.seek(buf.tell() - 1)
             buf.push_uint8(1)
             client_input = merge_buffers(server_buf)
-            self.assertEqual(len(client_input), 226)
+            self.assertEqual(len(client_input), 1410)
             reset_buffers(server_buf)
 
             # handle server hello and bomb
@@ -887,6 +887,7 @@ class TlsTest(TestCase):
         # serialize
         buf = Buffer(1000)
         push_client_hello(buf, hello)
+
         self.assertEqual(buf.data, load("tls_client_hello_with_sni.bin"))
 
     def test_push_client_hello(self):

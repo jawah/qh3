@@ -728,6 +728,8 @@ def pull_client_hello(buf: Buffer) -> ClientHello:
                     binders=pull_list(buf, 2, partial(pull_psk_binder, buf)),
                 )
                 after_psk = True
+            elif extension_type == ExtensionType.GREASE:
+                pass  # simply ignore it!
             else:
                 hello.other_extensions.append(
                     (extension_type, buf.pull_bytes(extension_length))
@@ -1592,7 +1594,7 @@ class Context:
             )
 
             # serialize hello without binder
-            tmp_buf = Buffer(capacity=1024)
+            tmp_buf = Buffer(capacity=2048)
             push_client_hello(tmp_buf, hello)
 
             # calculate binder
@@ -1948,13 +1950,14 @@ class Context:
                 peer_hello.alpn_protocols,
                 AlertHandshakeFailure("No common ALPN protocols"),
             )
-        if self.alpn_cb:
-            self.alpn_cb(self.alpn_negotiated)
 
         self.client_random = peer_hello.random
         self.server_random = os.urandom(32)
         self.legacy_session_id = peer_hello.legacy_session_id
         self.received_extensions = peer_hello.other_extensions
+
+        if self.alpn_cb:
+            self.alpn_cb(self.alpn_negotiated)
 
         # select key schedule
         pre_shared_key = None

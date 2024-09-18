@@ -96,6 +96,7 @@ class QuicConfiguration:
     initial_rtt: float = 0.1
 
     max_datagram_frame_size: int | None = None
+    original_version: int | None = None
 
     private_key: (
         EcPrivateKey | Ed25519PrivateKey | DsaPrivateKey | RsaPrivateKey | None
@@ -105,6 +106,7 @@ class QuicConfiguration:
     supported_versions: list[int] = field(
         default_factory=lambda: [
             QuicProtocolVersion.VERSION_1,
+            QuicProtocolVersion.VERSION_2,
         ]
     )
     verify_mode: int | None = None

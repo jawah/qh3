@@ -2,7 +2,7 @@ import math
 from unittest import TestCase
 
 from qh3 import tls
-from qh3.quic.packet import PACKET_TYPE_INITIAL, PACKET_TYPE_ONE_RTT
+from qh3.quic.packet import QuicPacketType
 from qh3.quic.packet_builder import QuicSentPacket
 from qh3.quic.rangeset import RangeSet
 from qh3.quic.recovery import (
@@ -88,7 +88,7 @@ class QuicPacketRecoveryTest(TestCase):
             is_ack_eliciting=True,
             is_crypto_packet=False,
             packet_number=0,
-            packet_type=PACKET_TYPE_ONE_RTT,
+            packet_type=QuicPacketType.ONE_RTT,
             sent_bytes=1280,
             sent_time=0.0,
         )
@@ -121,7 +121,7 @@ class QuicPacketRecoveryTest(TestCase):
             is_ack_eliciting=False,
             is_crypto_packet=False,
             packet_number=0,
-            packet_type=PACKET_TYPE_ONE_RTT,
+            packet_type=QuicPacketType.ONE_RTT,
             sent_bytes=1280,
             sent_time=123.45,
         )
@@ -154,7 +154,7 @@ class QuicPacketRecoveryTest(TestCase):
             is_ack_eliciting=True,
             is_crypto_packet=True,
             packet_number=0,
-            packet_type=PACKET_TYPE_INITIAL,
+            packet_type=QuicPacketType.INITIAL,
             sent_bytes=1280,
             sent_time=0.0,
         )
