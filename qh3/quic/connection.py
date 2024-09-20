@@ -86,6 +86,7 @@ SECRETS_LABELS = [
 STREAM_FLAGS = 0x07
 STREAM_COUNT_MAX = 0x1000000000000000
 UDP_HEADER_SIZE = 8
+MAX_PENDING_CRYPTO = 524288  # in bytes
 
 NetworkAddress = Any
 
@@ -1614,6 +1615,16 @@ class QuicConnection:
             )
 
         stream = self._crypto_streams[context.epoch]
+
+        pending = offset + length - stream.receiver.starting_offset()
+
+        if pending > MAX_PENDING_CRYPTO:
+            raise QuicConnectionError(
+                error_code=QuicErrorCode.CRYPTO_BUFFER_EXCEEDED,
+                frame_type=frame_type,
+                reason_phrase="too much crypto buffering",
+            )
+
         event = stream.receiver.handle_frame(frame)
         if event is not None:
             # Pass data to TLS layer, which may cause calls to:

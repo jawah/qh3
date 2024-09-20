@@ -11,6 +11,7 @@ from qh3.quic import events
 from qh3.quic.configuration import QuicConfiguration
 from qh3.quic.connection import (
     STREAM_COUNT_MAX,
+    MAX_PENDING_CRYPTO,
     NetworkAddress,
     QuicConnection,
     QuicConnectionError,
@@ -3036,6 +3037,34 @@ class QuicConnectionTest(TestCase):
                 }
             ],
         )
+
+    def test_excessive_crypto_buffering(self):
+        with client_and_server() as (client, server):
+            # Client receives data that causes more than 512K of buffering; note that
+            # because the stream buffer is a single buffer and not a set of fragments,
+            # the total buffering size depends not on how much data is received, but
+            # how much buffering is needed.  We send fragments of only 100 bytes
+            # at offsets 10000, 20000, 30000 etc.
+            highest_good_offset = 0
+            with self.assertRaises(QuicConnectionError) as cm:
+                # We don't start at zero as we want to force buffering, not cause
+                # a TLS error.
+                for offset in range(10000, 1000000, 10000):
+                    client._handle_crypto_frame(
+                        client_receive_context(client),
+                        QuicFrameType.CRYPTO,
+                        Buffer(
+                            data=encode_uint_var(offset)
+                            + encode_uint_var(100)
+                            + b"\x00" * 100
+                        ),
+                    )
+                    highest_good_offset = offset
+            self.assertEqual(
+                cm.exception.error_code, QuicErrorCode.CRYPTO_BUFFER_EXCEEDED
+            )
+            self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
+            self.assertEqual(highest_good_offset, (MAX_PENDING_CRYPTO // 10000) * 10000)
 
 
 class QuicNetworkPathTest(TestCase):
