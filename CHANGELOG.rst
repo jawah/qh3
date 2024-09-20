@@ -16,6 +16,7 @@
 - Backport "Improved path challenge handling" https://github.com/aiortc/aioquic/commit/b507364ea51f3e654decd143cc99f7001b5b7923
 - Backport "Limit the number of pending connection IDs marked for retirement." https://github.com/aiortc/aioquic/commit/4f73f18a23c22f48ef43cb3629b0686757f096af
 - Backport "During address validation, count the entire received datagram" https://github.com/aiortc/aioquic/commit/afe5525822f71e277e534b08f198ec8724a7ad59
+- Update aws-lc-rs v1.8.1 to v1.9.0
 
 **Fixed**
 - Certificate fingerprint matching.
