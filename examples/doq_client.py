@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import argparse
 import asyncio
 import logging
 import pickle
 import ssl
 import struct
-from typing import Optional, cast
+from typing import cast
 
 from dnslib.dns import QTYPE, DNSHeader, DNSQuestion, DNSRecord
 
@@ -20,7 +22,7 @@ logger = logging.getLogger("client")
 class DnsClientProtocol(QuicConnectionProtocol):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._ack_waiter: Optional[asyncio.Future[DNSRecord]] = None
+        self._ack_waiter: asyncio.Future[DNSRecord] | None = None
 
     async def query(self, query_name: str, query_type: str) -> None:
         # serialize query

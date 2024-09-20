@@ -1,3 +1,33 @@
+1.1.0 (2024-09-20)
+====================
+
+**Added**
+- Support for Post-Quantum KX Kyber768 (NIST Round 3) with X25519.
+- Backport "QUIC Version 2".
+  "Rework packet encoding to support different protocol versions" https://github.com/aiortc/aioquic/commit/bd3497cce9aa906c47d5b7216752f55beed3d9d3
+  "Add encryption for QUIC v2" https://github.com/aiortc/aioquic/commit/abf51897bb67f459921e4c26c8b3ea445aa79832
+  "Refactor retry / version negotiation handling" https://github.com/aiortc/aioquic/commit/70dd040893d7d8af5a2a92361c1e844ebf867abb
+  "Add support for version_information transport parameter" https://github.com/aiortc/aioquic/commit/a59d9ad0b1df423376bf8b30ebb7642861fef54e
+  "Check Chosen Version matches the version in use by the connection" https://github.com/aiortc/aioquic/commit/a59d9ad0b1df423376bf8b30ebb7642861fef54e
+
+**Changed**
+- Insert GREASE in KX, TLS Version and Ciphers.
+- Backport "Only buffer up to 512 KiB of pending CRYPTO frames" https://github.com/aiortc/aioquic/commit/174a2ebbe928686ef9663acc663b3ac06c2d56f2
+- Backport "Improved path challenge handling" https://github.com/aiortc/aioquic/commit/b507364ea51f3e654decd143cc99f7001b5b7923
+- Backport "Limit the number of pending connection IDs marked for retirement." https://github.com/aiortc/aioquic/commit/4f73f18a23c22f48ef43cb3629b0686757f096af
+- Backport "During address validation, count the entire received datagram" https://github.com/aiortc/aioquic/commit/afe5525822f71e277e534b08f198ec8724a7ad59
+- Update aws-lc-rs v1.8.1 to v1.9.0
+- Default supported signature algorithms to: ``ECDSA_SECP256R1_SHA256, RSA_PSS_RSAE_SHA256, RSA_PKCS1_SHA256, ECDSA_SECP384R1_SHA384, RSA_PSS_RSAE_SHA384, RSA_PKCS1_SHA384, RSA_PSS_RSAE_SHA512, RSA_PKCS1_SHA512, ED25519``.
+
+**Fixed**
+- Certificate fingerprint matching.
+- Backport upstream urllib3/urllib3#3434: util/ssl: make code (certificate fingerprint matching) resilient to missing hash functions.
+  In certain environments such as in a FIPS enabled system, certain algorithms such as md5 may be unavailable.
+
+**Misc**
+- Backport "Use is for type comparisons" https://github.com/aiortc/aioquic/commit/5c55e0c75d414ab171a09a732c2d8aaf6f178c05
+- Postpone annotations parsing with ``from __future__ import annotations`` everywhere in order to simplify type annotations.
+
 1.0.9 (2024-08-17)
 ====================
 

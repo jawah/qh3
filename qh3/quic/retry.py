@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 import ipaddress
-from typing import Tuple
 
 from .._hazmat import Rsa
 from ..buffer import Buffer
@@ -27,7 +28,7 @@ class QuicRetryTokenHandler:
         push_opaque(buf, 1, retry_source_connection_id)
         return self._key.encrypt(buf.data)
 
-    def validate_token(self, addr: NetworkAddress, token: bytes) -> Tuple[bytes, bytes]:
+    def validate_token(self, addr: NetworkAddress, token: bytes) -> tuple[bytes, bytes]:
         if not token or len(token) != 256:
             raise ValueError("Ciphertext length must be equal to key size.")
         buf = Buffer(data=self._key.decrypt(token))

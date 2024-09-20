@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from unittest import TestCase
 
 from qh3.h3.connection import H3_ALPN, ErrorCode, H3Connection

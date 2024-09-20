@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import logging
 import math
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Iterable
 
 from .logger import QuicLoggerTrace
 from .packet_builder import QuicDeliveryState, QuicSentPacket
@@ -22,18 +24,18 @@ K_LOSS_REDUCTION_FACTOR = 0.5
 
 class QuicPacketSpace:
     def __init__(self) -> None:
-        self.ack_at: Optional[float] = None
+        self.ack_at: float | None = None
         self.ack_queue = RangeSet()
         self.discarded = False
         self.expected_packet_number = 0
         self.largest_received_packet = -1
-        self.largest_received_time: Optional[float] = None
+        self.largest_received_time: float | None = None
 
         # sent packets and loss
         self.ack_eliciting_in_flight = 0
         self.largest_acked_packet = 0
-        self.loss_time: Optional[float] = None
-        self.sent_packets: Dict[int, QuicSentPacket] = {}
+        self.loss_time: float | None = None
+        self.sent_packets: dict[int, QuicSentPacket] = {}
 
 
 class QuicPacketPacer:
@@ -41,7 +43,7 @@ class QuicPacketPacer:
         self.bucket_max: float = 0.0
         self.bucket_time: float = 0.0
         self.evaluation_time: float = 0.0
-        self.packet_time: Optional[float] = None
+        self.packet_time: float | None = None
 
     def next_send_time(self, now: float) -> float:
         if self.packet_time is not None:
@@ -93,7 +95,7 @@ class QuicCongestionControl:
         self._congestion_recovery_start_time = 0.0
         self._congestion_stash = 0
         self._rtt_monitor = QuicRttMonitor()
-        self.ssthresh: Optional[int] = None
+        self.ssthresh: int | None = None
 
     def on_packet_acked(self, packet: QuicSentPacket) -> None:
         self.bytes_in_flight -= packet.sent_bytes
@@ -155,12 +157,12 @@ class QuicPacketRecovery:
         initial_rtt: float,
         peer_completed_address_validation: bool,
         send_probe: Callable[[], None],
-        logger: Optional[logging.LoggerAdapter] = None,
-        quic_logger: Optional[QuicLoggerTrace] = None,
+        logger: logging.LoggerAdapter | None = None,
+        quic_logger: QuicLoggerTrace | None = None,
     ) -> None:
         self.max_ack_delay = 0.025
         self.peer_completed_address_validation = peer_completed_address_validation
-        self.spaces: List[QuicPacketSpace] = []
+        self.spaces: list[QuicPacketSpace] = []
 
         # callbacks
         self._logger = logger
@@ -385,7 +387,7 @@ class QuicPacketRecovery:
 
         self._on_packets_lost(lost_packets, space=space, now=now)
 
-    def _get_loss_space(self) -> Optional[QuicPacketSpace]:
+    def _get_loss_space(self) -> QuicPacketSpace | None:
         loss_space = None
         for space in self.spaces:
             if space.loss_time is not None and (
@@ -395,7 +397,7 @@ class QuicPacketRecovery:
         return loss_space
 
     def _log_metrics_updated(self, log_rtt=False) -> None:
-        data: Dict[str, Any] = {
+        data: dict[str, Any] = {
             "bytes_in_flight": self._cc.bytes_in_flight,
             "cwnd": self._cc.congestion_window,
         }
@@ -466,11 +468,11 @@ class QuicRttMonitor:
         self._ready = False
         self._size = 5
 
-        self._filtered_min: Optional[float] = None
+        self._filtered_min: float | None = None
 
         self._sample_idx = 0
-        self._sample_max: Optional[float] = None
-        self._sample_min: Optional[float] = None
+        self._sample_max: float | None = None
+        self._sample_min: float | None = None
         self._sample_time = 0.0
         self._samples = [0.0 for i in range(self._size)]
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import asyncio
 import importlib
@@ -5,7 +7,7 @@ import logging
 import time
 from collections import deque
 from email.utils import formatdate
-from typing import Callable, Deque, Dict, List, Optional, Union, cast
+from typing import Callable, Deque, Union, cast
 
 import wsproto
 import wsproto.events
@@ -43,7 +45,7 @@ class HttpRequestHandler:
         authority: bytes,
         connection: H3Connection,
         protocol: QuicConnectionProtocol,
-        scope: Dict,
+        scope: dict,
         stream_ended: bool,
         stream_id: int,
         transmit: Callable[[], None],
@@ -51,7 +53,7 @@ class HttpRequestHandler:
         self.authority = authority
         self.connection = connection
         self.protocol = protocol
-        self.queue: asyncio.Queue[Dict] = asyncio.Queue()
+        self.queue: asyncio.Queue[dict] = asyncio.Queue()
         self.scope = scope
         self.stream_id = stream_id
         self.transmit = transmit
@@ -76,10 +78,10 @@ class HttpRequestHandler:
     async def run_asgi(self, app: AsgiApplication) -> None:
         await app(self.scope, self.receive, self.send)
 
-    async def receive(self) -> Dict:
+    async def receive(self) -> dict:
         return await self.queue.get()
 
-    async def send(self, message: Dict) -> None:
+    async def send(self, message: dict) -> None:
         if message["type"] == "http.response.start":
             self.connection.send_headers(
                 stream_id=self.stream_id,
@@ -128,18 +130,18 @@ class WebSocketHandler:
         self,
         *,
         connection: H3Connection,
-        scope: Dict,
+        scope: dict,
         stream_id: int,
         transmit: Callable[[], None],
     ) -> None:
         self.closed = False
         self.connection = connection
         self.http_event_queue: Deque[DataReceived] = deque()
-        self.queue: asyncio.Queue[Dict] = asyncio.Queue()
+        self.queue: asyncio.Queue[dict] = asyncio.Queue()
         self.scope = scope
         self.stream_id = stream_id
         self.transmit = transmit
-        self.websocket: Optional[wsproto.Connection] = None
+        self.websocket: wsproto.Connection | None = None
 
     def http_event_received(self, event: H3Event) -> None:
         if isinstance(event, DataReceived) and not self.closed:
@@ -170,10 +172,10 @@ class WebSocketHandler:
             if not self.closed:
                 await self.send({"type": "websocket.close", "code": 1000})
 
-    async def receive(self) -> Dict:
+    async def receive(self) -> dict:
         return await self.queue.get()
 
-    async def send(self, message: Dict) -> None:
+    async def send(self, message: dict) -> None:
         data = b""
         end_stream = False
         if message["type"] == "websocket.accept":
@@ -228,7 +230,7 @@ class WebTransportHandler:
         self,
         *,
         connection: H3Connection,
-        scope: Dict,
+        scope: dict,
         stream_id: int,
         transmit: Callable[[], None],
     ) -> None:
@@ -236,7 +238,7 @@ class WebTransportHandler:
         self.closed = False
         self.connection = connection
         self.http_event_queue: Deque[DataReceived] = deque()
-        self.queue: asyncio.Queue[Dict] = asyncio.Queue()
+        self.queue: asyncio.Queue[dict] = asyncio.Queue()
         self.scope = scope
         self.stream_id = stream_id
         self.transmit = transmit
@@ -273,10 +275,10 @@ class WebTransportHandler:
             if not self.closed:
                 await self.send({"type": "webtransport.close"})
 
-    async def receive(self) -> Dict:
+    async def receive(self) -> dict:
         return await self.queue.get()
 
-    async def send(self, message: Dict) -> None:
+    async def send(self, message: dict) -> None:
         data = b""
         end_stream = False
 
@@ -322,8 +324,8 @@ Handler = Union[HttpRequestHandler, WebSocketHandler, WebTransportHandler]
 class HttpServerProtocol(QuicConnectionProtocol):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._handlers: Dict[int, Handler] = {}
-        self._http: Optional[H3Connection] = None
+        self._handlers: dict[int, Handler] = {}
+        self._http: H3Connection | None = None
 
     def http_event_received(self, event: H3Event) -> None:
         if isinstance(event, HeadersReceived) and event.stream_id not in self._handlers:
@@ -358,9 +360,9 @@ class HttpServerProtocol(QuicConnectionProtocol):
             client = (client_addr[0], client_addr[1])
 
             handler: Handler
-            scope: Dict
+            scope: dict
             if method == "CONNECT" and protocol == "websocket":
-                subprotocols: List[str] = []
+                subprotocols: list[str] = []
                 for header, value in event.headers:
                     if header == b"sec-websocket-protocol":
                         subprotocols = [x.strip() for x in value.decode().split(",")]
@@ -403,7 +405,7 @@ class HttpServerProtocol(QuicConnectionProtocol):
                     transmit=self.transmit,
                 )
             else:
-                extensions: Dict[str, Dict] = {}
+                extensions: dict[str, dict] = {}
                 if isinstance(self._http, H3Connection):
                     extensions["http.response.push"] = {}
                 scope = {
@@ -463,12 +465,12 @@ class SessionTicketStore:
     """
 
     def __init__(self) -> None:
-        self.tickets: Dict[bytes, SessionTicket] = {}
+        self.tickets: dict[bytes, SessionTicket] = {}
 
     def add(self, ticket: SessionTicket) -> None:
         self.tickets[ticket.ticket] = ticket
 
-    def pop(self, label: bytes) -> Optional[SessionTicket]:
+    def pop(self, label: bytes) -> SessionTicket | None:
         return self.tickets.pop(label, None)
 
 

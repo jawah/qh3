@@ -35,6 +35,7 @@ from ._hazmat import (
     SignatureError,
     UnacceptableCertificateError,
     X25519KeyExchange,
+    X25519Kyber768Draft00KeyExchange,
     verify_with_public_key,
 )
 from .buffer import Buffer
@@ -52,13 +53,21 @@ _CA_FILE_CANDIDATES = [
 ]
 _HASHED_CERT_FILENAME_RE = re.compile(r"^[0-9a-fA-F]{8}\.[0-9]$")
 
+TLS_VERSION_GREASE = 0x0A0A
 TLS_VERSION_1_2 = 0x0303
 TLS_VERSION_1_3 = 0x0304
 
 T = TypeVar("T")
 
 # Maps the length of a digest to a possible hash function producing this digest
-HASHFUNC_MAP = {32: hashlib.md5, 40: hashlib.sha1, 64: hashlib.sha256}
+HASHFUNC_MAP = {
+    length: getattr(hashlib, algorithm, None)
+    for length, algorithm in (
+        (32, "md5"),  # some algorithm may be unavailable
+        (40, "sha1"),
+        (64, "sha256"),
+    )
+}
 
 
 # facilitate mocking for the test suite
@@ -434,6 +443,7 @@ class CipherSuite(IntEnum):
     AES_256_GCM_SHA384 = 0x1302
     CHACHA20_POLY1305_SHA256 = 0x1303
     EMPTY_RENEGOTIATION_INFO_SCSV = 0x00FF
+    GREASE = 0xDADA
 
 
 class CompressionMethod(IntEnum):
@@ -455,12 +465,14 @@ class ExtensionType(IntEnum):
     KEY_SHARE = 51
     QUIC_TRANSPORT_PARAMETERS = 0x0039
     ENCRYPTED_SERVER_NAME = 65486
+    GREASE = 0x0A0A
 
 
 class Group(IntEnum):
     SECP256R1 = 0x0017
     SECP384R1 = 0x0018
     SECP521R1 = 0x0019
+    X25519KYBER768DRAFT00 = 0x6399
     X25519 = 0x001D
     X448 = 0x001E
     GREASE = 0xAAAA
@@ -491,7 +503,7 @@ class SignatureAlgorithm(IntEnum):
     ECDSA_SECP384R1_SHA384 = 0x0503
     ECDSA_SECP521R1_SHA512 = 0x0603
     ED25519 = 0x0807
-    ED448 = 0x0808
+    ED448 = 0x0808  # unsupported
     RSA_PKCS1_SHA256 = 0x0401
     RSA_PKCS1_SHA384 = 0x0501
     RSA_PKCS1_SHA512 = 0x0601
@@ -716,6 +728,8 @@ def pull_client_hello(buf: Buffer) -> ClientHello:
                     binders=pull_list(buf, 2, partial(pull_psk_binder, buf)),
                 )
                 after_psk = True
+            elif extension_type == ExtensionType.GREASE:
+                pass  # simply ignore it!
             else:
                 hello.other_extensions.append(
                     (extension_type, buf.pull_bytes(extension_length))
@@ -737,6 +751,9 @@ def push_client_hello(buf: Buffer, hello: ClientHello) -> None:
 
         # extensions
         with push_block(buf, 2):
+            with push_extension(buf, ExtensionType.GREASE):
+                pass
+
             with push_extension(buf, ExtensionType.KEY_SHARE):
                 push_list(buf, 2, partial(push_key_share, buf), hello.key_share)
 
@@ -1186,11 +1203,16 @@ def cipher_suite_hash(cipher_suite: CipherSuite) -> int:
 
 
 def negotiate(
-    supported: list[T], offered: list[Any] | None, exc: Alert | None = None
+    supported: list[T],
+    offered: list[Any] | None,
+    exc: Alert | None = None,
+    excl: T | None = None,
 ) -> T:
     if offered is not None:
         for c in supported:
             if c in offered:
+                if excl is not None and excl == c:
+                    continue
                 return c
 
     if exc is not None:
@@ -1202,7 +1224,7 @@ def signature_algorithm_params(signature_algorithm: int) -> tuple[Any, ...]:
     if signature_algorithm in (SignatureAlgorithm.ED25519, SignatureAlgorithm.ED448):
         return ()
 
-    is_pss, hash_size = SIGNATURE_ALGORITHMS[signature_algorithm]
+    is_pss, hash_size = SIGNATURE_ALGORITHMS[SignatureAlgorithm(signature_algorithm)]
 
     if is_pss is None:
         return ()
@@ -1286,7 +1308,7 @@ class Context:
         self.certificate: X509Certificate | None = None
         self.certificate_chain: list[X509Certificate] = []
         self.certificate_private_key: (
-            RsaPrivateKey | DsaPrivateKey | EcPrivateKey | None
+            EcPrivateKey | Ed25519PrivateKey | DsaPrivateKey | RsaPrivateKey | None
         ) = None
         self.handshake_extensions: list[Extension] = []
         self._max_early_data = max_early_data
@@ -1311,6 +1333,7 @@ class Context:
             self._cipher_suites = cipher_suites
         else:
             self._cipher_suites = [
+                CipherSuite.GREASE,
                 CipherSuite.AES_128_GCM_SHA256,
                 CipherSuite.CHACHA20_POLY1305_SHA256,
                 CipherSuite.AES_256_GCM_SHA384,
@@ -1318,21 +1341,26 @@ class Context:
         self._legacy_compression_methods: list[int] = [CompressionMethod.NULL]
         self._psk_key_exchange_modes: list[int] = [PskKeyExchangeMode.PSK_DHE_KE]
         self._signature_algorithms: list[int] = [
-            SignatureAlgorithm.RSA_PSS_RSAE_SHA256,
             SignatureAlgorithm.ECDSA_SECP256R1_SHA256,
+            SignatureAlgorithm.RSA_PSS_RSAE_SHA256,
             SignatureAlgorithm.RSA_PKCS1_SHA256,
             SignatureAlgorithm.ECDSA_SECP384R1_SHA384,
+            SignatureAlgorithm.RSA_PSS_RSAE_SHA384,
+            SignatureAlgorithm.RSA_PKCS1_SHA384,
+            SignatureAlgorithm.RSA_PSS_RSAE_SHA512,
+            SignatureAlgorithm.RSA_PKCS1_SHA512,
             SignatureAlgorithm.ED25519,
         ]
 
         self._supported_groups = [
+            Group.GREASE,
+            Group.X25519KYBER768DRAFT00,
             Group.X25519,
             Group.SECP256R1,
             Group.SECP384R1,
-            # Group.SECP521R1, not used by default, but we can serve it.
         ]
 
-        self._supported_versions = [TLS_VERSION_1_3]
+        self._supported_versions = [TLS_VERSION_GREASE, TLS_VERSION_1_3]
 
         # state
         self.alpn_negotiated: str | None = None
@@ -1356,6 +1384,9 @@ class Context:
         self._ec_p384_private_key: ECDHP384KeyExchange | None = None
         self._ec_p521_private_key: ECDHP521KeyExchange | None = None
         self._x25519_private_key: X25519KeyExchange | None = None
+        self._x25519_kyber_768_private_key: X25519Kyber768Draft00KeyExchange | None = (
+            None
+        )
 
         if is_client:
             self.client_random = os.urandom(32)
@@ -1514,6 +1545,15 @@ class Context:
                 self._x25519_private_key = X25519KeyExchange()
                 key_share.append((Group.X25519, self._x25519_private_key.public_key()))
                 supported_groups.append(Group.X25519)
+            elif group == Group.X25519KYBER768DRAFT00:
+                self._x25519_kyber_768_private_key = X25519Kyber768Draft00KeyExchange()
+                key_share.append(
+                    (
+                        Group.X25519KYBER768DRAFT00,
+                        self._x25519_kyber_768_private_key.public_key(),
+                    )
+                )
+                supported_groups.append(Group.X25519KYBER768DRAFT00)
             elif group == Group.GREASE:
                 key_share.append((Group.GREASE, b"\x00"))
                 supported_groups.append(Group.GREASE)
@@ -1557,7 +1597,7 @@ class Context:
             )
 
             # serialize hello without binder
-            tmp_buf = Buffer(capacity=1024)
+            tmp_buf = Buffer(capacity=2048)
             push_client_hello(tmp_buf, hello)
 
             # calculate binder
@@ -1579,7 +1619,9 @@ class Context:
                     early_key,
                 )
 
-        self._key_schedule_proxy = KeyScheduleProxy(self._cipher_suites)
+        self._key_schedule_proxy = KeyScheduleProxy(
+            [cs for cs in self._cipher_suites if cs != CipherSuite.GREASE]
+        )
         self._key_schedule_proxy.extract(None)
 
         with push_message(self._key_schedule_proxy, output_buf):
@@ -1594,6 +1636,7 @@ class Context:
             self._cipher_suites,
             [peer_hello.cipher_suite],
             AlertHandshakeFailure("Unsupported cipher suite"),
+            excl=CipherSuite.GREASE,
         )
         assert peer_hello.compression_method in self._legacy_compression_methods
         assert peer_hello.supported_version in self._supported_versions
@@ -1622,6 +1665,8 @@ class Context:
             and self._x25519_private_key is not None
         ):
             shared_key = self._x25519_private_key.exchange(peer_public_key)
+        elif peer_hello.key_share[0] == Group.X25519KYBER768DRAFT00:
+            shared_key = self._x25519_kyber_768_private_key.exchange(peer_public_key)
         elif (
             peer_hello.key_share[0] == Group.SECP256R1
             and self._ec_p256_private_key is not None
@@ -1720,7 +1765,7 @@ class Context:
         if self._assert_fingerprint is not None:
             fingerprint = self._assert_fingerprint.replace(":", "").lower()
             digest_length = len(fingerprint)
-            hashfunc = HASHFUNC_MAP.get(digest_length)()  # type: ignore[abstract]
+            hashfunc = HASHFUNC_MAP.get(digest_length)
 
             if not hashfunc:
                 raise AlertBadCertificate(
@@ -1728,7 +1773,7 @@ class Context:
                 )
 
             expect_fingerprint = unhexlify(fingerprint.encode())
-            peer_fingerprint = hashfunc(self._peer_certificate.public_bytes()).digiest()
+            peer_fingerprint = hashfunc(self._peer_certificate.public_bytes()).digest()
 
             if peer_fingerprint != expect_fingerprint:
                 raise AlertBadCertificate(
@@ -1874,14 +1919,13 @@ class Context:
                 signature_algorithms = [SignatureAlgorithm.ECDSA_SECP521R1_SHA512]
         elif isinstance(self.certificate_private_key, Ed25519PrivateKey):
             signature_algorithms = [SignatureAlgorithm.ED25519]
-        # elif isinstance(self.certificate_private_key, ed448.Ed448PrivateKey):
-        #     signature_algorithms = [SignatureAlgorithm.ED448]
 
         # negotiate parameters
         cipher_suite = negotiate(
             self._cipher_suites,
             peer_hello.cipher_suites,
             AlertHandshakeFailure("No supported cipher suite"),
+            excl=CipherSuite.GREASE,
         )
         compression_method = negotiate(
             self._legacy_compression_methods,
@@ -1909,13 +1953,14 @@ class Context:
                 peer_hello.alpn_protocols,
                 AlertHandshakeFailure("No common ALPN protocols"),
             )
-        if self.alpn_cb:
-            self.alpn_cb(self.alpn_negotiated)
 
         self.client_random = peer_hello.random
         self.server_random = os.urandom(32)
         self.legacy_session_id = peer_hello.legacy_session_id
         self.received_extensions = peer_hello.other_extensions
+
+        if self.alpn_cb:
+            self.alpn_cb(self.alpn_negotiated)
 
         # select key schedule
         pre_shared_key = None
@@ -1990,6 +2035,14 @@ class Context:
                 public_key = self._x25519_private_key.public_key()
                 shared_key = self._x25519_private_key.exchange(peer_public_key)
                 group_kx = Group.X25519
+                break
+            elif key_share[0] == Group.X25519KYBER768DRAFT00:
+                self._x25519_kyber_768_private_key = X25519Kyber768Draft00KeyExchange()
+                public_key = self._x25519_kyber_768_private_key.public_key()
+                shared_key = self._x25519_kyber_768_private_key.exchange(
+                    peer_public_key
+                )
+                group_kx = Group.X25519KYBER768DRAFT00
                 break
             elif key_share[0] == Group.SECP256R1:
                 self._ec_p256_private_key = ECDHP256KeyExchange()

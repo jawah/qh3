@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import argparse
 import asyncio
 import logging
 import ssl
-from typing import Optional, cast
+from typing import cast
 
 from qh3.asyncio.client import connect
 from qh3.asyncio.protocol import QuicConnectionProtocol
@@ -16,7 +18,7 @@ logger = logging.getLogger("client")
 class SiduckClient(QuicConnectionProtocol):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._ack_waiter: Optional[asyncio.Future[None]] = None
+        self._ack_waiter: asyncio.Future[None] | None = None
 
     async def quack(self) -> None:
         assert self._ack_waiter is None, "Only one quack at a time."

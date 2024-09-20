@@ -1,6 +1,7 @@
 #
 # demo application for http3_server.py
 #
+from __future__ import annotations
 
 import datetime
 import os

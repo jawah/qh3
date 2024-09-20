@@ -1,13 +1,15 @@
+from __future__ import annotations
+
 import asyncio
 import os
 from functools import partial
-from typing import Callable, Dict, Optional, Union, cast
+from typing import Callable, cast
 
 from ..buffer import Buffer
 from ..quic.configuration import QuicConfiguration
 from ..quic.connection import NetworkAddress, QuicConnection
 from ..quic.packet import (
-    PACKET_TYPE_INITIAL,
+    QuicPacketType,
     encode_quic_retry,
     encode_quic_version_negotiation,
     pull_quic_header,
@@ -25,18 +27,18 @@ class QuicServer(asyncio.DatagramProtocol):
         *,
         configuration: QuicConfiguration,
         create_protocol: Callable = QuicConnectionProtocol,
-        session_ticket_fetcher: Optional[SessionTicketFetcher] = None,
-        session_ticket_handler: Optional[SessionTicketHandler] = None,
+        session_ticket_fetcher: SessionTicketFetcher | None = None,
+        session_ticket_handler: SessionTicketHandler | None = None,
         retry: bool = False,
-        stream_handler: Optional[QuicStreamHandler] = None,
+        stream_handler: QuicStreamHandler | None = None,
     ) -> None:
         self._configuration = configuration
         self._create_protocol = create_protocol
         self._loop = asyncio.get_event_loop()
-        self._protocols: Dict[bytes, QuicConnectionProtocol] = {}
+        self._protocols: dict[bytes, QuicConnectionProtocol] = {}
         self._session_ticket_fetcher = session_ticket_fetcher
         self._session_ticket_handler = session_ticket_handler
-        self._transport: Optional[asyncio.DatagramTransport] = None
+        self._transport: asyncio.DatagramTransport | None = None
 
         self._stream_handler = stream_handler
 
@@ -54,7 +56,7 @@ class QuicServer(asyncio.DatagramProtocol):
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self._transport = cast(asyncio.DatagramTransport, transport)
 
-    def datagram_received(self, data: Union[bytes, str], addr: NetworkAddress) -> None:
+    def datagram_received(self, data: bytes | str, addr: NetworkAddress) -> None:
         data = cast(bytes, data)
         buf = Buffer(data=data)
 
@@ -81,12 +83,12 @@ class QuicServer(asyncio.DatagramProtocol):
             return
 
         protocol = self._protocols.get(header.destination_cid, None)
-        original_destination_connection_id: Optional[bytes] = None
-        retry_source_connection_id: Optional[bytes] = None
+        original_destination_connection_id: bytes | None = None
+        retry_source_connection_id: bytes | None = None
         if (
             protocol is None
             and len(data) >= 1200
-            and header.packet_type == PACKET_TYPE_INITIAL
+            and header.packet_type == QuicPacketType.INITIAL
         ):
             # retry
             if self._retry is not None:
@@ -169,8 +171,8 @@ async def serve(
     *,
     configuration: QuicConfiguration,
     create_protocol: Callable = QuicConnectionProtocol,
-    session_ticket_fetcher: Optional[SessionTicketFetcher] = None,
-    session_ticket_handler: Optional[SessionTicketHandler] = None,
+    session_ticket_fetcher: SessionTicketFetcher | None = None,
+    session_ticket_handler: SessionTicketHandler | None = None,
     retry: bool = False,
     stream_handler: QuicStreamHandler = None,
 ) -> QuicServer:

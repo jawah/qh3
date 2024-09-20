@@ -1,32 +1,33 @@
 qh3
 ===
 
-|pypi-pyversions|
-
-.. |pypi-v| image:: https://img.shields.io/pypi/v/qh3.svg
-    :target: https://pypi.python.org/pypi/qh3
+|pypi-pyversions| |pypi-stats|
 
 .. |pypi-pyversions| image:: https://img.shields.io/pypi/pyversions/qh3.svg
     :target: https://pypi.python.org/pypi/qh3
+    :alt: Supported Interpreters
 
+.. |pypi-stats| image:: https://img.shields.io/pypi/dm/qh3
+   :target: https://pypistats.org/packages/qh3
+   :alt: PyPI - Downloads
 
 What is ``qh3``?
 ----------------
 
 ``qh3`` is a maintained fork of the ``aioquic`` library.
 
-It is lighter, and a bit faster, and more adapted to a broader audience as this package has no external dependency
+It is lighter, faster, and more adapted to a broader audience as this package has no external dependency
 and does not rely on mainstream OpenSSL.
 
 While it is a compatible fork, it is not a drop-in replacement since the first major. See the CHANGELOG for details.
-
-Regularly improved and expect a better time to initial response in issues and PRs.
 
 ``qh3`` is a library for the QUIC network protocol in Python. It features
 a minimal TLS 1.3 implementation, a QUIC stack, and an HTTP/3 stack.
 
 QUIC was standardized in `RFC 9000`_ and HTTP/3 in `RFC 9114`_.
 ``qh3`` follow the standardized version of QUIC and HTTP/3.
+
+QUIC stack conforming with `RFC 9000`_ (QUIC v1) and `RFC 9369`_ (QUIC v2)
 
 To learn more about ``qh3`` please `read the documentation`_.
 
@@ -65,6 +66,7 @@ Features
 - logging TLS traffic secrets
 - logging QUIC events in QLOG format
 - HTTP/3 server push support
+- Post-Quantum (KEM) Key-Exchange (Kyber R3 NIST)
 
 Requirements
 ------------
@@ -84,11 +86,10 @@ License
 ``qh3`` is released under the `BSD license`_.
 
 .. _read the documentation: https://qh3.readthedocs.io/en/latest/
-.. _QUIC implementations: https://github.com/quicwg/base-drafts/wiki/Implementations
-.. _cryptography: https://cryptography.io/
 .. _BSD license: https://qh3.readthedocs.io/en/latest/license.html
 .. _RFC 8446: https://datatracker.ietf.org/doc/html/rfc8446
 .. _RFC 9000: https://datatracker.ietf.org/doc/html/rfc9000
 .. _RFC 9114: https://datatracker.ietf.org/doc/html/rfc9114
+.. _RFC 9369: https://datatracker.ietf.org/doc/html/rfc9369
 .. _niquests: https://github.com/jawah/niquests
 .. _urllib3.future: https://github.com/jawah/urllib3.future

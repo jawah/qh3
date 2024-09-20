@@ -5,7 +5,11 @@ from typing import Callable
 
 from .._crypto import AEAD, CryptoError, HeaderProtection
 from ..tls import CipherSuite, cipher_suite_hash, hkdf_expand_label, hkdf_extract
-from .packet import decode_packet_number, is_long_header
+from .packet import (
+    QuicProtocolVersion,
+    decode_packet_number,
+    is_long_header,
+)
 
 CIPHER_SUITES = {
     CipherSuite.AES_128_GCM_SHA256: (b"aes-128-ecb", b"aes-128-gcm"),
@@ -14,6 +18,7 @@ CIPHER_SUITES = {
 }
 INITIAL_CIPHER_SUITE = CipherSuite.AES_128_GCM_SHA256
 INITIAL_SALT_VERSION_1 = binascii.unhexlify("38762cf7f55934b34d179ae6a4c80cadccbb7f0a")
+INITIAL_SALT_VERSION_2 = binascii.unhexlify("0dede3def700a6db819381be6e269dcbf9bd2ed9")
 SAMPLE_SIZE = 16
 
 
@@ -29,9 +34,10 @@ class KeyUnavailableError(CryptoError):
 
 
 def derive_key_iv_hp(
-    cipher_suite: CipherSuite, secret: bytes
+    *, cipher_suite: CipherSuite, secret: bytes, version: int
 ) -> tuple[bytes, bytes, bytes]:
     algorithm = cipher_suite_hash(cipher_suite)
+
     if cipher_suite in [
         CipherSuite.AES_256_GCM_SHA384,
         CipherSuite.CHACHA20_POLY1305_SHA256,
@@ -39,11 +45,19 @@ def derive_key_iv_hp(
         key_size = 32
     else:
         key_size = 16
-    return (
-        hkdf_expand_label(algorithm, secret, b"quic key", b"", key_size),
-        hkdf_expand_label(algorithm, secret, b"quic iv", b"", 12),
-        hkdf_expand_label(algorithm, secret, b"quic hp", b"", key_size),
-    )
+
+    if version == QuicProtocolVersion.VERSION_2:
+        return (
+            hkdf_expand_label(algorithm, secret, b"quicv2 key", b"", key_size),
+            hkdf_expand_label(algorithm, secret, b"quicv2 iv", b"", 12),
+            hkdf_expand_label(algorithm, secret, b"quicv2 hp", b"", key_size),
+        )
+    else:
+        return (
+            hkdf_expand_label(algorithm, secret, b"quic key", b"", key_size),
+            hkdf_expand_label(algorithm, secret, b"quic iv", b"", 12),
+            hkdf_expand_label(algorithm, secret, b"quic hp", b"", key_size),
+        )
 
 
 class CryptoContext:
@@ -108,10 +122,14 @@ class CryptoContext:
     def is_valid(self) -> bool:
         return self.aead is not None
 
-    def setup(self, cipher_suite: CipherSuite, secret: bytes, version: int) -> None:
+    def setup(self, *, cipher_suite: CipherSuite, secret: bytes, version: int) -> None:
         hp_cipher_name, aead_cipher_name = CIPHER_SUITES[cipher_suite]
 
-        key, iv, hp = derive_key_iv_hp(cipher_suite, secret)
+        key, iv, hp = derive_key_iv_hp(
+            cipher_suite=cipher_suite,
+            secret=secret,
+            version=version,
+        )
         self.aead = AEAD(aead_cipher_name, key, iv)
         self.cipher_suite = cipher_suite
         self.hp = HeaderProtection(hp_cipher_name, hp)
@@ -190,7 +208,11 @@ class CryptoPair:
         else:
             recv_label, send_label = b"client in", b"server in"
 
-        initial_salt = INITIAL_SALT_VERSION_1
+        if version == QuicProtocolVersion.VERSION_2:
+            initial_salt = INITIAL_SALT_VERSION_2
+        else:
+            initial_salt = INITIAL_SALT_VERSION_1
+
         algorithm = cipher_suite_hash(INITIAL_CIPHER_SUITE)
         digest_size = int(algorithm / 8)
         initial_secret = hkdf_extract(algorithm, initial_salt, cid)

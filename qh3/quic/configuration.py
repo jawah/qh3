@@ -96,6 +96,7 @@ class QuicConfiguration:
     initial_rtt: float = 0.1
 
     max_datagram_frame_size: int | None = None
+    original_version: int | None = None
 
     private_key: (
         EcPrivateKey | Ed25519PrivateKey | DsaPrivateKey | RsaPrivateKey | None
@@ -105,6 +106,7 @@ class QuicConfiguration:
     supported_versions: list[int] = field(
         default_factory=lambda: [
             QuicProtocolVersion.VERSION_1,
+            QuicProtocolVersion.VERSION_2,
         ]
     )
     verify_mode: int | None = None
@@ -120,10 +122,15 @@ class QuicConfiguration:
         """
 
         if isinstance(certfile, str):
-            certfile = certfile.encode("ascii")
+            certfile = certfile.encode()
+        elif isinstance(certfile, PathLike):
+            certfile = str(certfile).encode()
 
-        if keyfile is not None and isinstance(keyfile, str):
-            keyfile = keyfile.encode("ascii")
+        if keyfile is not None:
+            if isinstance(keyfile, str):
+                keyfile = keyfile.encode()
+            elif isinstance(keyfile, PathLike):
+                keyfile = str(keyfile).encode()
 
         # we either have the certificate or a file path in certfile/keyfile.
         if b"-----BEGIN" not in certfile:

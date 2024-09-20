@@ -63,3 +63,6 @@ select = [
     "W",  # pycodestyle
     "I",  # isort
 ]
+
+[tool.ruff.isort]
+required-imports = ["from __future__ import annotations"]

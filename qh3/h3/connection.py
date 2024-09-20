@@ -1,7 +1,8 @@
+from __future__ import annotations
+
 import logging
 import re
 from enum import Enum, IntEnum
-from typing import Dict, FrozenSet, List, Optional, Set
 
 from .._hazmat import (
     DecoderStreamError,
@@ -159,7 +160,7 @@ def encode_frame(frame_type: int, frame_data: bytes) -> bytes:
     return buf.data
 
 
-def encode_settings(settings: Dict[int, int]) -> bytes:
+def encode_settings(settings: dict[int, int]) -> bytes:
     buf = Buffer(capacity=1024)
     for setting, value in settings.items():
         buf.push_uint_var(setting)
@@ -174,9 +175,9 @@ def parse_max_push_id(data: bytes) -> int:
     return max_push_id
 
 
-def parse_settings(data: bytes) -> Dict[int, int]:
+def parse_settings(data: bytes) -> dict[int, int]:
     buf = Buffer(data=data)
-    settings: Dict[int, int] = {}
+    settings: dict[int, int] = {}
     while not buf.eof():
         setting = buf.pull_uint_var()
         value = buf.pull_uint_var()
@@ -190,14 +191,14 @@ def parse_settings(data: bytes) -> Dict[int, int]:
 
 def validate_headers(
     headers: Headers,
-    allowed_pseudo_headers: FrozenSet[bytes],
-    required_pseudo_headers: FrozenSet[bytes],
+    allowed_pseudo_headers: frozenset[bytes],
+    required_pseudo_headers: frozenset[bytes],
 ) -> None:
     after_pseudo_headers = False
-    authority: Optional[bytes] = None
-    path: Optional[bytes] = None
-    scheme: Optional[bytes] = None
-    seen_pseudo_headers: Set[bytes] = set()
+    authority: bytes | None = None
+    path: bytes | None = None
+    scheme: bytes | None = None
+    seen_pseudo_headers: set[bytes] = set()
     for key, value in headers:
         if UPPERCASE.search(key):
             raise MessageError("Header %r contains uppercase letters" % key)
@@ -280,17 +281,17 @@ def validate_trailers(headers: Headers) -> None:
 class H3Stream:
     def __init__(self, stream_id: int) -> None:
         self.blocked = False
-        self.blocked_frame_size: Optional[int] = None
+        self.blocked_frame_size: int | None = None
         self.buffer = b""
         self.ended = False
-        self.frame_size: Optional[int] = None
-        self.frame_type: Optional[int] = None
+        self.frame_size: int | None = None
+        self.frame_type: int | None = None
         self.headers_recv_state: HeadersState = HeadersState.INITIAL
         self.headers_send_state: HeadersState = HeadersState.INITIAL
-        self.push_id: Optional[int] = None
-        self.session_id: Optional[int] = None
+        self.push_id: int | None = None
+        self.session_id: int | None = None
         self.stream_id = stream_id
-        self.stream_type: Optional[int] = None
+        self.stream_type: int | None = None
 
 
 class H3Connection:
@@ -309,7 +310,7 @@ class H3Connection:
         self._is_client = quic.configuration.is_client
         self._is_done = False
         self._quic = quic
-        self._quic_logger: Optional[QuicLoggerTrace] = quic._quic_logger
+        self._quic_logger: QuicLoggerTrace | None = quic._quic_logger
         self._decoder = QpackDecoder(self._max_table_capacity, self._blocked_streams)
         self._decoder_bytes_received = 0
         self._decoder_bytes_sent = 0
@@ -317,22 +318,22 @@ class H3Connection:
         self._encoder_bytes_received = 0
         self._encoder_bytes_sent = 0
         self._settings_received = False
-        self._stream: Dict[int, H3Stream] = {}
+        self._stream: dict[int, H3Stream] = {}
 
-        self._max_push_id: Optional[int] = 8 if self._is_client else None
+        self._max_push_id: int | None = 8 if self._is_client else None
         self._next_push_id: int = 0
 
-        self._local_control_stream_id: Optional[int] = None
-        self._local_decoder_stream_id: Optional[int] = None
-        self._local_encoder_stream_id: Optional[int] = None
+        self._local_control_stream_id: int | None = None
+        self._local_decoder_stream_id: int | None = None
+        self._local_encoder_stream_id: int | None = None
 
-        self._peer_control_stream_id: Optional[int] = None
-        self._peer_decoder_stream_id: Optional[int] = None
-        self._peer_encoder_stream_id: Optional[int] = None
-        self._received_settings: Optional[Dict[int, int]] = None
-        self._sent_settings: Optional[Dict[int, int]] = None
+        self._peer_control_stream_id: int | None = None
+        self._peer_decoder_stream_id: int | None = None
+        self._peer_encoder_stream_id: int | None = None
+        self._received_settings: dict[int, int] | None = None
+        self._sent_settings: dict[int, int] | None = None
 
-        self._blocked_stream_map: Dict[int, H3Stream] = {}
+        self._blocked_stream_map: dict[int, H3Stream] = {}
 
         self._init_connection()
 
@@ -360,7 +361,7 @@ class H3Connection:
             )
         return stream_id
 
-    def handle_event(self, event: QuicEvent) -> List[H3Event]:
+    def handle_event(self, event: QuicEvent) -> list[H3Event]:
         """
         Handle a QUIC event and return a list of HTTP events.
 
@@ -501,22 +502,20 @@ class H3Connection:
         )
 
     @property
-    def received_settings(self) -> Optional[Dict[int, int]]:
+    def received_settings(self) -> dict[int, int] | None:
         """
         Return the received SETTINGS frame, or None.
         """
         return self._received_settings
 
     @property
-    def sent_settings(self) -> Optional[Dict[int, int]]:
+    def sent_settings(self) -> dict[int, int] | None:
         """
         Return the sent SETTINGS frame, or None.
         """
         return self._sent_settings
 
-    def _create_uni_stream(
-        self, stream_type: int, push_id: Optional[int] = None
-    ) -> int:
+    def _create_uni_stream(self, stream_type: int, push_id: int | None = None) -> int:
         """
         Create an unidirectional stream of the given type.
         """
@@ -527,7 +526,7 @@ class H3Connection:
         self._quic.send_stream_data(stream_id, encode_uint_var(stream_type))
         return stream_id
 
-    def _decode_headers(self, stream_id: int, frame_data: Optional[bytes]) -> Headers:
+    def _decode_headers(self, stream_id: int, frame_data: bytes | None) -> Headers:
         """
         Decode a HEADERS block and send decoder updates on the decoder stream.
 
@@ -568,11 +567,11 @@ class H3Connection:
             self._stream[stream_id] = H3Stream(stream_id)
         return self._stream[stream_id]
 
-    def _get_local_settings(self) -> Dict[int, int]:
+    def _get_local_settings(self) -> dict[int, int]:
         """
         Return the local HTTP/3 settings.
         """
-        settings: Dict[int, int] = {
+        settings: dict[int, int] = {
             Setting.QPACK_MAX_TABLE_CAPACITY: self._max_table_capacity,
             Setting.QPACK_BLOCKED_STREAMS: self._blocked_streams,
             Setting.ENABLE_CONNECT_PROTOCOL: 1,
@@ -618,14 +617,14 @@ class H3Connection:
     def _handle_request_or_push_frame(
         self,
         frame_type: int,
-        frame_data: Optional[bytes],
+        frame_data: bytes | None,
         stream: H3Stream,
         stream_ended: bool,
-    ) -> List[H3Event]:
+    ) -> list[H3Event]:
         """
         Handle a frame received on a request or push stream.
         """
-        http_events: List[H3Event] = []
+        http_events: list[H3Event] = []
 
         if frame_type == FrameType.DATA:
             # check DATA frame is allowed
@@ -758,7 +757,7 @@ class H3Connection:
         )
 
     def _log_stream_type(
-        self, stream_id: int, stream_type: int, push_id: Optional[int] = None
+        self, stream_id: int, stream_type: int, push_id: int | None = None
     ) -> None:
         if self._quic_logger is not None:
             type_name = {
@@ -779,7 +778,7 @@ class H3Connection:
                 data=data,
             )
 
-    def _receive_datagram(self, data: bytes) -> List[H3Event]:
+    def _receive_datagram(self, data: bytes) -> list[H3Event]:
         """
         Handle a datagram.
         """
@@ -792,11 +791,11 @@ class H3Connection:
 
     def _receive_request_or_push_data(
         self, stream: H3Stream, data: bytes, stream_ended: bool
-    ) -> List[H3Event]:
+    ) -> list[H3Event]:
         """
         Handle data received on a request or push stream.
         """
-        http_events: List[H3Event] = []
+        http_events: list[H3Event] = []
 
         stream.buffer += data
         if stream_ended:
@@ -937,8 +936,8 @@ class H3Connection:
 
     def _receive_stream_data_uni(
         self, stream: H3Stream, data: bytes, stream_ended: bool
-    ) -> List[H3Event]:
-        http_events: List[H3Event] = []
+    ) -> list[H3Event]:
+        http_events: list[H3Event] = []
 
         stream.buffer += data
         if stream_ended:
@@ -946,7 +945,7 @@ class H3Connection:
 
         buf = Buffer(data=stream.buffer)
         consumed = 0
-        unblocked_streams: Set[int] = set()
+        unblocked_streams: set[int] = set()
 
         while (
             stream.stream_type
@@ -1061,7 +1060,7 @@ class H3Connection:
                 for blocked_id, blocked_stream in self._blocked_stream_map.items():
                     try:
                         stream_data, headers = self._decoder.resume_header(blocked_id)
-                        blocked_stream._pending = (
+                        blocked_stream._pending = (  # type: ignore[attr-defined]
                             stream_data,
                             headers,
                         )
@@ -1103,7 +1102,7 @@ class H3Connection:
 
         return http_events
 
-    def _validate_settings(self, settings: Dict[int, int]) -> None:
+    def _validate_settings(self, settings: dict[int, int]) -> None:
         for setting in [
             Setting.ENABLE_CONNECT_PROTOCOL,
             Setting.ENABLE_WEBTRANSPORT,
