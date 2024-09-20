@@ -24,6 +24,7 @@
 
 **Misc**
 - Backport "Use is for type comparisons" https://github.com/aiortc/aioquic/commit/5c55e0c75d414ab171a09a732c2d8aaf6f178c05
+- Postpone annotations parsing with ``from __future__ import annotations`` everywhere in order to simplify type annotations.
 
 1.0.9 (2024-08-17)
 ====================
