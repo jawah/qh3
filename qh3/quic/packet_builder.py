@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Sequence
 
 from ..buffer import Buffer, size_uint_var
 from ..tls import Epoch
@@ -39,13 +39,13 @@ class QuicSentPacket:
     is_crypto_packet: bool
     packet_number: int
     packet_type: QuicPacketType
-    sent_time: Optional[float] = None
+    sent_time: float | None = None
     sent_bytes: int = 0
 
-    delivery_handlers: List[Tuple[QuicDeliveryHandler, Any]] = field(
+    delivery_handlers: list[tuple[QuicDeliveryHandler, Any]] = field(
         default_factory=list
     )
-    quic_logger_frames: List[Dict] = field(default_factory=list)
+    quic_logger_frames: list[dict] = field(default_factory=list)
 
 
 class QuicPacketBuilderStop(Exception):
@@ -66,12 +66,12 @@ class QuicPacketBuilder:
         is_client: bool,
         packet_number: int = 0,
         peer_token: bytes = b"",
-        quic_logger: Optional[QuicLoggerTrace] = None,
+        quic_logger: QuicLoggerTrace | None = None,
         spin_bit: bool = False,
     ):
-        self.max_flight_bytes: Optional[int] = None
-        self.max_total_bytes: Optional[int] = None
-        self.quic_logger_frames: Optional[List[Dict]] = None
+        self.max_flight_bytes: int | None = None
+        self.max_total_bytes: int | None = None
+        self.quic_logger_frames: list[dict] | None = None
 
         self._host_cid = host_cid
         self._is_client = is_client
@@ -82,18 +82,18 @@ class QuicPacketBuilder:
         self._version = version
 
         # assembled datagrams and packets
-        self._datagrams: List[bytes] = []
+        self._datagrams: list[bytes] = []
         self._datagram_flight_bytes = 0
         self._datagram_init = True
         self._datagram_needs_padding = False
-        self._packets: List[QuicSentPacket] = []
+        self._packets: list[QuicSentPacket] = []
         self._flight_bytes = 0
         self._total_bytes = 0
 
         # current packet
         self._header_size = 0
-        self._packet: Optional[QuicSentPacket] = None
-        self._packet_crypto: Optional[CryptoPair] = None
+        self._packet: QuicSentPacket | None = None
+        self._packet_crypto: CryptoPair | None = None
         self._packet_long_header = False
         self._packet_number = packet_number
         self._packet_start = 0
@@ -143,7 +143,7 @@ class QuicPacketBuilder:
             - self._packet_crypto.aead_tag_size
         )
 
-    def flush(self) -> Tuple[List[bytes], List[QuicSentPacket]]:
+    def flush(self) -> tuple[list[bytes], list[QuicSentPacket]]:
         """
         Returns the assembled datagrams.
         """
@@ -161,7 +161,7 @@ class QuicPacketBuilder:
         self,
         frame_type: int,
         capacity: int = 1,
-        handler: Optional[QuicDeliveryHandler] = None,
+        handler: QuicDeliveryHandler | None = None,
         handler_args: Sequence[Any] = [],
     ) -> Buffer:
         """
@@ -279,7 +279,7 @@ class QuicPacketBuilder:
             # Padding for datagrams containing initial packets; see RFC 9000
             # section 14.1.
             if (
-                    self._is_client or self._packet.is_ack_eliciting
+                self._is_client or self._packet.is_ack_eliciting
             ) and self._packet_type == QuicPacketType.INITIAL:
                 self._datagram_needs_padding = True
 
@@ -287,8 +287,8 @@ class QuicPacketBuilder:
             # inside the packet, we cannot tack bytes onto the end of the
             # datagram.
             if (
-                    self._datagram_needs_padding
-                    and self._packet_type == QuicPacketType.ONE_RTT
+                self._datagram_needs_padding
+                and self._packet_type == QuicPacketType.ONE_RTT
             ):
                 if self.remaining_flight_space > padding_size:
                     padding_size = self.remaining_flight_space

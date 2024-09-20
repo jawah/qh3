@@ -64,9 +64,9 @@ PACKET_LONG_TYPE_ENCODE_VERSION_1 = {
     QuicPacketType.HANDSHAKE: 2,
     QuicPacketType.RETRY: 3,
 }
-PACKET_LONG_TYPE_DECODE_VERSION_1 = dict(
-    (v, i) for (i, v) in PACKET_LONG_TYPE_ENCODE_VERSION_1.items()
-)
+PACKET_LONG_TYPE_DECODE_VERSION_1 = {
+    v: i for (i, v) in PACKET_LONG_TYPE_ENCODE_VERSION_1.items()
+}
 
 # QUIC version 2
 # https://datatracker.ietf.org/doc/html/rfc9369#section-3.2
@@ -76,9 +76,9 @@ PACKET_LONG_TYPE_ENCODE_VERSION_2 = {
     QuicPacketType.HANDSHAKE: 3,
     QuicPacketType.RETRY: 0,
 }
-PACKET_LONG_TYPE_DECODE_VERSION_2 = dict(
-    (v, i) for (i, v) in PACKET_LONG_TYPE_ENCODE_VERSION_2.items()
-)
+PACKET_LONG_TYPE_DECODE_VERSION_2 = {
+    v: i for (i, v) in PACKET_LONG_TYPE_ENCODE_VERSION_2.items()
+}
 
 
 class QuicProtocolVersion(IntEnum):
@@ -218,11 +218,11 @@ def pull_quic_header(buf: Buffer, host_cid_length: Optional[int] = None) -> Quic
             if version == QuicProtocolVersion.VERSION_2:
                 packet_type = PACKET_LONG_TYPE_DECODE_VERSION_2[
                     (first_byte & 0x30) >> 4
-                    ]
+                ]
             else:
                 packet_type = PACKET_LONG_TYPE_DECODE_VERSION_1[
                     (first_byte & 0x30) >> 4
-                    ]
+                ]
 
             if packet_type == QuicPacketType.INITIAL:
                 token_length = buf.pull_uint_var()
@@ -283,6 +283,7 @@ def encode_long_header_first_byte(
         | long_type_encode[packet_type] << 4
         | bits
     )
+
 
 def encode_quic_retry(
     version: int,

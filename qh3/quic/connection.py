@@ -120,9 +120,10 @@ def is_version_compatible(from_version: int, to_version: int) -> bool:
     """
     # Version 1 is compatible with version 2 and vice versa. These are the
     # only compatible versions so far.
-    return set([from_version, to_version]) == set(
-        [QuicProtocolVersion.VERSION_1, QuicProtocolVersion.VERSION_2]
-    )
+    return {from_version, to_version} == {
+        QuicProtocolVersion.VERSION_1,
+        QuicProtocolVersion.VERSION_2,
+    }
 
 
 def dump_cid(cid: bytes) -> str:
@@ -856,7 +857,7 @@ class QuicConnection:
             # server initialization
             if not self._is_client and self._state == QuicConnectionState.FIRSTFLIGHT:
                 assert (
-                        header.packet_type == QuicPacketType.INITIAL
+                    header.packet_type == QuicPacketType.INITIAL
                 ), "first packet must be INITIAL"
                 crypto_frame_required = True
                 self._network_paths = [network_path]
@@ -2472,21 +2473,21 @@ class QuicConnection:
         return is_ack_eliciting, bool(is_probing)
 
     def _receive_retry_packet(
-            self, header: QuicHeader, packet_without_tag: bytes, now: float
+        self, header: QuicHeader, packet_without_tag: bytes, now: float
     ) -> None:
         """
         Handle a retry packet.
         """
         if (
-                self._is_client
-                and not self._retry_count
-                and header.destination_cid == self.host_cid
-                and header.integrity_tag
-                == get_retry_integrity_tag(
-            packet_without_tag,
-            self._peer_cid.cid,
-            version=header.version,
-        )
+            self._is_client
+            and not self._retry_count
+            and header.destination_cid == self.host_cid
+            and header.integrity_tag
+            == get_retry_integrity_tag(
+                packet_without_tag,
+                self._peer_cid.cid,
+                version=header.version,
+            )
         ):
             if self._quic_logger is not None:
                 self._quic_logger.log_event(
@@ -2522,7 +2523,7 @@ class QuicConnection:
                 )
 
     def _receive_version_negotiation_packet(
-            self, header: QuicHeader, now: float
+        self, header: QuicHeader, now: float
     ) -> None:
         """
         Handle a version negotiation packet.
@@ -2536,9 +2537,9 @@ class QuicConnection:
         #
         # https://datatracker.ietf.org/doc/html/rfc9368#section-4
         if (
-                self._is_client
-                and self._state == QuicConnectionState.FIRSTFLIGHT
-                and not self._version_negotiated_incompatible
+            self._is_client
+            and self._state == QuicConnectionState.FIRSTFLIGHT
+            and not self._version_negotiated_incompatible
         ):
             if self._quic_logger is not None:
                 self._quic_logger.log_event(
@@ -2771,9 +2772,9 @@ class QuicConnection:
                 # is not included in Available Versions, it MUST treat is as a
                 # parsing failure.
                 if (
-                        not self._is_client
-                        and version_information.chosen_version
-                        not in version_information.available_versions
+                    not self._is_client
+                    and version_information.chosen_version
+                    not in version_information.available_versions
                 ):
                     raise QuicConnectionError(
                         error_code=QuicErrorCode.TRANSPORT_PARAMETER_ERROR,
