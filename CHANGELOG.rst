@@ -17,6 +17,7 @@
 - Backport "Limit the number of pending connection IDs marked for retirement." https://github.com/aiortc/aioquic/commit/4f73f18a23c22f48ef43cb3629b0686757f096af
 - Backport "During address validation, count the entire received datagram" https://github.com/aiortc/aioquic/commit/afe5525822f71e277e534b08f198ec8724a7ad59
 - Update aws-lc-rs v1.8.1 to v1.9.0
+- Default supported signature algorithms to: ``ECDSA_SECP256R1_SHA256, RSA_PSS_RSAE_SHA256, RSA_PKCS1_SHA256, ECDSA_SECP384R1_SHA384, RSA_PSS_RSAE_SHA384, RSA_PKCS1_SHA384, RSA_PSS_RSAE_SHA512, RSA_PKCS1_SHA512, ED25519``.
 
 **Fixed**
 - Certificate fingerprint matching.

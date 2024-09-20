@@ -503,7 +503,7 @@ class SignatureAlgorithm(IntEnum):
     ECDSA_SECP384R1_SHA384 = 0x0503
     ECDSA_SECP521R1_SHA512 = 0x0603
     ED25519 = 0x0807
-    ED448 = 0x0808
+    ED448 = 0x0808  # unsupported
     RSA_PKCS1_SHA256 = 0x0401
     RSA_PKCS1_SHA384 = 0x0501
     RSA_PKCS1_SHA512 = 0x0601
@@ -1341,10 +1341,14 @@ class Context:
         self._legacy_compression_methods: list[int] = [CompressionMethod.NULL]
         self._psk_key_exchange_modes: list[int] = [PskKeyExchangeMode.PSK_DHE_KE]
         self._signature_algorithms: list[int] = [
-            SignatureAlgorithm.RSA_PSS_RSAE_SHA256,
             SignatureAlgorithm.ECDSA_SECP256R1_SHA256,
+            SignatureAlgorithm.RSA_PSS_RSAE_SHA256,
             SignatureAlgorithm.RSA_PKCS1_SHA256,
             SignatureAlgorithm.ECDSA_SECP384R1_SHA384,
+            SignatureAlgorithm.RSA_PSS_RSAE_SHA384,
+            SignatureAlgorithm.RSA_PKCS1_SHA384,
+            SignatureAlgorithm.RSA_PSS_RSAE_SHA512,
+            SignatureAlgorithm.RSA_PKCS1_SHA512,
             SignatureAlgorithm.ED25519,
         ]
 
@@ -1354,7 +1358,6 @@ class Context:
             Group.X25519,
             Group.SECP256R1,
             Group.SECP384R1,
-            # Group.SECP521R1, not used by default, but we can serve it.
         ]
 
         self._supported_versions = [TLS_VERSION_GREASE, TLS_VERSION_1_3]
