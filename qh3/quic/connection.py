@@ -68,6 +68,7 @@ EPOCH_SHORTCUTS = {
 MAX_EARLY_DATA = 0xFFFFFFFF
 MAX_REMOTE_CHALLENGES = 5
 MAX_LOCAL_CHALLENGES = 5
+MAX_PENDING_RETIRES = 100
 SECRETS_LABELS = [
     [
         None,
@@ -328,6 +329,7 @@ class QuicConnection:
         )
         self._peer_cid_available: list[QuicConnectionId] = []
         self._peer_cid_sequence_numbers: set[int] = {0}
+        self._peer_retire_prior_to = 0
         self._peer_token = b""
         self._quic_logger: QuicLoggerTrace | None = None
         self._remote_ack_delay_exponent = 3
@@ -1889,24 +1891,30 @@ class QuicConnection:
                 reason_phrase="Retire Prior To is greater than Sequence Number",
             )
 
+        # only accept retire_prior_to if it is bigger than the one we know
+        self._peer_retire_prior_to = max(retire_prior_to, self._peer_retire_prior_to)
+
         # determine which CIDs to retire
         change_cid = False
-        retire = list(
-            filter(
-                lambda c: c.sequence_number < retire_prior_to, self._peer_cid_available
-            )
-        )
+        retire = [
+            cid
+            for cid in self._peer_cid_available
+            if cid.sequence_number < self._peer_retire_prior_to
+        ]
         if self._peer_cid.sequence_number < retire_prior_to:
             change_cid = True
             retire.insert(0, self._peer_cid)
 
         # update available CIDs
-        self._peer_cid_available = list(
-            filter(
-                lambda c: c.sequence_number >= retire_prior_to, self._peer_cid_available
-            )
-        )
-        if sequence_number not in self._peer_cid_sequence_numbers:
+        self._peer_cid_available = [
+            cid
+            for cid in self._peer_cid_available
+            if cid.sequence_number >= self._peer_retire_prior_to
+        ]
+        if (
+            sequence_number >= self._peer_retire_prior_to
+            and sequence_number not in self._peer_cid_sequence_numbers
+        ):
             self._peer_cid_available.append(
                 QuicConnectionId(
                     cid=connection_id,
@@ -1930,6 +1938,21 @@ class QuicConnection:
                 error_code=QuicErrorCode.CONNECTION_ID_LIMIT_ERROR,
                 frame_type=frame_type,
                 reason_phrase="Too many active connection IDs",
+            )
+
+        # Check the number of retired connection IDs pending, though with a safer limit
+        # than the 2x recommended in section 5.1.2 of the RFC.  Note that we are doing
+        # the check here and not in _retire_peer_cid() because we know the frame type to
+        # use here, and because it is the new connection id path that is potentially
+        # dangerous.  We may transiently go a bit over the limit due to unacked frames
+        # getting added back to the list, but that's ok as it is bounded.
+        if len(self._retire_connection_ids) > min(
+            self._local_active_connection_id_limit * 4, MAX_PENDING_RETIRES
+        ):
+            raise QuicConnectionError(
+                error_code=QuicErrorCode.CONNECTION_ID_LIMIT_ERROR,
+                frame_type=frame_type,
+                reason_phrase="Too many pending retired connection IDs",
             )
 
     def _handle_new_token_frame(
@@ -2601,9 +2624,10 @@ class QuicConnection:
         Retire a destination connection ID.
         """
         self._logger.debug(
-            "Retiring CID %s (%d)",
+            "Retiring CID %s (%d) [%d]",
             dump_cid(connection_id.cid),
             connection_id.sequence_number,
+            len(self._retire_connection_ids) + 1,
         )
         self._retire_connection_ids.append(connection_id.sequence_number)
 
