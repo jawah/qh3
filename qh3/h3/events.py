@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 Headers = List[Tuple[bytes, bytes]]
 
@@ -26,7 +28,7 @@ class DataReceived(H3Event):
     stream_ended: bool
     "Whether the STREAM frame had the FIN bit set."
 
-    push_id: Optional[int] = None
+    push_id: int | None = None
     "The Push ID or `None` if this is not a push."
 
 
@@ -59,7 +61,7 @@ class HeadersReceived(H3Event):
     stream_ended: bool
     "Whether the STREAM frame had the FIN bit set."
 
-    push_id: Optional[int] = None
+    push_id: int | None = None
     "The Push ID or `None` if this is not a push."
 
 

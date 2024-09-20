@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+
 class H3Error(Exception):
     """
     Base class for HTTP/3 exceptions.

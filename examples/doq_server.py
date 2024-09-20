@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import argparse
 import asyncio
 import logging
 import struct
-from typing import Dict, Optional
 
 from dnslib.dns import DNSRecord
 
@@ -34,12 +35,12 @@ class SessionTicketStore:
     """
 
     def __init__(self) -> None:
-        self.tickets: Dict[bytes, SessionTicket] = {}
+        self.tickets: dict[bytes, SessionTicket] = {}
 
     def add(self, ticket: SessionTicket) -> None:
         self.tickets[ticket.ticket] = ticket
 
-    def pop(self, label: bytes) -> Optional[SessionTicket]:
+    def pop(self, label: bytes) -> SessionTicket | None:
         return self.tickets.pop(label, None)
 
 

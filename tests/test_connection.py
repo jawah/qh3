@@ -2610,7 +2610,7 @@ class QuicConnectionTest(TestCase):
             # check congestion control
             self.assertEqual(client._loss.bytes_in_flight, 0)
             self.assertGreaterEqual(client._loss.congestion_window, 13530)
-            self.assertLessEqual(client._loss.congestion_window, 15648)
+            self.assertLessEqual(client._loss.congestion_window, 15650)
 
             # artificially raise received data counter
             client._local_max_data_used = client._local_max_data

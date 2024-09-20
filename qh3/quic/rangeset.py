@@ -1,15 +1,17 @@
+from __future__ import annotations
+
 from collections.abc import Sequence
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable
 
 
 class RangeSet(Sequence):
     def __init__(self, ranges: Iterable[range] = []):
-        self.__ranges: List[range] = []
+        self.__ranges: list[range] = []
         for r in ranges:
             assert r.step == 1
             self.add(r.start, r.stop)
 
-    def add(self, start: int, stop: Optional[int] = None) -> None:
+    def add(self, start: int, stop: int | None = None) -> None:
         if stop is None:
             stop = start + 1
         assert stop > start

@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Optional
 
 
 class QuicEvent:
@@ -29,7 +30,7 @@ class ConnectionTerminated(QuicEvent):
     error_code: int
     "The error code which was specified when closing the connection."
 
-    frame_type: Optional[int]
+    frame_type: int | None
     "The frame type which caused the connection to be closed, or `None`."
 
     reason_phrase: str
@@ -52,7 +53,7 @@ class HandshakeCompleted(QuicEvent):
     The HandshakeCompleted event is fired when the TLS handshake completes.
     """
 
-    alpn_protocol: Optional[str]
+    alpn_protocol: str | None
     "The protocol which was negotiated using ALPN, or `None`."
 
     early_data_accepted: bool
@@ -78,7 +79,7 @@ class ProtocolNegotiated(QuicEvent):
     The ProtocolNegotiated event is fired when ALPN negotiation completes.
     """
 
-    alpn_protocol: Optional[str]
+    alpn_protocol: str | None
     "The protocol which was negotiated using ALPN, or `None`."
 
 
