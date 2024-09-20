@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 import binascii
 from unittest import TestCase
 
 from qh3.buffer import Buffer, BufferReadError
 from qh3.quic import packet
 from qh3.quic.packet import (
-    PACKET_TYPE_INITIAL,
     QuicPacketType,
     QuicPreferredAddress,
     QuicProtocolVersion,

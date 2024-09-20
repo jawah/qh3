@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from unittest import TestCase
 
 from qh3.buffer import Buffer, BufferReadError, BufferWriteError, size_uint_var
