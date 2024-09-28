@@ -56,7 +56,7 @@ strict_optional = false
 warn_redundant_casts = true
 warn_unused_ignores = true
 
-[tool.ruff]
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle
     "F",  # Pyflakes
@@ -64,5 +64,5 @@ select = [
     "I",  # isort
 ]
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]
