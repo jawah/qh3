@@ -1,3 +1,12 @@
+1.2.0 (2024-09-28)
+====================
+
+**Added**
+- Support for informational response 1XX in HTTP/3. The event ``InformationalHeadersReceived`` has been added to reflect that.
+
+**Changed**
+- Update rustls v0.23.12 to v0.23.13 along with dependents.
+
 1.1.0 (2024-09-20)
 ====================
 
