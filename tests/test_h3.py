@@ -24,7 +24,7 @@ from qh3.h3.connection import (
     validate_response_headers,
     validate_trailers,
 )
-from qh3.h3.events import DataReceived, HeadersReceived, PushPromiseReceived
+from qh3.h3.events import DataReceived, HeadersReceived, PushPromiseReceived, InformationalHeadersReceived
 from qh3.h3.exceptions import NoAvailablePushIDError
 from qh3.quic.configuration import QuicConfiguration
 from qh3.quic.events import StreamDataReceived
@@ -1408,6 +1408,94 @@ class H3ConnectionTest(TestCase):
                     ),
                     HeadersReceived(
                         headers=[(b"x-some-trailer", b"bar")],
+                        stream_id=stream_id,
+                        stream_ended=True,
+                    ),
+                ],
+            )
+
+
+    def test_request_with_informational(self):
+        with h3_client_and_server() as (quic_client, quic_server):
+            h3_client = H3Connection(quic_client)
+            h3_server = H3Connection(quic_server)
+
+            # send request with trailers
+            stream_id = quic_client.get_next_available_stream_id()
+            h3_client.send_headers(
+                stream_id=stream_id,
+                headers=[
+                    (b":method", b"GET"),
+                    (b":scheme", b"https"),
+                    (b":authority", b"localhost"),
+                    (b":path", b"/"),
+                ],
+                end_stream=True,
+            )
+
+            # receive request
+            events = h3_transfer(quic_client, h3_server)
+            self.assertEqual(
+                events,
+                [
+                    HeadersReceived(
+                        headers=[
+                            (b":method", b"GET"),
+                            (b":scheme", b"https"),
+                            (b":authority", b"localhost"),
+                            (b":path", b"/"),
+                        ],
+                        stream_id=stream_id,
+                        stream_ended=True,
+                    ),
+                ],
+            )
+
+            # send response
+            h3_server.send_headers(
+                stream_id=stream_id,
+                headers=[
+                    (b":status", b"103"),
+                    (b"link", b"</style.css>; rel=preload; as=style"),
+                ],
+                end_stream=False,
+            )
+            h3_server.send_headers(
+                stream_id=stream_id,
+                headers=[
+                    (b":status", b"200"),
+                    (b"content-type", b"text/html; charset=utf-8"),
+                ],
+                end_stream=False,
+            )
+            h3_server.send_data(
+                stream_id=stream_id,
+                data=b"<html><body>hello</body></html>",
+                end_stream=True,
+            )
+
+            # receive response
+            events = h3_transfer(quic_server, h3_client)
+            self.assertEqual(
+                events,
+                [
+                    InformationalHeadersReceived(
+                        headers=[
+                            (b":status", b"103"),
+                            (b"link", b"</style.css>; rel=preload; as=style"),
+                        ],
+                        stream_id=stream_id
+                    ),
+                    HeadersReceived(
+                        headers=[
+                            (b":status", b"200"),
+                            (b"content-type", b"text/html; charset=utf-8"),
+                        ],
+                        stream_id=stream_id,
+                        stream_ended=False,
+                    ),
+                    DataReceived(
+                        data=b"<html><body>hello</body></html>",
                         stream_id=stream_id,
                         stream_ended=True,
                     ),
