@@ -47,6 +47,20 @@ class DatagramReceived(H3Event):
 
 
 @dataclass
+class InformationalHeadersReceived(H3Event):
+    """
+    This event is fired whenever an informational response has been caught inflight!
+    The stream cannot be ended there.
+    """
+
+    headers: Headers
+    "The headers."
+
+    stream_id: int
+    "The ID of the stream the headers were received for."
+
+
+@dataclass
 class HeadersReceived(H3Event):
     """
     The HeadersReceived event is fired whenever headers are received.

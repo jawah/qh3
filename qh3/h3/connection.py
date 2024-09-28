@@ -22,6 +22,7 @@ from .events import (
     H3Event,
     Headers,
     HeadersReceived,
+    InformationalHeadersReceived,
     PushPromiseReceived,
     WebTransportStreamDataReceived,
 )
@@ -193,15 +194,22 @@ def validate_headers(
     headers: Headers,
     allowed_pseudo_headers: frozenset[bytes],
     required_pseudo_headers: frozenset[bytes],
-) -> None:
+    extract_header: bytes | None = None,
+) -> bytes | None:
     after_pseudo_headers = False
     authority: bytes | None = None
     path: bytes | None = None
     scheme: bytes | None = None
     seen_pseudo_headers: set[bytes] = set()
+
+    extracted_header_value: bytes | None = None
+
     for key, value in headers:
         if UPPERCASE.search(key):
             raise MessageError("Header %r contains uppercase letters" % key)
+
+        if extract_header is not None and extracted_header_value is None:
+            extracted_header_value = value
 
         if key.startswith(b":"):
             # pseudo-headers
@@ -237,6 +245,8 @@ def validate_headers(
         if not path:
             raise MessageError("Pseudo-header b':path' cannot be empty")
 
+    return extracted_header_value
+
 
 def validate_push_promise_headers(headers: Headers) -> None:
     validate_headers(
@@ -262,12 +272,21 @@ def validate_request_headers(headers: Headers) -> None:
     )
 
 
-def validate_response_headers(headers: Headers) -> None:
-    validate_headers(
+def validate_response_headers(headers: Headers) -> int | None:
+    status_code: bytes | None = validate_headers(
         headers,
         allowed_pseudo_headers=frozenset((b":status",)),
         required_pseudo_headers=frozenset((b":status",)),
+        extract_header=b":status",
     )
+
+    if status_code is None:
+        return None
+
+    try:
+        return int(status_code)
+    except ValueError:
+        return None
 
 
 def validate_trailers(headers: Headers) -> None:
@@ -494,7 +513,20 @@ class H3Connection:
 
         # update state and send headers
         if stream.headers_send_state == HeadersState.INITIAL:
-            stream.headers_send_state = HeadersState.AFTER_HEADERS
+            is_informational_headers = False
+
+            if not self._is_client and not end_stream:
+                for k, v in headers:
+                    if k == b":status":
+                        if int(v) < 200:
+                            is_informational_headers = True
+                            break
+                    elif not k.startswith(b":"):
+                        break
+
+            # only the server is allowed to do so!
+            if not is_informational_headers:
+                stream.headers_send_state = HeadersState.AFTER_HEADERS
         else:
             stream.headers_send_state = HeadersState.AFTER_TRAILERS
         self._quic.send_stream_data(
@@ -648,10 +680,12 @@ class H3Connection:
             # try to decode HEADERS, may raise pylsqpack.StreamBlocked
             headers = self._decode_headers(stream.stream_id, frame_data)
 
+            status_code: int | None = None
+
             # validate headers
             if stream.headers_recv_state == HeadersState.INITIAL:
                 if self._is_client:
-                    validate_response_headers(headers)
+                    status_code = validate_response_headers(headers)
                 else:
                     validate_request_headers(headers)
             else:
@@ -675,17 +709,33 @@ class H3Connection:
 
             # update state and emit headers
             if stream.headers_recv_state == HeadersState.INITIAL:
-                stream.headers_recv_state = HeadersState.AFTER_HEADERS
+                # Informational Response MUST be taken as-is without
+                # skipping the main response.
+                if status_code is None or status_code >= 200 or stream_ended:
+                    stream.headers_recv_state = HeadersState.AFTER_HEADERS
             else:
                 stream.headers_recv_state = HeadersState.AFTER_TRAILERS
-            http_events.append(
-                HeadersReceived(
-                    headers=headers,
-                    push_id=stream.push_id,
-                    stream_id=stream.stream_id,
-                    stream_ended=stream_ended,
+
+            if (
+                stream.headers_recv_state == HeadersState.INITIAL
+                and status_code is not None
+                and status_code < 200
+            ):
+                http_events.append(
+                    InformationalHeadersReceived(
+                        headers=headers,
+                        stream_id=stream.stream_id,
+                    )
                 )
-            )
+            else:
+                http_events.append(
+                    HeadersReceived(
+                        headers=headers,
+                        push_id=stream.push_id,
+                        stream_id=stream.stream_id,
+                        stream_ended=stream_ended,
+                    )
+                )
         elif frame_type == FrameType.PUSH_PROMISE and stream.push_id is None:
             if not self._is_client:
                 raise FrameUnexpected("Clients must not send PUSH_PROMISE")
