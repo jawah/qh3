@@ -29,7 +29,6 @@ unsafe impl Send for QpackEncoder {}
 
 #[pymethods]
 impl QpackEncoder {
-    // feed_decoder(self, data: bytes) -> None
 
     #[new]
     pub fn py_new() -> Self {
@@ -93,11 +92,10 @@ impl QpackEncoder {
                     )
                 );
             },
-            Err(_) => {
-                return Err(EncoderStreamError::new_err("unable to encode headers"));
+            Err(abc) => {
+                return Err(EncoderStreamError::new_err(format!("unable to encode headers {:?}", abc)));
             }
         }
-
     }
 }
 

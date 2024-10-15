@@ -1,3 +1,13 @@
+1.2.1 (2024-10-15)
+====================
+
+**Fixed**
+- Large HTTP headers cannot be encoded to be sent.
+
+**Changed**
+- Upgrade aws-lc-rs to v1.10.0
+- Update rustls to v0.23.14
+
 1.2.0 (2024-09-28)
 ====================
 
