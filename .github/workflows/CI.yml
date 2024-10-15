@@ -24,7 +24,7 @@ concurrency:
 jobs:
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v4
@@ -58,7 +58,7 @@ jobs:
       - name: Setup dependencies
         run: pip install --upgrade pip pytest
       - name: Set up Clang (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-22.04'
         run: sudo apt-get install clang
       - name: Set up Clang (Cygwin)
         if: matrix.os == 'windows-latest'
@@ -372,7 +372,7 @@ jobs:
     needs:
       - test
       - lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - name: Build sdist
@@ -388,7 +388,7 @@ jobs:
 
   checksum:
     name: compute hashes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [windows, macos, linux, sdist]
     if: "startsWith(github.ref, 'refs/tags/')"
     outputs:
@@ -423,7 +423,7 @@ jobs:
 
   release:
     name: release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: "startsWith(github.ref, 'refs/tags/')"
     needs: provenance
     environment: pypi
