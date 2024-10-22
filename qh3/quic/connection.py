@@ -1167,7 +1167,7 @@ class QuicConnection:
                         ]
                         break
             self._version_negotiated_compatible = True
-            self._logger.info(
+            self._logger.debug(
                 "Negotiated protocol version %s", pretty_protocol_version(self._version)
             )
 
