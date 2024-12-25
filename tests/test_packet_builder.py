@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest import TestCase
+import pytest
 
 from qh3.quic.crypto import CryptoPair
 from qh3.quic.packet import QuicFrameType, QuicPacketType, QuicProtocolVersion
@@ -36,22 +36,22 @@ def create_crypto():
     return crypto
 
 
-class QuicPacketBuilderTest(TestCase):
+class TestQuicPacketBuilder:
     def test_long_header_empty(self):
         builder = create_builder()
         crypto = create_crypto()
 
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1236)
-        self.assertTrue(builder.packet_is_empty)
+        assert builder.remaining_flight_space == 1236
+        assert builder.packet_is_empty
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 0)
-        self.assertEqual(packets, [])
+        assert len(datagrams) == 0
+        assert packets == []
 
         # check builder
-        self.assertEqual(builder.packet_number, 0)
+        assert builder.packet_number == 0
 
     def test_long_header_padding(self):
         builder = create_builder(is_client=True)
@@ -59,21 +59,20 @@ class QuicPacketBuilderTest(TestCase):
 
         # INITIAL, fully padded
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1236)
+        assert builder.remaining_flight_space == 1236
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(100))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # INITIAL, empty
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertTrue(builder.packet_is_empty)
+        assert builder.packet_is_empty
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 1)
-        self.assertEqual(len(datagrams[0]), 1280)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 1
+        assert len(datagrams[0]) == 1280
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.INITIAL,
@@ -83,12 +82,11 @@ class QuicPacketBuilderTest(TestCase):
                     packet_number=0,
                     packet_type=QuicPacketType.INITIAL,
                     sent_bytes=145,
-                )
-            ],
-        )
+                ) \
+            ]
 
         # check builder
-        self.assertEqual(builder.packet_number, 1)
+        assert builder.packet_number == 1
 
     def test_long_header_initial_client_2(self):
         self.maxDiff = None
@@ -97,29 +95,28 @@ class QuicPacketBuilderTest(TestCase):
 
         # INITIAL, full length
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1236)
+        assert builder.remaining_flight_space == 1236
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(builder.remaining_flight_space))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # INITIAL
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1236)
+        assert builder.remaining_flight_space == 1236
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(100))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # INITIAL, empty
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertTrue(builder.packet_is_empty)
+        assert builder.packet_is_empty
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 2)
-        self.assertEqual(len(datagrams[0]), 1280)
-        self.assertEqual(len(datagrams[1]), 1280)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 2
+        assert len(datagrams[0]) == 1280
+        assert len(datagrams[1]) == 1280
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.INITIAL,
@@ -139,11 +136,10 @@ class QuicPacketBuilderTest(TestCase):
                     packet_type=QuicPacketType.INITIAL,
                     sent_bytes=145,
                 ),
-            ],
-        )
+            ]
 
         # check builder
-        self.assertEqual(builder.packet_number, 2)
+        assert builder.packet_number == 2
 
     def test_long_header_initial_server(self):
         builder = create_builder()
@@ -151,21 +147,20 @@ class QuicPacketBuilderTest(TestCase):
 
         # INITIAL
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1236)
+        assert builder.remaining_flight_space == 1236
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(100))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # INITIAL, empty
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertTrue(builder.packet_is_empty)
+        assert builder.packet_is_empty
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 1)
-        self.assertEqual(len(datagrams[0]), 1280)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 1
+        assert len(datagrams[0]) == 1280
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.INITIAL,
@@ -175,12 +170,11 @@ class QuicPacketBuilderTest(TestCase):
                     packet_number=0,
                     packet_type=QuicPacketType.INITIAL,
                     sent_bytes=145,
-                )
-            ],
-        )
+                ) \
+            ]
 
         # check builder
-        self.assertEqual(builder.packet_number, 1)
+        assert builder.packet_number == 1
 
     def test_long_header_ping_only(self):
         """
@@ -193,14 +187,13 @@ class QuicPacketBuilderTest(TestCase):
         # HANDSHAKE, with only a PING frame
         builder.start_packet(QuicPacketType.HANDSHAKE, crypto)
         builder.start_frame(QuicFrameType.PING)
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 1)
-        self.assertEqual(len(datagrams[0]), 45)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 1
+        assert len(datagrams[0]) == 45
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.HANDSHAKE,
@@ -210,9 +203,8 @@ class QuicPacketBuilderTest(TestCase):
                     packet_number=0,
                     packet_type=QuicPacketType.HANDSHAKE,
                     sent_bytes=45,
-                )
-            ],
-        )
+                ) \
+            ]
 
     def test_long_header_then_short_header(self):
         builder = create_builder()
@@ -220,33 +212,32 @@ class QuicPacketBuilderTest(TestCase):
 
         # INITIAL, full length
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1236)
+        assert builder.remaining_flight_space == 1236
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(builder.remaining_flight_space))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # INITIAL, empty
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertTrue(builder.packet_is_empty)
+        assert builder.packet_is_empty
 
         # ONE_RTT, full length
         builder.start_packet(QuicPacketType.ONE_RTT, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1253)
+        assert builder.remaining_flight_space == 1253
         buf = builder.start_frame(QuicFrameType.STREAM_BASE)
         buf.push_bytes(bytes(builder.remaining_flight_space))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # ONE_RTT, empty
         builder.start_packet(QuicPacketType.ONE_RTT, crypto)
-        self.assertTrue(builder.packet_is_empty)
+        assert builder.packet_is_empty
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 2)
-        self.assertEqual(len(datagrams[0]), 1280)
-        self.assertEqual(len(datagrams[1]), 1280)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 2
+        assert len(datagrams[0]) == 1280
+        assert len(datagrams[1]) == 1280
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.INITIAL,
@@ -266,11 +257,10 @@ class QuicPacketBuilderTest(TestCase):
                     packet_type=QuicPacketType.ONE_RTT,
                     sent_bytes=1280,
                 ),
-            ],
-        )
+            ]
 
         # check builder
-        self.assertEqual(builder.packet_number, 2)
+        assert builder.packet_number == 2
 
     def test_long_header_initial_client_zero_rtt(self):
         builder = create_builder(is_client=True)
@@ -278,23 +268,22 @@ class QuicPacketBuilderTest(TestCase):
 
         # INITIAL
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1236)
+        assert builder.remaining_flight_space == 1236
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(613))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # 0-RTT
         builder.start_packet(QuicPacketType.ZERO_RTT, crypto)
-        self.assertEqual(builder.remaining_flight_space, 579)
+        assert builder.remaining_flight_space == 579
         buf = builder.start_frame(QuicFrameType.STREAM_BASE)
         buf.push_bytes(bytes(100))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(datagram_sizes(datagrams), [1280])
-        self.assertEqual(
-            packets,
+        assert datagram_sizes(datagrams) == [1280]
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.INITIAL,
@@ -314,8 +303,7 @@ class QuicPacketBuilderTest(TestCase):
                     packet_type=QuicPacketType.ZERO_RTT,
                     sent_bytes=144,
                 ),
-            ],
-        )
+            ]
 
     def test_long_header_then_long_header(self):
         builder = create_builder()
@@ -323,31 +311,30 @@ class QuicPacketBuilderTest(TestCase):
 
         # INITIAL
         builder.start_packet(QuicPacketType.INITIAL, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1236)
+        assert builder.remaining_flight_space == 1236
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(199))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # HANDSHAKE
         builder.start_packet(QuicPacketType.HANDSHAKE, crypto)
-        self.assertEqual(builder.remaining_flight_space, 993)
+        assert builder.remaining_flight_space == 993
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(299))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # ONE_RTT
         builder.start_packet(QuicPacketType.ONE_RTT, crypto)
-        self.assertEqual(builder.remaining_flight_space, 666)
+        assert builder.remaining_flight_space == 666
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(299))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 1)
-        self.assertEqual(len(datagrams[0]), 1280)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 1
+        assert len(datagrams[0]) == 1280
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.INITIAL,
@@ -376,27 +363,26 @@ class QuicPacketBuilderTest(TestCase):
                     packet_type=QuicPacketType.ONE_RTT,
                     sent_bytes=693,
                 ),
-            ],
-        )
+            ]
 
         # check builder
-        self.assertEqual(builder.packet_number, 3)
+        assert builder.packet_number == 3
 
     def test_short_header_empty(self):
         builder = create_builder()
         crypto = create_crypto()
 
         builder.start_packet(QuicPacketType.ONE_RTT, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1253)
-        self.assertTrue(builder.packet_is_empty)
+        assert builder.remaining_flight_space == 1253
+        assert builder.packet_is_empty
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(datagrams, [])
-        self.assertEqual(packets, [])
+        assert datagrams == []
+        assert packets == []
 
         # check builder
-        self.assertEqual(builder.packet_number, 0)
+        assert builder.packet_number == 0
 
     def test_short_header_padding(self):
         builder = create_builder()
@@ -404,17 +390,16 @@ class QuicPacketBuilderTest(TestCase):
 
         # ONE_RTT, full length
         builder.start_packet(QuicPacketType.ONE_RTT, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1253)
+        assert builder.remaining_flight_space == 1253
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(builder.remaining_flight_space))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 1)
-        self.assertEqual(len(datagrams[0]), 1280)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 1
+        assert len(datagrams[0]) == 1280
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.ONE_RTT,
@@ -424,12 +409,11 @@ class QuicPacketBuilderTest(TestCase):
                     packet_number=0,
                     packet_type=QuicPacketType.ONE_RTT,
                     sent_bytes=1280,
-                )
-            ],
-        )
+                ) \
+            ]
 
         # check builder
-        self.assertEqual(builder.packet_number, 1)
+        assert builder.packet_number == 1
 
     def test_short_header_max_flight_bytes(self):
         """
@@ -441,21 +425,20 @@ class QuicPacketBuilderTest(TestCase):
         crypto = create_crypto()
 
         builder.start_packet(QuicPacketType.ONE_RTT, crypto)
-        self.assertEqual(builder.remaining_flight_space, 973)
+        assert builder.remaining_flight_space == 973
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(builder.remaining_flight_space))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
-        with self.assertRaises(QuicPacketBuilderStop):
+        with pytest.raises(QuicPacketBuilderStop):
             builder.start_packet(QuicPacketType.ONE_RTT, crypto)
             builder.start_frame(QuicFrameType.CRYPTO)
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 1)
-        self.assertEqual(len(datagrams[0]), 1000)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 1
+        assert len(datagrams[0]) == 1000
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.ONE_RTT,
@@ -466,11 +449,10 @@ class QuicPacketBuilderTest(TestCase):
                     packet_type=QuicPacketType.ONE_RTT,
                     sent_bytes=1000,
                 ),
-            ],
-        )
+            ]
 
         # check builder
-        self.assertEqual(builder.packet_number, 1)
+        assert builder.packet_number == 1
 
     def test_short_header_max_flight_bytes_zero(self):
         """
@@ -483,16 +465,16 @@ class QuicPacketBuilderTest(TestCase):
 
         crypto = create_crypto()
 
-        with self.assertRaises(QuicPacketBuilderStop):
+        with pytest.raises(QuicPacketBuilderStop):
             builder.start_packet(QuicPacketType.ONE_RTT, crypto)
             builder.start_frame(QuicFrameType.CRYPTO)
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 0)
+        assert len(datagrams) == 0
 
         # check builder
-        self.assertEqual(builder.packet_number, 0)
+        assert builder.packet_number == 0
 
     def test_short_header_max_flight_bytes_zero_ack(self):
         """
@@ -509,16 +491,15 @@ class QuicPacketBuilderTest(TestCase):
         buf = builder.start_frame(QuicFrameType.ACK)
         buf.push_bytes(bytes(64))
 
-        with self.assertRaises(QuicPacketBuilderStop):
+        with pytest.raises(QuicPacketBuilderStop):
             builder.start_packet(QuicPacketType.ONE_RTT, crypto)
             builder.start_frame(QuicFrameType.CRYPTO)
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 1)
-        self.assertEqual(len(datagrams[0]), 92)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 1
+        assert len(datagrams[0]) == 92
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.ONE_RTT,
@@ -529,11 +510,10 @@ class QuicPacketBuilderTest(TestCase):
                     packet_type=QuicPacketType.ONE_RTT,
                     sent_bytes=92,
                 ),
-            ],
-        )
+            ]
 
         # check builder
-        self.assertEqual(builder.packet_number, 1)
+        assert builder.packet_number == 1
 
     def test_short_header_max_total_bytes_1(self):
         """
@@ -544,16 +524,16 @@ class QuicPacketBuilderTest(TestCase):
 
         crypto = create_crypto()
 
-        with self.assertRaises(QuicPacketBuilderStop):
+        with pytest.raises(QuicPacketBuilderStop):
             builder.start_packet(QuicPacketType.ONE_RTT, crypto)
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(datagrams, [])
-        self.assertEqual(packets, [])
+        assert datagrams == []
+        assert packets == []
 
         # check builder
-        self.assertEqual(builder.packet_number, 0)
+        assert builder.packet_number == 0
 
     def test_short_header_max_total_bytes_2(self):
         """
@@ -565,20 +545,19 @@ class QuicPacketBuilderTest(TestCase):
         crypto = create_crypto()
 
         builder.start_packet(QuicPacketType.ONE_RTT, crypto)
-        self.assertEqual(builder.remaining_flight_space, 773)
+        assert builder.remaining_flight_space == 773
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(builder.remaining_flight_space))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
-        with self.assertRaises(QuicPacketBuilderStop):
+        with pytest.raises(QuicPacketBuilderStop):
             builder.start_packet(QuicPacketType.ONE_RTT, crypto)
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 1)
-        self.assertEqual(len(datagrams[0]), 800)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 1
+        assert len(datagrams[0]) == 800
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.ONE_RTT,
@@ -588,12 +567,11 @@ class QuicPacketBuilderTest(TestCase):
                     packet_number=0,
                     packet_type=QuicPacketType.ONE_RTT,
                     sent_bytes=800,
-                )
-            ],
-        )
+                ) \
+            ]
 
         # check builder
-        self.assertEqual(builder.packet_number, 1)
+        assert builder.packet_number == 1
 
     def test_short_header_max_total_bytes_3(self):
         builder = create_builder()
@@ -602,27 +580,26 @@ class QuicPacketBuilderTest(TestCase):
         crypto = create_crypto()
 
         builder.start_packet(QuicPacketType.ONE_RTT, crypto)
-        self.assertEqual(builder.remaining_flight_space, 1253)
+        assert builder.remaining_flight_space == 1253
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(builder.remaining_flight_space))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         builder.start_packet(QuicPacketType.ONE_RTT, crypto)
-        self.assertEqual(builder.remaining_flight_space, 693)
+        assert builder.remaining_flight_space == 693
         buf = builder.start_frame(QuicFrameType.CRYPTO)
         buf.push_bytes(bytes(builder.remaining_flight_space))
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
-        with self.assertRaises(QuicPacketBuilderStop):
+        with pytest.raises(QuicPacketBuilderStop):
             builder.start_packet(QuicPacketType.ONE_RTT, crypto)
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 2)
-        self.assertEqual(len(datagrams[0]), 1280)
-        self.assertEqual(len(datagrams[1]), 720)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 2
+        assert len(datagrams[0]) == 1280
+        assert len(datagrams[1]) == 720
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.ONE_RTT,
@@ -642,11 +619,10 @@ class QuicPacketBuilderTest(TestCase):
                     packet_type=QuicPacketType.ONE_RTT,
                     sent_bytes=720,
                 ),
-            ],
-        )
+            ]
 
         # check builder
-        self.assertEqual(builder.packet_number, 2)
+        assert builder.packet_number == 2
 
     def test_short_header_ping_only(self):
         """
@@ -659,14 +635,13 @@ class QuicPacketBuilderTest(TestCase):
         # HANDSHAKE, with only a PING frame
         builder.start_packet(QuicPacketType.ONE_RTT, crypto)
         builder.start_frame(QuicFrameType.PING)
-        self.assertFalse(builder.packet_is_empty)
+        assert not builder.packet_is_empty
 
         # check datagrams
         datagrams, packets = builder.flush()
-        self.assertEqual(len(datagrams), 1)
-        self.assertEqual(len(datagrams[0]), 29)
-        self.assertEqual(
-            packets,
+        assert len(datagrams) == 1
+        assert len(datagrams[0]) == 29
+        assert packets == \
             [
                 QuicSentPacket(
                     epoch=Epoch.ONE_RTT,
@@ -676,6 +651,5 @@ class QuicPacketBuilderTest(TestCase):
                     packet_number=0,
                     packet_type=QuicPacketType.ONE_RTT,
                     sent_bytes=29,
-                )
-            ],
-        )
+                ) \
+            ]

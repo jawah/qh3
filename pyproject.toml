@@ -48,6 +48,20 @@ documentation = "https://qh3.readthedocs.io/"
 [tool.coverage.run]
 source = ["qh3"]
 
+[tool.pytest.ini_options]
+xfail_strict = true
+log_level = "DEBUG"
+filterwarnings = [
+    "error",
+    '''ignore:.*iscoroutinefunction.*:DeprecationWarning''',
+    '''default:unclosed .*:ResourceWarning''',
+    '''ignore:The event_loop fixture provided by:DeprecationWarning''',
+    '''ignore:A plugin raised an exception during''',
+    '''ignore:Exception ignored in:pytest.PytestUnraisableExceptionWarning''',
+    '''ignore:Exception in thread:pytest.PytestUnhandledThreadExceptionWarning''',
+    '''ignore:loop is closed:ResourceWarning''',
+]
+
 [tool.mypy]
 disallow_untyped_calls = true
 disallow_untyped_decorators = true

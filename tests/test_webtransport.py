@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from unittest import TestCase
-
 from qh3.h3.connection import H3_ALPN, ErrorCode, H3Connection
 from qh3.h3.events import (
     DatagramReceived,
@@ -24,7 +22,7 @@ QUIC_CONFIGURATION_OPTIONS = {
 }
 
 
-class WebTransportTest(TestCase):
+class TestWebTransport:
     def _make_session(self, h3_client, h3_server):
         quic_client = h3_client._quic
         quic_server = h3_server._quic
@@ -44,8 +42,7 @@ class WebTransportTest(TestCase):
 
         # receive request
         events = h3_transfer(quic_client, h3_server)
-        self.assertEqual(
-            events,
+        assert events == \
             [
                 HeadersReceived(
                     headers=[
@@ -58,9 +55,8 @@ class WebTransportTest(TestCase):
                     stream_id=stream_id,
                     stream_ended=False,
                     push_id=None,
-                )
-            ],
-        )
+                ) \
+            ]
 
         # send response
         h3_server.send_headers(
@@ -72,8 +68,7 @@ class WebTransportTest(TestCase):
 
         # receive response
         events = h3_transfer(quic_server, h3_client)
-        self.assertEqual(
-            events,
+        assert events == \
             [
                 HeadersReceived(
                     headers=[
@@ -82,8 +77,7 @@ class WebTransportTest(TestCase):
                     stream_id=stream_id,
                     stream_ended=False,
                 ),
-            ],
-        )
+            ]
 
         return stream_id
 
@@ -104,17 +98,15 @@ class WebTransportTest(TestCase):
 
             # receive data
             events = h3_transfer(quic_client, h3_server)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     WebTransportStreamDataReceived(
                         data=b"foo",
                         session_id=session_id,
                         stream_ended=True,
                         stream_id=stream_id,
-                    )
-                ],
-            )
+                    ) \
+                ]
 
     def test_bidirectional_stream_fragmented_frame(self):
         with h3_fake_client_and_server(QUIC_CONFIGURATION_OPTIONS) as (
@@ -133,8 +125,7 @@ class WebTransportTest(TestCase):
 
             # receive data
             events = h3_transfer(quic_client, h3_server)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     WebTransportStreamDataReceived(
                         data=b"f",
@@ -160,8 +151,7 @@ class WebTransportTest(TestCase):
                         stream_ended=True,
                         stream_id=stream_id,
                     ),
-                ],
-            )
+                ]
 
     def test_bidirectional_stream_server_initiated(self):
         with h3_client_and_server(QUIC_CONFIGURATION_OPTIONS) as (
@@ -180,17 +170,15 @@ class WebTransportTest(TestCase):
 
             # receive data
             events = h3_transfer(quic_server, h3_client)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     WebTransportStreamDataReceived(
                         data=b"foo",
                         session_id=session_id,
                         stream_ended=True,
                         stream_id=stream_id,
-                    )
-                ],
-            )
+                    ) \
+                ]
 
     def test_unidirectional_stream(self):
         with h3_client_and_server(QUIC_CONFIGURATION_OPTIONS) as (
@@ -211,17 +199,15 @@ class WebTransportTest(TestCase):
 
             # receive data
             events = h3_transfer(quic_client, h3_server)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     WebTransportStreamDataReceived(
                         data=b"foo",
                         session_id=session_id,
                         stream_ended=True,
                         stream_id=stream_id,
-                    )
-                ],
-            )
+                    ) \
+                ]
 
     def test_unidirectional_stream_fragmented_frame(self):
         with h3_fake_client_and_server(QUIC_CONFIGURATION_OPTIONS) as (
@@ -242,8 +228,7 @@ class WebTransportTest(TestCase):
 
             # receive data
             events = h3_transfer(quic_client, h3_server)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     WebTransportStreamDataReceived(
                         data=b"f",
@@ -269,8 +254,7 @@ class WebTransportTest(TestCase):
                         stream_ended=True,
                         stream_id=stream_id,
                     ),
-                ],
-            )
+                ]
 
     def test_datagram(self):
         with h3_client_and_server(QUIC_CONFIGURATION_OPTIONS) as (
@@ -288,10 +272,8 @@ class WebTransportTest(TestCase):
 
             # receive datagram
             events = h3_transfer(quic_client, h3_server)
-            self.assertEqual(
-                events,
-                [DatagramReceived(data=b"foo", flow_id=session_id)],
-            )
+            assert events == \
+                [DatagramReceived(data=b"foo", flow_id=session_id)]
 
     def test_handle_datagram_truncated(self):
         quic_server = FakeQuicConnection(
@@ -301,10 +283,8 @@ class WebTransportTest(TestCase):
 
         # receive a datagram with a truncated session ID
         h3_server.handle_event(DatagramFrameReceived(data=b"\xff"))
-        self.assertEqual(
-            quic_server.closed,
+        assert quic_server.closed == \
             (
                 ErrorCode.H3_GENERAL_PROTOCOL_ERROR,
                 "Could not parse flow ID",
-            ),
-        )
+            )
