@@ -244,7 +244,10 @@ class QuicStreamAdapter(asyncio.Transport):
         self.protocol._transmit_soon()
 
     def is_closing(self):
-        return self.protocol._quic._close_pending or self.stream_id in self.protocol._quic._streams_finished
+        return (
+            self.protocol._quic._close_pending
+            or self.stream_id in self.protocol._quic._streams_finished
+        )
 
     def close(self):
         pass
