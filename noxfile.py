@@ -14,7 +14,7 @@ def tests_impl(
     session.install("-U", "pip", "setuptools", silent=False)
     session.install("-r", "dev-requirements.txt", silent=False)
 
-    session.install(f".", silent=False)
+    session.install(".", silent=False)
 
     # Show the pip version.
     session.run("pip", "--version")
