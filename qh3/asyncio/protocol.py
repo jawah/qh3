@@ -220,6 +220,8 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
 
 class QuicStreamAdapter(asyncio.Transport):
     def __init__(self, protocol: QuicConnectionProtocol, stream_id: int):
+        super().__init__()
+
         self.protocol = protocol
         self.stream_id = stream_id
 
@@ -240,3 +242,9 @@ class QuicStreamAdapter(asyncio.Transport):
     def write_eof(self):
         self.protocol._quic.send_stream_data(self.stream_id, b"", end_stream=True)
         self.protocol._transmit_soon()
+
+    def is_closing(self):
+        return self.protocol._quic._close_pending or self.stream_id in self.protocol._quic._streams_finished
+
+    def close(self):
+        pass
