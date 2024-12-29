@@ -1,13 +1,13 @@
+use rustls::client::danger::ServerCertVerifier;
 use rustls::client::WebPkiServerVerifier;
-use rustls::client::danger::{ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{CertificateError, Error, RootCertStore};
-use rustls::pki_types::{CertificateDer, UnixTime, ServerName};
 
-use pyo3::{PyResult, Python};
-use pyo3::types::{PyBytes, PyList, PyTuple};
-use pyo3::pymethods;
 use pyo3::pyclass;
+use pyo3::pymethods;
+use pyo3::types::{PyBytes, PyList, PyTuple};
 use pyo3::ToPyObject;
+use pyo3::{PyResult, Python};
 
 use x509_parser::prelude::*;
 use x509_parser::public_key::PublicKey;
@@ -23,7 +23,6 @@ pyo3::create_exception!(_hazmat, InvalidNameCertificateError, PyException);
 pyo3::create_exception!(_hazmat, ExpiredCertificateError, PyException);
 pyo3::create_exception!(_hazmat, UnacceptableCertificateError, PyException);
 
-
 #[pyclass(name = "Extension", module = "qh3._hazmat", frozen)]
 pub struct Extension {
     oid: String,
@@ -33,7 +32,7 @@ pub struct Extension {
 #[pyclass(name = "Subject", module = "qh3._hazmat", frozen)]
 pub struct Subject {
     oid: String,
-    value: Vec<u8>
+    value: Vec<u8>,
 }
 
 #[pyclass(name = "Certificate", module = "qh3._hazmat", frozen)]
@@ -68,82 +67,66 @@ impl Certificate {
                     match extension.parsed_extension() {
                         ParsedExtension::AuthorityInfoAccess(aia) => {
                             for ext_endpoint in &aia.accessdescs {
-                                extensions.push(
-                                    Extension {
-                                        oid: ext_endpoint.access_method.to_string(),
-                                        value: ext_endpoint.access_location.to_string().into(),
-                                    }
-                                )
-
-                            }
-                        },
-                        ParsedExtension::SubjectAlternativeName(san) => {
-                            for name in &san.general_names {
-                                extensions.push(
-                                    Extension {
-                                        oid: "2.5.29.17".to_string(),
-                                        value: name.to_string().into(),
-                                    }
-                                )
+                                extensions.push(Extension {
+                                    oid: ext_endpoint.access_method.to_string(),
+                                    value: ext_endpoint.access_location.to_string().into(),
+                                })
                             }
                         }
-                        _ => ()
+                        ParsedExtension::SubjectAlternativeName(san) => {
+                            for name in &san.general_names {
+                                extensions.push(Extension {
+                                    oid: "2.5.29.17".to_string(),
+                                    value: name.to_string().into(),
+                                })
+                            }
+                        }
+                        _ => (),
                     }
                 }
 
                 for item in cert.subject.iter() {
                     for sub_item in item.iter() {
-                        subject.push(
-                            Subject {
-                                oid: sub_item.attr_type().to_string(),
-                                value: sub_item.attr_value().data.to_vec()
-                            }
-                        )
+                        subject.push(Subject {
+                            oid: sub_item.attr_type().to_string(),
+                            value: sub_item.attr_value().data.to_vec(),
+                        })
                     }
                 }
 
                 for item in cert.issuer.iter() {
                     for sub_item in item.iter() {
-                        issuer.push(
-                            Subject {
-                                oid: sub_item.attr_type().to_string(),
-                                value: sub_item.attr_value().data.to_vec()
-                            }
-                        )
+                        issuer.push(Subject {
+                            oid: sub_item.attr_type().to_string(),
+                            value: sub_item.attr_value().data.to_vec(),
+                        })
                     }
                 }
 
-                return Ok(
-                    Certificate {
-                        version: match cert.version() {
-                            X509Version::V1 => 0,
-                            X509Version::V2 => 1,
-                            X509Version::V3 => 2,
-                            _ => 0xFF
-                        },
-                        serial_number: cert.raw_serial_as_string(),
-                        raw_serial_number: cert.raw_serial().to_vec(),
-                        not_valid_before: cert.validity.not_before.timestamp(),
-                        not_valid_after: cert.validity.not_after.timestamp(),
-                        extensions: extensions,
-                        subject: subject,
-                        issuer: issuer,
-                        public_bytes: certificate_der.as_bytes().to_vec(),
-                        public_key: match cert.public_key().parsed() {
-                            Ok(PublicKey::EC(pts)) => {
-                                pts.data().to_vec()
-                            },
-                            Ok(PublicKey::DSA(cert_decoded)) => {
-                                cert_decoded.to_vec()
-                            },
-                            _ => cert.public_key().raw.to_vec()
-                        },
-                    }
-                )
-            },
+                return Ok(Certificate {
+                    version: match cert.version() {
+                        X509Version::V1 => 0,
+                        X509Version::V2 => 1,
+                        X509Version::V3 => 2,
+                        _ => 0xFF,
+                    },
+                    serial_number: cert.raw_serial_as_string(),
+                    raw_serial_number: cert.raw_serial().to_vec(),
+                    not_valid_before: cert.validity.not_before.timestamp(),
+                    not_valid_after: cert.validity.not_after.timestamp(),
+                    extensions: extensions,
+                    subject: subject,
+                    issuer: issuer,
+                    public_bytes: certificate_der.as_bytes().to_vec(),
+                    public_key: match cert.public_key().parsed() {
+                        Ok(PublicKey::EC(pts)) => pts.data().to_vec(),
+                        Ok(PublicKey::DSA(cert_decoded)) => cert_decoded.to_vec(),
+                        _ => cert.public_key().raw.to_vec(),
+                    },
+                });
+            }
             _ => Err(CryptoError::new_err("x509 parsing failed")),
         }
-
     }
 
     #[getter]
@@ -152,10 +135,7 @@ impl Certificate {
     }
 
     pub fn raw_serial_number<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(
-            py,
-            &self.raw_serial_number
-        )
+        return PyBytes::new(py, &self.raw_serial_number);
     }
 
     #[getter]
@@ -188,22 +168,17 @@ impl Certificate {
                 "2.5.4.9" => "STREET".to_string(),
                 "0.9.2342.19200300.100.1.25" => "DC".to_string(),
                 "0.9.2342.19200300.100.1.1" => "UID".to_string(),
-                _ => "".to_string()
+                _ => "".to_string(),
             };
 
-            let _ = values.append(
-                PyTuple::new(
-                    py,
-                    [
-                        item.oid.to_object(py),
-                        oid_short.to_object(py),
-                        PyBytes::new(
-                            py,
-                            &item.value
-                        ).into()
-                    ]
-                )
-            );
+            let _ = values.append(PyTuple::new(
+                py,
+                [
+                    item.oid.to_object(py),
+                    oid_short.to_object(py),
+                    PyBytes::new(py, &item.value).into(),
+                ],
+            ));
         }
 
         return values;
@@ -214,7 +189,6 @@ impl Certificate {
         let values = PyList::empty(py);
 
         for item in &self.issuer {
-
             let oid_short = match item.oid.as_str() {
                 "2.5.4.3" => "CN",
                 "2.5.4.7" => "L",
@@ -225,22 +199,17 @@ impl Certificate {
                 "2.5.4.9" => "STREET",
                 "0.9.2342.19200300.100.1.25" => "DC",
                 "0.9.2342.19200300.100.1.1" => "UID",
-                _ => ""
+                _ => "",
             };
 
-            let _ = values.append(
-                PyTuple::new(
-                    py,
-                    [
-                        item.oid.to_object(py),
-                        oid_short.to_object(py),
-                        PyBytes::new(
-                            py,
-                            &item.value
-                        ).into()
-                    ]
-                )
-            );
+            let _ = values.append(PyTuple::new(
+                py,
+                [
+                    item.oid.to_object(py),
+                    oid_short.to_object(py),
+                    PyBytes::new(py, &item.value).into(),
+                ],
+            ));
         }
 
         return values;
@@ -251,12 +220,7 @@ impl Certificate {
 
         for item in &self.extensions {
             if item.oid == "2.5.29.17" {
-                let _ = values.append(
-                    PyBytes::new(
-                        py,
-                        &item.value
-                    )
-                );
+                let _ = values.append(PyBytes::new(py, &item.value));
             }
         }
 
@@ -268,12 +232,7 @@ impl Certificate {
 
         for item in &self.extensions {
             if item.oid == "1.3.6.1.5.5.7.48.1" {
-                let _ = values.append(
-                    PyBytes::new(
-                        py,
-                        &item.value
-                    )
-                );
+                let _ = values.append(PyBytes::new(py, &item.value));
             }
         }
 
@@ -285,12 +244,7 @@ impl Certificate {
 
         for item in &self.extensions {
             if item.oid == "1.3.6.1.5.5.7.48.2" {
-                let _ = values.append(
-                    PyBytes::new(
-                        py,
-                        &item.value
-                    )
-                );
+                let _ = values.append(PyBytes::new(py, &item.value));
             }
         }
 
@@ -298,17 +252,11 @@ impl Certificate {
     }
 
     pub fn public_bytes<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(
-            py,
-            &self.public_bytes
-        )
+        return PyBytes::new(py, &self.public_bytes);
     }
 
     pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(
-            py,
-            &self.public_key
-        );
+        return PyBytes::new(py, &self.public_key);
     }
 
     fn __eq__(&self, other: &Self) -> bool {
@@ -316,36 +264,39 @@ impl Certificate {
     }
 }
 
-
 #[pyclass(name = "ServerVerifier", module = "qh3._hazmat")]
 pub struct ServerVerifier {
-    inner: Arc<WebPkiServerVerifier>
+    inner: Arc<WebPkiServerVerifier>,
 }
 
 #[pymethods]
 impl ServerVerifier {
-
     #[new]
     pub fn py_new(authorities: Vec<&PyBytes>) -> PyResult<Self> {
         let mut root_cert_store = RootCertStore::empty();
 
-        root_cert_store.add_parsable_certificates(authorities.into_iter().map(|ca| CertificateDer::from(ca.as_bytes())));
+        root_cert_store.add_parsable_certificates(
+            authorities
+                .into_iter()
+                .map(|ca| CertificateDer::from(ca.as_bytes())),
+        );
         let res = WebPkiServerVerifier::builder(Arc::new(root_cert_store)).build();
 
         match res {
-            Ok(store) => {
-                Ok(
-                    ServerVerifier {
-                        inner: store
-                    }
-                )
-            },
-            Err(_) => Err(CryptoError::new_err("Unable to create the X509 trust store"))
+            Ok(store) => Ok(ServerVerifier { inner: store }),
+            Err(_) => Err(CryptoError::new_err(
+                "Unable to create the X509 trust store",
+            )),
         }
     }
 
     #[allow(unreachable_code)]
-    pub fn verify(&mut self, peer: &PyBytes, intermediaries: Vec<&PyBytes>, server_name: String) -> PyResult<()> {
+    pub fn verify(
+        &mut self,
+        peer: &PyBytes,
+        intermediaries: Vec<&PyBytes>,
+        server_name: String,
+    ) -> PyResult<()> {
         let peer_der = CertificateDer::from(peer.as_bytes());
         let mut intermediaries_der = Vec::new();
 
@@ -367,22 +318,37 @@ impl ServerVerifier {
 
                 return match res {
                     Ok(_) => Ok(()),
-                    Err(Error::InvalidCertificate(err)) => {
-                        match err {
-                            CertificateError::UnknownIssuer => Err(SelfSignedCertificateError::new_err("unable to get local issuer certificate")),
-                            CertificateError::NotValidForName => Err(InvalidNameCertificateError::new_err("invalid server name for certificate")),
-                            CertificateError::Expired => Err(ExpiredCertificateError::new_err("server certificate expired")),
-                            CertificateError::NotValidYet => Err(ExpiredCertificateError::new_err("server certificate is not yet valid")),
-                            _ => Err(UnacceptableCertificateError::new_err("the server certificate is unacceptable"))
+                    Err(Error::InvalidCertificate(err)) => match err {
+                        CertificateError::UnknownIssuer => {
+                            Err(SelfSignedCertificateError::new_err(
+                                "unable to get local issuer certificate",
+                            ))
                         }
+                        CertificateError::NotValidForName => {
+                            Err(InvalidNameCertificateError::new_err(
+                                "invalid server name for certificate",
+                            ))
+                        }
+                        CertificateError::Expired => Err(ExpiredCertificateError::new_err(
+                            "server certificate expired",
+                        )),
+                        CertificateError::NotValidYet => Err(ExpiredCertificateError::new_err(
+                            "server certificate is not yet valid",
+                        )),
+                        _ => Err(UnacceptableCertificateError::new_err(
+                            "the server certificate is unacceptable",
+                        )),
                     },
-                    Err(_) => Err(CryptoError::new_err("the x509 certificate store encountered an error"))
-                }
-            },
-            Err(_) => {
-                return Err(InvalidNameCertificateError::new_err("unparseable server name"));
+                    Err(_) => Err(CryptoError::new_err(
+                        "the x509 certificate store encountered an error",
+                    )),
+                };
             }
-        }
-
+            Err(_) => {
+                return Err(InvalidNameCertificateError::new_err(
+                    "unparseable server name",
+                ));
+            }
+        };
     }
 }

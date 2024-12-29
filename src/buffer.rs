@@ -1,19 +1,17 @@
-use pyo3::types::{PyBytes};
-use pyo3::{pymethods, PyResult, Python};
+use pyo3::exceptions::PyValueError;
 use pyo3::pyclass;
-use pyo3::exceptions::{PyValueError};
+use pyo3::types::PyBytes;
+use pyo3::{pymethods, PyResult, Python};
 
 pyo3::create_exception!(_hazmat, BufferReadError, PyValueError);
 pyo3::create_exception!(_hazmat, BufferWriteError, PyValueError);
-
 
 #[pyclass(module = "qh3._hazmat")]
 pub struct Buffer {
     pos: u64,
     data: Vec<u8>,
-    capacity: u64
+    capacity: u64,
 }
-
 
 #[pymethods]
 impl Buffer {
@@ -21,28 +19,24 @@ impl Buffer {
     pub fn py_new(capacity: Option<u64>, data: Option<&PyBytes>) -> PyResult<Self> {
         if data.is_some() {
             let payload = data.unwrap().as_bytes();
-            return Ok(
-                Buffer {
-                    pos: 0,
-                    data: payload.to_vec(),
-                    capacity: payload.len() as u64
-                }
-            );
+            return Ok(Buffer {
+                pos: 0,
+                data: payload.to_vec(),
+                capacity: payload.len() as u64,
+            });
         }
 
         if !capacity.is_some() {
-            return Err(
-                PyValueError::new_err("mandatory capacity without data args")
-            );
+            return Err(PyValueError::new_err(
+                "mandatory capacity without data args",
+            ));
         }
 
-        return Ok(
-            Buffer {
-                pos: 0,
-                data: vec![0; capacity.unwrap().try_into().unwrap()],
-                capacity: capacity.unwrap(),
-            }
-        );
+        return Ok(Buffer {
+            pos: 0,
+            data: vec![0; capacity.unwrap().try_into().unwrap()],
+            capacity: capacity.unwrap(),
+        });
     }
 
     #[getter]
@@ -53,15 +47,9 @@ impl Buffer {
     #[getter]
     pub fn data<'a>(&self, py: Python<'a>) -> &'a PyBytes {
         if self.pos == 0 {
-            return PyBytes::new(
-                py,
-                &[]
-            );
+            return PyBytes::new(py, &[]);
         }
-        return PyBytes::new(
-            py,
-            &self.data[0 as usize..self.pos as usize]
-        );
+        return PyBytes::new(py, &self.data[0 as usize..self.pos as usize]);
     }
 
     pub fn data_slice<'a>(&self, py: Python<'a>, start: u64, end: u64) -> PyResult<&'a PyBytes> {
@@ -69,12 +57,7 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        return Ok(
-            PyBytes::new(
-                py,
-                &self.data[start as usize..end as usize]
-            )
-        );
+        return Ok(PyBytes::new(py, &self.data[start as usize..end as usize]));
     }
 
     pub fn eof(&self) -> bool {
@@ -102,7 +85,7 @@ impl Buffer {
 
         let extract = PyBytes::new(
             py,
-            &self.data[self.pos as usize..(self.pos+length) as usize]
+            &self.data[self.pos as usize..(self.pos + length) as usize],
         );
 
         self.pos += length;
@@ -130,7 +113,11 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u16::from_be_bytes(self.data[self.pos as usize..(self.pos + 2) as usize].try_into().expect("failure"));
+        let extract = u16::from_be_bytes(
+            self.data[self.pos as usize..(self.pos + 2) as usize]
+                .try_into()
+                .expect("failure"),
+        );
         self.pos += 2;
 
         return Ok(extract);
@@ -145,7 +132,11 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u32::from_be_bytes(self.data[self.pos as usize..(self.pos + 4) as usize].try_into().expect("failure"));
+        let extract = u32::from_be_bytes(
+            self.data[self.pos as usize..(self.pos + 4) as usize]
+                .try_into()
+                .expect("failure"),
+        );
         self.pos += 4;
 
         return Ok(extract);
@@ -160,7 +151,11 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u64::from_be_bytes(self.data[self.pos as usize..(self.pos + 8) as usize].try_into().expect("failure"));
+        let extract = u64::from_be_bytes(
+            self.data[self.pos as usize..(self.pos + 8) as usize]
+                .try_into()
+                .expect("failure"),
+        );
         self.pos += 8;
 
         return Ok(extract);
@@ -183,8 +178,8 @@ impl Buffer {
             return match self.pull_uint16() {
                 Ok(val) => {
                     return Ok((val & 0x3FFF).into());
-                },
-                Err(exception) => Err(exception)
+                }
+                Err(exception) => Err(exception),
             };
         }
 
@@ -192,16 +187,16 @@ impl Buffer {
             return match self.pull_uint32() {
                 Ok(val) => {
                     return Ok((val & 0x3FFFFFFF).into());
-                },
-                Err(exception) => Err(exception)
+                }
+                Err(exception) => Err(exception),
             };
         }
 
         return match self.pull_uint64() {
             Ok(val) => {
                 return Ok(val & 0x3FFFFFFFFFFFFFFF);
-            },
-            Err(exception) => Err(exception)
+            }
+            Err(exception) => Err(exception),
         };
     }
 
@@ -239,7 +234,8 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos as usize..(self.pos + 2) as usize].clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos as usize..(self.pos + 2) as usize]
+            .clone_from_slice(&value.to_be_bytes());
         self.pos += 2;
 
         return Ok(());
@@ -254,7 +250,8 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos as usize..(self.pos + 4) as usize].clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos as usize..(self.pos + 4) as usize]
+            .clone_from_slice(&value.to_be_bytes());
         self.pos += 4;
 
         return Ok(());
@@ -269,7 +266,8 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos as usize..(self.pos + 8) as usize].clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos as usize..(self.pos + 8) as usize]
+            .clone_from_slice(&value.to_be_bytes());
         self.pos += 8;
 
         return Ok(());
@@ -286,6 +284,8 @@ impl Buffer {
             return self.push_uint64(value | 0xC000000000000000);
         }
 
-        return Err(PyValueError::new_err("Integer is too big for a variable-length integer"));
+        return Err(PyValueError::new_err(
+            "Integer is too big for a variable-length integer",
+        ));
     }
 }

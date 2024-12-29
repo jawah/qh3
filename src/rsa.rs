@@ -1,11 +1,9 @@
-use pyo3::Python;
-use pyo3::types::PyBytes;
-use pyo3::pymethods;
 use pyo3::pyclass;
+use pyo3::pymethods;
+use pyo3::types::PyBytes;
+use pyo3::Python;
 
-
-use rsa::{RsaPrivateKey, RsaPublicKey, Oaep, sha2::Sha256};
-
+use rsa::{sha2::Sha256, Oaep, RsaPrivateKey, RsaPublicKey};
 
 #[pyclass(module = "qh3._hazmat")]
 pub struct Rsa {
@@ -34,23 +32,23 @@ impl Rsa {
         let padding = Oaep::new::<Sha256>();
         let mut rng = rand::thread_rng();
 
-        let enc_data = self.public_key.encrypt(&mut rng, padding, &payload_to_enc[..]).expect("failed to encrypt");
+        let enc_data = self
+            .public_key
+            .encrypt(&mut rng, padding, &payload_to_enc[..])
+            .expect("failed to encrypt");
 
-        return PyBytes::new(
-            py,
-            &enc_data
-        );
+        return PyBytes::new(py, &enc_data);
     }
 
     pub fn decrypt<'a>(&self, py: Python<'a>, data: &PyBytes) -> &'a PyBytes {
         let payload_to_dec = data.as_bytes();
 
         let padding = Oaep::new::<Sha256>();
-        let dec_data = self.private_key.decrypt(padding, &payload_to_dec).expect("failed to decrypt");
+        let dec_data = self
+            .private_key
+            .decrypt(padding, &payload_to_dec)
+            .expect("failed to decrypt");
 
-        return PyBytes::new(
-            py,
-            &dec_data
-        );
+        return PyBytes::new(py, &dec_data);
     }
 }

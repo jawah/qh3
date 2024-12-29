@@ -1,17 +1,16 @@
-use pyo3::Python;
-use pyo3::types::PyBytes;
-use pyo3::pymethods;
 use pyo3::pyclass;
+use pyo3::pymethods;
+use pyo3::types::PyBytes;
+use pyo3::Python;
 
 use pkcs8::{der::Encode, DecodePrivateKey, Error, PrivateKeyInfo as InternalPrivateKeyInfo};
 use rsa::{
     pkcs1::DecodeRsaPrivateKey,
-    pkcs8::{LineEnding, EncodePrivateKey, ObjectIdentifier},
+    pkcs8::{EncodePrivateKey, LineEnding, ObjectIdentifier},
     RsaPrivateKey,
 };
 
-use rustls_pemfile::{Item, read_one_from_slice};
-
+use rustls_pemfile::{read_one_from_slice, Item};
 
 #[pyclass(module = "qh3._hazmat")]
 #[derive(Clone, Copy)]
@@ -37,33 +36,31 @@ impl TryFrom<InternalPrivateKeyInfo<'_>> for PrivateKeyInfo {
     fn try_from(pkcs8: InternalPrivateKeyInfo<'_>) -> Result<PrivateKeyInfo, Error> {
         let der_document = pkcs8.to_der().unwrap();
 
-        let rsa_oid = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1").as_bytes().to_vec();
-        let dsa_oid = ObjectIdentifier::new_unwrap("1.2.840.10040.4.1").as_bytes().to_vec();
+        let rsa_oid = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1")
+            .as_bytes()
+            .to_vec();
+        let dsa_oid = ObjectIdentifier::new_unwrap("1.2.840.10040.4.1")
+            .as_bytes()
+            .to_vec();
 
         if rsa_oid == pkcs8.algorithm.oid.as_bytes().to_vec() {
-            return Ok(
-                PrivateKeyInfo{
-                    der_encoded: der_document.clone(),
-                    cert_type: KeyType::RSA
-                }
-            );
+            return Ok(PrivateKeyInfo {
+                der_encoded: der_document.clone(),
+                cert_type: KeyType::RSA,
+            });
         }
 
         if dsa_oid == pkcs8.algorithm.oid.as_bytes().to_vec() {
-            return Ok(
-                PrivateKeyInfo{
-                    der_encoded: der_document.clone(),
-                    cert_type: KeyType::DSA
-                }
-            );
+            return Ok(PrivateKeyInfo {
+                der_encoded: der_document.clone(),
+                cert_type: KeyType::DSA,
+            });
         }
 
-        return Ok(
-            PrivateKeyInfo{
-                der_encoded: der_document.clone(),
-                cert_type: KeyType::ED25519
-            }
-        );
+        return Ok(PrivateKeyInfo {
+            der_encoded: der_document.clone(),
+            cert_type: KeyType::ED25519,
+        });
     }
 }
 
@@ -83,22 +80,26 @@ impl PrivateKeyInfo {
                     panic!("unsupported");
                 }
 
-                let rsa_key: RsaPrivateKey = RsaPrivateKey::from_pkcs1_der(&key.secret_pkcs1_der()).unwrap();
+                let rsa_key: RsaPrivateKey =
+                    RsaPrivateKey::from_pkcs1_der(&key.secret_pkcs1_der()).unwrap();
 
-                let pkcs8_pem = rsa_key
-                    .to_pkcs8_pem(LineEnding::LF).expect("FAILURE");
+                let pkcs8_pem = rsa_key.to_pkcs8_pem(LineEnding::LF).expect("FAILURE");
 
                 let pkcs8_pem: &str = pkcs8_pem.as_ref();
 
                 return PrivateKeyInfo::from_pkcs8_pem(&pkcs8_pem).unwrap();
-            },
+            }
             Item::Pkcs8Key(_key) => {
                 if is_encrypted {
-                    return PrivateKeyInfo::from_pkcs8_encrypted_pem(&decoded_bytes, password.unwrap().as_bytes()).unwrap();
+                    return PrivateKeyInfo::from_pkcs8_encrypted_pem(
+                        &decoded_bytes,
+                        password.unwrap().as_bytes(),
+                    )
+                    .unwrap();
                 }
 
                 return PrivateKeyInfo::from_pkcs8_pem(&decoded_bytes).unwrap();
-            },
+            }
             Item::Sec1Key(key) => {
                 if is_encrypted {
                     panic!("unsupported");
@@ -114,11 +115,10 @@ impl PrivateKeyInfo {
                         _ => panic!("unsupported sec1 key"),
                     },
                     der_encoded: sec1_der,
-                }
-            },
+                };
+            }
             _ => panic!("unsupported"),
         };
-
     }
 
     pub fn get_type(&self) -> KeyType {
@@ -126,9 +126,6 @@ impl PrivateKeyInfo {
     }
 
     pub fn public_bytes<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(
-            py,
-            &self.der_encoded
-        );
+        return PyBytes::new(py, &self.der_encoded);
     }
 }
