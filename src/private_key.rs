@@ -61,18 +61,18 @@ impl Ed25519PrivateKey {
     #[new]
     pub fn py_new(pkcs8: &PyBytes) -> Self {
         Ed25519PrivateKey {
-            inner: InternalEd25519PrivateKey::from_pkcs8(&pkcs8.as_bytes()).expect("FAILURE"),
+            inner: InternalEd25519PrivateKey::from_pkcs8(pkcs8.as_bytes()).expect("FAILURE"),
         }
     }
 
     pub fn sign<'a>(&self, py: Python<'a>, data: &PyBytes) -> &'a PyBytes {
-        let signature = self.inner.sign(&data.as_bytes());
+        let signature = self.inner.sign(data.as_bytes());
 
-        return PyBytes::new(py, &signature.as_ref());
+        PyBytes::new(py, signature.as_ref())
     }
 
     pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(py, &self.inner.public_key().as_ref());
+        PyBytes::new(py, self.inner.public_key().as_ref())
     }
 }
 
@@ -87,27 +87,27 @@ impl EcPrivateKey {
             _ => panic!("unsupported"),
         };
 
-        return EcPrivateKey {
-            inner: InternalEcPrivateKey::from_pkcs8(&signing_algorithm, &pkcs8.as_bytes())
+        EcPrivateKey {
+            inner: InternalEcPrivateKey::from_pkcs8(signing_algorithm, pkcs8.as_bytes())
                 .expect("FAILURE"),
             curve: curve_type,
-        };
+        }
     }
 
     pub fn sign<'a>(&self, py: Python<'a>, data: &PyBytes) -> &'a PyBytes {
         let rng = SystemRandom::new();
-        let signature = self.inner.sign(&rng, &data.as_bytes());
+        let signature = self.inner.sign(&rng, data.as_bytes());
 
-        return PyBytes::new(py, &signature.unwrap().as_ref());
+        PyBytes::new(py, signature.unwrap().as_ref())
     }
 
     pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(py, &self.inner.public_key().as_ref());
+        PyBytes::new(py, self.inner.public_key().as_ref())
     }
 
     #[getter]
     pub fn curve_type(&self) -> u32 {
-        return self.curve;
+        self.curve
     }
 }
 
@@ -115,27 +115,26 @@ impl EcPrivateKey {
 impl DsaPrivateKey {
     #[new]
     pub fn py_new(pkcs8: &PyBytes) -> Self {
-        return DsaPrivateKey {
-            inner: InternalDsaPrivateKey::from_pkcs8_der(&pkcs8.as_bytes()).expect("FAILURE"),
-        };
+        DsaPrivateKey {
+            inner: InternalDsaPrivateKey::from_pkcs8_der(pkcs8.as_bytes()).expect("FAILURE"),
+        }
     }
 
     pub fn sign<'a>(&self, py: Python<'a>, data: &PyBytes) -> &'a PyBytes {
-        let signature = self.inner.sign(&data.as_bytes());
+        let signature = self.inner.sign(data.as_bytes());
 
-        return PyBytes::new(py, &signature.to_bytes());
+        PyBytes::new(py, &signature.to_bytes())
     }
 
     pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(
+        PyBytes::new(
             py,
-            &self
-                .inner
+            self.inner
                 .verifying_key()
                 .to_public_key_der()
                 .expect("FAILURE")
                 .as_bytes(),
-        );
+        )
     }
 }
 
@@ -143,9 +142,9 @@ impl DsaPrivateKey {
 impl RsaPrivateKey {
     #[new]
     pub fn py_new(pkcs8: &PyBytes) -> Self {
-        return RsaPrivateKey {
-            inner: InternalRsaPrivateKey::from_pkcs8_der(&pkcs8.as_bytes()).expect("FAILURE"),
-        };
+        RsaPrivateKey {
+            inner: InternalRsaPrivateKey::from_pkcs8_der(pkcs8.as_bytes()).expect("FAILURE"),
+        }
     }
 
     pub fn sign<'a>(
@@ -161,43 +160,43 @@ impl RsaPrivateKey {
             true => match hash_size {
                 256 => {
                     let signer = InternalRsaPssSigningKey::<Sha256>::new(private_key);
-                    return PyBytes::new(py, &signer.sign(&data.as_bytes()).to_vec());
+                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
                 }
                 384 => {
                     let signer = InternalRsaPssSigningKey::<Sha384>::new(private_key);
-                    return PyBytes::new(py, &signer.sign(&data.as_bytes()).to_vec());
+                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
                 }
                 512 => {
                     let signer = InternalRsaPssSigningKey::<Sha512>::new(private_key);
-                    return PyBytes::new(py, &signer.sign(&data.as_bytes()).to_vec());
+                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
                 }
                 _ => panic!("unsupported"),
             },
             false => match hash_size {
                 256 => {
                     let signer = InternalRsaPkcsSigningKey::<Sha256>::new(private_key);
-                    return PyBytes::new(py, &signer.sign(&data.as_bytes()).to_vec());
+                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
                 }
                 384 => {
                     let signer = InternalRsaPkcsSigningKey::<Sha384>::new(private_key);
-                    return PyBytes::new(py, &signer.sign(&data.as_bytes()).to_vec());
+                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
                 }
                 512 => {
                     let signer = InternalRsaPkcsSigningKey::<Sha512>::new(private_key);
-                    return PyBytes::new(py, &signer.sign(&data.as_bytes()).to_vec());
+                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
                 }
                 _ => panic!("unsupported"),
             },
-        };
+        }
     }
 
     pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
         let public_key: InternalRsaPublicKey = self.inner.to_public_key();
 
-        return PyBytes::new(
+        PyBytes::new(
             py,
             &public_key.to_public_key_der().as_ref().unwrap().to_vec(),
-        );
+        )
     }
 }
 
@@ -221,14 +220,14 @@ pub fn verify_with_public_key(
         || pkcs115_blind_signature.contains(&algorithm)
     {
         let rsa_parsed_public_key =
-            InternalRsaPublicKey::from_public_key_der(&public_key_bytes).expect("FAILURE");
+            InternalRsaPublicKey::from_public_key_der(public_key_bytes).expect("FAILURE");
 
         return match algorithm {
             0x0804 | 0x0809 => {
                 let alt_verifier = RsaPssVerifyingKey::<Sha256>::new(rsa_parsed_public_key);
 
                 let res = alt_verifier.verify(
-                    &message.as_bytes(),
+                    message.as_bytes(),
                     &RsaPssSignature::try_from(signature.as_bytes()).expect("FAILURE"),
                 );
 
@@ -241,7 +240,7 @@ pub fn verify_with_public_key(
                 let alt_verifier = RsaPssVerifyingKey::<Sha384>::new(rsa_parsed_public_key);
 
                 let res = alt_verifier.verify(
-                    &message.as_bytes(),
+                    message.as_bytes(),
                     &RsaPssSignature::try_from(signature.as_bytes()).expect("FAILURE"),
                 );
 
@@ -254,7 +253,7 @@ pub fn verify_with_public_key(
                 let alt_verifier = RsaPssVerifyingKey::<Sha512>::new(rsa_parsed_public_key);
 
                 let res = alt_verifier.verify(
-                    &message.as_bytes(),
+                    message.as_bytes(),
                     &RsaPssSignature::try_from(signature.as_bytes()).expect("FAILURE"),
                 );
 
@@ -268,7 +267,7 @@ pub fn verify_with_public_key(
                 let alt_verifier = RsaPkcsVerifyingKey::<Sha256>::new(rsa_parsed_public_key);
 
                 let res = alt_verifier.verify(
-                    &message.as_bytes(),
+                    message.as_bytes(),
                     &RsaPkcsSignature::try_from(signature.as_bytes()).expect("FAILURE"),
                 );
 
@@ -281,7 +280,7 @@ pub fn verify_with_public_key(
                 let alt_verifier = RsaPkcsVerifyingKey::<Sha384>::new(rsa_parsed_public_key);
 
                 let res = alt_verifier.verify(
-                    &message.as_bytes(),
+                    message.as_bytes(),
                     &RsaPkcsSignature::try_from(signature.as_bytes()).expect("FAILURE"),
                 );
 
@@ -294,7 +293,7 @@ pub fn verify_with_public_key(
                 let alt_verifier = RsaPkcsVerifyingKey::<Sha512>::new(rsa_parsed_public_key);
 
                 let res = alt_verifier.verify(
-                    &message.as_bytes(),
+                    message.as_bytes(),
                     &RsaPkcsSignature::try_from(signature.as_bytes()).expect("FAILURE"),
                 );
 
@@ -310,9 +309,9 @@ pub fn verify_with_public_key(
 
     if algorithm == 0x0807 {
         let ed25519_verifier: Ed25519VerifyingKey =
-            Ed25519VerifyingKey::from_public_key_der(&public_key_bytes).expect("FAILURE");
+            Ed25519VerifyingKey::from_public_key_der(public_key_bytes).expect("FAILURE");
         let res = ed25519_verifier.verify(
-            &message.as_bytes(),
+            message.as_bytes(),
             &Ed25519Signature::from_bytes(signature.as_bytes()[0..64].try_into().unwrap()),
         );
 
@@ -332,10 +331,10 @@ pub fn verify_with_public_key(
         public_key_bytes,
     );
 
-    let res = public_key.verify(&message.as_bytes(), &signature.as_bytes());
+    let res = public_key.verify(message.as_bytes(), signature.as_bytes());
 
-    return match res {
+    match res {
         Err(Unspecified) => Err(SignatureError::new_err("signature mismatch (ecdsa)")),
         _ => Ok(()),
-    };
+    }
 }

@@ -23,20 +23,20 @@ impl QUICHeaderProtection {
                     20 => &CHACHA20,
                     _ => panic!("unsupported"),
                 },
-                &key.as_bytes(),
+                key.as_bytes(),
             )
             .expect("FAILURE"),
         }
     }
 
     pub fn mask<'a>(&self, py: Python<'a>, sample: &PyBytes) -> PyResult<&'a PyBytes> {
-        let res = self.hpk.new_mask(&sample.as_bytes());
+        let res = self.hpk.new_mask(sample.as_bytes());
 
-        return match res {
+        match res {
             Err(_) => Err(CryptoError::new_err(
                 "unable to issue mask protection header",
             )),
             Ok(data) => Ok(PyBytes::new(py, &data)),
-        };
+        }
     }
 }

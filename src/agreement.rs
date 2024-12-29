@@ -78,7 +78,7 @@ impl X25519Kyber768Draft00KeyExchange {
             .extend_from_slice(self.x25519_private.compute_public_key().unwrap().as_ref());
         combined_pub_key.extend_from_slice(kyber_pub.key_bytes().unwrap().as_ref());
 
-        return PyBytes::new(py, &combined_pub_key.as_ref());
+        PyBytes::new(py, combined_pub_key.as_ref())
     }
 
     pub fn exchange<'a>(&self, py: Python<'a>, peer_public_key: &PyBytes) -> &'a PyBytes {
@@ -96,7 +96,7 @@ impl X25519Kyber768Draft00KeyExchange {
             &self.x25519_private,
             &x25519_peer_public_key,
             error::Unspecified,
-            |_key_material| return Ok(_key_material.to_vec()),
+            |_key_material| Ok(_key_material.to_vec()),
         )
         .expect("FAILURE");
 
@@ -112,7 +112,7 @@ impl X25519Kyber768Draft00KeyExchange {
 
         let key_material = SharedSecret::from(&combined_secret.0[..]);
 
-        return PyBytes::new(py, &key_material.secret_bytes());
+        PyBytes::new(py, key_material.secret_bytes())
     }
 }
 
@@ -128,7 +128,7 @@ impl X25519KeyExchange {
     pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
         let my_public_key = self.private.compute_public_key().unwrap();
 
-        return PyBytes::new(py, &my_public_key.as_ref());
+        PyBytes::new(py, my_public_key.as_ref())
     }
 
     pub fn exchange<'a>(&self, py: Python<'a>, peer_public_key: &PyBytes) -> &'a PyBytes {
@@ -139,11 +139,11 @@ impl X25519KeyExchange {
             &self.private,
             &peer_public_key,
             error::Unspecified,
-            |_key_material| return Ok(_key_material.to_vec()),
+            |_key_material| Ok(_key_material.to_vec()),
         )
         .expect("FAILURE");
 
-        return PyBytes::new(py, &key_material);
+        PyBytes::new(py, &key_material)
     }
 }
 
@@ -159,7 +159,7 @@ impl ECDHP256KeyExchange {
     pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
         let my_public_key = self.private.compute_public_key().unwrap();
 
-        return PyBytes::new(py, &my_public_key.as_ref());
+        PyBytes::new(py, my_public_key.as_ref())
     }
 
     pub fn exchange<'a>(&self, py: Python<'a>, peer_public_key: &PyBytes) -> &'a PyBytes {
@@ -170,13 +170,11 @@ impl ECDHP256KeyExchange {
             &self.private,
             &peer_public_key,
             error::Unspecified,
-            |_key_material| {
-                return Ok(_key_material.to_vec());
-            },
+            |_key_material| Ok(_key_material.to_vec()),
         )
         .expect("FAILURE");
 
-        return PyBytes::new(py, &key_material);
+        PyBytes::new(py, &key_material)
     }
 }
 
@@ -192,7 +190,7 @@ impl ECDHP384KeyExchange {
     pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
         let my_public_key = self.private.compute_public_key().unwrap();
 
-        return PyBytes::new(py, &my_public_key.as_ref());
+        PyBytes::new(py, my_public_key.as_ref())
     }
 
     pub fn exchange<'a>(&self, py: Python<'a>, peer_public_key: &PyBytes) -> &'a PyBytes {
@@ -203,13 +201,11 @@ impl ECDHP384KeyExchange {
             &self.private,
             &peer_public_key,
             error::Unspecified,
-            |_key_material| {
-                return Ok(_key_material.to_vec());
-            },
+            |_key_material| Ok(_key_material.to_vec()),
         )
         .expect("FAILURE");
 
-        return PyBytes::new(py, &key_material);
+        PyBytes::new(py, &key_material)
     }
 }
 
@@ -225,7 +221,7 @@ impl ECDHP521KeyExchange {
     pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
         let my_public_key = self.private.compute_public_key().unwrap();
 
-        return PyBytes::new(py, &my_public_key.as_ref());
+        PyBytes::new(py, my_public_key.as_ref())
     }
 
     pub fn exchange<'a>(&self, py: Python<'a>, peer_public_key: &PyBytes) -> &'a PyBytes {
@@ -236,12 +232,10 @@ impl ECDHP521KeyExchange {
             &self.private,
             &peer_public_key,
             error::Unspecified,
-            |_key_material| {
-                return Ok(_key_material.to_vec());
-            },
+            |_key_material| Ok(_key_material.to_vec()),
         )
         .expect("FAILURE");
 
-        return PyBytes::new(py, &key_material);
+        PyBytes::new(py, &key_material)
     }
 }

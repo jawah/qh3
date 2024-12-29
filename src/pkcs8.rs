@@ -57,10 +57,10 @@ impl TryFrom<InternalPrivateKeyInfo<'_>> for PrivateKeyInfo {
             });
         }
 
-        return Ok(PrivateKeyInfo {
+        Ok(PrivateKeyInfo {
             der_encoded: der_document.clone(),
             cert_type: KeyType::ED25519,
-        });
+        })
     }
 }
 
@@ -72,7 +72,7 @@ impl PrivateKeyInfo {
         let decoded_bytes = std::str::from_utf8(pem_content).unwrap();
 
         let is_encrypted = decoded_bytes.contains("ENCRYPTED");
-        let item = read_one_from_slice(&pem_content);
+        let item = read_one_from_slice(pem_content);
 
         match item.unwrap().unwrap().0 {
             Item::Pkcs1Key(key) => {
@@ -81,24 +81,24 @@ impl PrivateKeyInfo {
                 }
 
                 let rsa_key: RsaPrivateKey =
-                    RsaPrivateKey::from_pkcs1_der(&key.secret_pkcs1_der()).unwrap();
+                    RsaPrivateKey::from_pkcs1_der(key.secret_pkcs1_der()).unwrap();
 
                 let pkcs8_pem = rsa_key.to_pkcs8_pem(LineEnding::LF).expect("FAILURE");
 
                 let pkcs8_pem: &str = pkcs8_pem.as_ref();
 
-                return PrivateKeyInfo::from_pkcs8_pem(&pkcs8_pem).unwrap();
+                PrivateKeyInfo::from_pkcs8_pem(pkcs8_pem).unwrap()
             }
             Item::Pkcs8Key(_key) => {
                 if is_encrypted {
                     return PrivateKeyInfo::from_pkcs8_encrypted_pem(
-                        &decoded_bytes,
+                        decoded_bytes,
                         password.unwrap().as_bytes(),
                     )
                     .unwrap();
                 }
 
-                return PrivateKeyInfo::from_pkcs8_pem(&decoded_bytes).unwrap();
+                PrivateKeyInfo::from_pkcs8_pem(decoded_bytes).unwrap()
             }
             Item::Sec1Key(key) => {
                 if is_encrypted {
@@ -107,7 +107,7 @@ impl PrivateKeyInfo {
 
                 let sec1_der = key.secret_sec1_der().to_vec();
 
-                return PrivateKeyInfo {
+                PrivateKeyInfo {
                     cert_type: match sec1_der.len() {
                         32..=121 => KeyType::ECDSA_P256,
                         132..=167 => KeyType::ECDSA_P384,
@@ -115,17 +115,17 @@ impl PrivateKeyInfo {
                         _ => panic!("unsupported sec1 key"),
                     },
                     der_encoded: sec1_der,
-                };
+                }
             }
             _ => panic!("unsupported"),
-        };
+        }
     }
 
     pub fn get_type(&self) -> KeyType {
-        return self.cert_type;
+        self.cert_type
     }
 
     pub fn public_bytes<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(py, &self.der_encoded);
+        PyBytes::new(py, &self.der_encoded)
     }
 }

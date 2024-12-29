@@ -58,10 +58,10 @@ impl AeadAes256Gcm {
             &mut in_out_buffer,
         );
 
-        return match res {
+        match res {
             Ok(_) => Ok(PyBytes::new(py, &in_out_buffer[0..plaintext_len])),
             Err(_) => Err(CryptoError::new_err("decryption failed")),
-        };
+        }
     }
 
     pub fn encrypt<'a>(
@@ -85,10 +85,10 @@ impl AeadAes256Gcm {
             &mut in_out_buffer,
         );
 
-        return match res {
+        match res {
             Ok(_) => Ok(PyBytes::new(py, &in_out_buffer)),
             Err(_) => Err(CryptoError::new_err("encryption failed")),
-        };
+        }
     }
 }
 
@@ -121,10 +121,10 @@ impl AeadAes128Gcm {
             &mut in_out_buffer,
         );
 
-        return match res {
+        match res {
             Ok(_) => Ok(PyBytes::new(py, &in_out_buffer[0..plaintext_len])),
             Err(_) => Err(CryptoError::new_err("decryption failed")),
-        };
+        }
     }
 
     pub fn encrypt<'a>(
@@ -148,10 +148,10 @@ impl AeadAes128Gcm {
             &mut in_out_buffer,
         );
 
-        return match res {
+        match res {
             Ok(_) => Ok(PyBytes::new(py, &in_out_buffer)),
             Err(_) => Err(CryptoError::new_err("encryption failed")),
-        };
+        }
     }
 }
 
@@ -178,14 +178,14 @@ impl AeadChaCha20Poly1305 {
 
         let res = cipher.decrypt_in_place(
             nonce.as_bytes().into(),
-            &associated_data.as_bytes(),
+            associated_data.as_bytes(),
             &mut in_out_buffer,
         );
 
-        return match res {
+        match res {
             Ok(_) => Ok(PyBytes::new(py, &in_out_buffer[0..plaintext_len])),
             Err(_) => Err(CryptoError::new_err("decryption failed")),
-        };
+        }
     }
 
     pub fn encrypt<'a>(
@@ -200,13 +200,13 @@ impl AeadChaCha20Poly1305 {
         let cipher: ChaCha20Poly1305 = ChaCha20Poly1305::new(ChaCha20Key::from_slice(&self.key));
         let res = cipher.encrypt_in_place(
             nonce.as_bytes().into(),
-            &associated_data.as_bytes(),
+            associated_data.as_bytes(),
             &mut in_out_buffer,
         );
 
-        return match res {
+        match res {
             Ok(_) => Ok(PyBytes::new(py, &in_out_buffer)),
             Err(_) => Err(CryptoError::new_err("encryption failed")),
-        };
+        }
     }
 }

@@ -103,7 +103,7 @@ impl Certificate {
                     }
                 }
 
-                return Ok(Certificate {
+                Ok(Certificate {
                     version: match cert.version() {
                         X509Version::V1 => 0,
                         X509Version::V2 => 1,
@@ -114,16 +114,16 @@ impl Certificate {
                     raw_serial_number: cert.raw_serial().to_vec(),
                     not_valid_before: cert.validity.not_before.timestamp(),
                     not_valid_after: cert.validity.not_after.timestamp(),
-                    extensions: extensions,
-                    subject: subject,
-                    issuer: issuer,
+                    extensions,
+                    subject,
+                    issuer,
                     public_bytes: certificate_der.as_bytes().to_vec(),
                     public_key: match cert.public_key().parsed() {
                         Ok(PublicKey::EC(pts)) => pts.data().to_vec(),
                         Ok(PublicKey::DSA(cert_decoded)) => cert_decoded.to_vec(),
                         _ => cert.public_key().raw.to_vec(),
                     },
-                });
+                })
             }
             _ => Err(CryptoError::new_err("x509 parsing failed")),
         }
@@ -131,26 +131,26 @@ impl Certificate {
 
     #[getter]
     pub fn serial_number(&self) -> &String {
-        return &self.serial_number;
+        &self.serial_number
     }
 
     pub fn raw_serial_number<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(py, &self.raw_serial_number);
+        PyBytes::new(py, &self.raw_serial_number)
     }
 
     #[getter]
     pub fn not_valid_before(&self) -> i64 {
-        return self.not_valid_before;
+        self.not_valid_before
     }
 
     #[getter]
     pub fn not_valid_after(&self) -> i64 {
-        return self.not_valid_after;
+        self.not_valid_after
     }
 
     #[getter]
     pub fn version(&self) -> u8 {
-        return self.version;
+        self.version
     }
 
     #[getter]
@@ -181,7 +181,7 @@ impl Certificate {
             ));
         }
 
-        return values;
+        values
     }
 
     #[getter]
@@ -212,7 +212,7 @@ impl Certificate {
             ));
         }
 
-        return values;
+        values
     }
 
     pub fn get_subject_alt_names<'a>(&self, py: Python<'a>) -> &'a PyList {
@@ -224,7 +224,7 @@ impl Certificate {
             }
         }
 
-        return values;
+        values
     }
 
     pub fn get_ocsp_endpoints<'a>(&self, py: Python<'a>) -> &'a PyList {
@@ -236,7 +236,7 @@ impl Certificate {
             }
         }
 
-        return values;
+        values
     }
 
     pub fn get_issuer_endpoints<'a>(&self, py: Python<'a>) -> &'a PyList {
@@ -248,15 +248,15 @@ impl Certificate {
             }
         }
 
-        return values;
+        values
     }
 
     pub fn public_bytes<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(py, &self.public_bytes);
+        PyBytes::new(py, &self.public_bytes)
     }
 
     pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(py, &self.public_key);
+        PyBytes::new(py, &self.public_key)
     }
 
     fn __eq__(&self, other: &Self) -> bool {
@@ -306,7 +306,7 @@ impl ServerVerifier {
 
         let parsed_name_res = ServerName::try_from(server_name);
 
-        return match parsed_name_res {
+        match parsed_name_res {
             Ok(parsed_name) => {
                 let res = self.inner.verify_server_cert(
                     &peer_der,
@@ -316,7 +316,7 @@ impl ServerVerifier {
                     UnixTime::now(),
                 );
 
-                return match res {
+                match res {
                     Ok(_) => Ok(()),
                     Err(Error::InvalidCertificate(err)) => match err {
                         CertificateError::UnknownIssuer => {
@@ -342,13 +342,11 @@ impl ServerVerifier {
                     Err(_) => Err(CryptoError::new_err(
                         "the x509 certificate store encountered an error",
                     )),
-                };
+                }
             }
-            Err(_) => {
-                return Err(InvalidNameCertificateError::new_err(
-                    "unparseable server name",
-                ));
-            }
-        };
+            Err(_) => Err(InvalidNameCertificateError::new_err(
+                "unparseable server name",
+            )),
+        }
     }
 }

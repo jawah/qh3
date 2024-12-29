@@ -46,21 +46,17 @@ impl QpackEncoder {
             .configure(max_table_capacity, dyn_table_capacity, blocked_streams)
             .expect("FAILURE");
 
-        return Ok(PyBytes::new(py, r.data()));
+        Ok(PyBytes::new(py, r.data()))
     }
 
     pub fn feed_decoder(&mut self, data: &PyBytes) -> PyResult<()> {
         let res = self.encoder.feed(data.as_bytes());
 
         match res {
-            Ok(_) => {
-                return Ok(());
-            }
-            Err(_) => {
-                return Err(DecoderStreamError::new_err(
-                    "an error occurred while feeding data from decoder with qpack data",
-                ));
-            }
+            Ok(_) => Ok(()),
+            Err(_) => Err(DecoderStreamError::new_err(
+                "an error occurred while feeding data from decoder with qpack data",
+            )),
         }
     }
 
@@ -89,14 +85,12 @@ impl QpackEncoder {
 
                 let stream_data = PyBytes::new(py, buffer.stream());
 
-                return Ok(PyTuple::new(py, [stream_data, encoded_buffer]));
+                Ok(PyTuple::new(py, [stream_data, encoded_buffer]))
             }
-            Err(abc) => {
-                return Err(EncoderStreamError::new_err(format!(
-                    "unable to encode headers {:?}",
-                    abc
-                )));
-            }
+            Err(abc) => Err(EncoderStreamError::new_err(format!(
+                "unable to encode headers {:?}",
+                abc
+            ))),
         }
     }
 }
@@ -114,14 +108,10 @@ impl QpackDecoder {
         let res = self.decoder.feed(data.as_bytes());
 
         match res {
-            Ok(_) => {
-                return Ok(());
-            }
-            Err(_) => {
-                return Err(EncoderStreamError::new_err(
-                    "an error occurred while feeding data from encoder with qpack data",
-                ));
-            }
+            Ok(_) => Ok(()),
+            Err(_) => Err(EncoderStreamError::new_err(
+                "an error occurred while feeding data from encoder with qpack data",
+            )),
         }
     }
 
@@ -149,31 +139,27 @@ impl QpackDecoder {
                     ));
                 }
 
-                return Ok(PyTuple::new(
+                Ok(PyTuple::new(
                     py,
                     [
                         PyBytes::new(py, buffer.stream()).to_object(py),
                         decoded_headers.to_object(py),
                     ],
-                ));
+                ))
             }
-            Ok(DecoderOutput::BlockedStream) => {
-                return Err(StreamBlocked::new_err(
-                    "stream is blocked, need more data to pursue decoding",
-                ));
-            }
-            Err(_) => {
-                return Err(DecoderStreamError::new_err(
-                    "an error occurred while decoding the stream qpack data",
-                ));
-            }
+            Ok(DecoderOutput::BlockedStream) => Err(StreamBlocked::new_err(
+                "stream is blocked, need more data to pursue decoding",
+            )),
+            Err(_) => Err(DecoderStreamError::new_err(
+                "an error occurred while decoding the stream qpack data",
+            )),
         }
     }
 
     pub fn resume_header<'a>(&mut self, py: Python<'a>, stream_id: u64) -> PyResult<&'a PyTuple> {
         let output = self.decoder.unblocked(StreamId::new(stream_id));
 
-        if !output.is_some() {
+        if output.is_none() {
             return Err(DecoderStreamError::new_err("stream id is unknown"));
         }
 
@@ -193,24 +179,20 @@ impl QpackDecoder {
                     ));
                 }
 
-                return Ok(PyTuple::new(
+                Ok(PyTuple::new(
                     py,
                     [
                         PyBytes::new(py, buffer.stream()).to_object(py),
                         decoded_headers.to_object(py),
                     ],
-                ));
-            }
-            Ok(DecoderOutput::BlockedStream) => {
-                return Err(StreamBlocked::new_err(
-                    "stream is blocked, need more data to pursue decoding",
                 ))
             }
-            Err(_) => {
-                return Err(DecoderStreamError::new_err(
-                    "an error occurred while decoding the stream qpack data",
-                ))
-            }
+            Ok(DecoderOutput::BlockedStream) => Err(StreamBlocked::new_err(
+                "stream is blocked, need more data to pursue decoding",
+            )),
+            Err(_) => Err(DecoderStreamError::new_err(
+                "an error occurred while decoding the stream qpack data",
+            )),
         }
     }
 }

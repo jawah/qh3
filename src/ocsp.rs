@@ -67,23 +67,23 @@ pub struct OCSPResponse {
 impl OCSPResponse {
     #[new]
     pub fn py_new(raw_response: &PyBytes) -> PyResult<Self> {
-        let ocsp_res: OcspResponse = OcspResponse::from_der(&raw_response.as_bytes()).unwrap();
+        let ocsp_res: OcspResponse = OcspResponse::from_der(raw_response.as_bytes()).unwrap();
 
-        if !ocsp_res.response_bytes.is_some() {
+        if ocsp_res.response_bytes.is_none() {
             return Err(PyValueError::new_err("OCSP Server did not provide answers"));
         }
 
         let inner_resp: BasicOcspResponse =
-            BasicOcspResponse::from_der(&ocsp_res.response_bytes.unwrap().response.as_bytes())
+            BasicOcspResponse::from_der(ocsp_res.response_bytes.unwrap().response.as_bytes())
                 .unwrap();
 
-        if inner_resp.tbs_response_data.responses.len() == 0 {
+        if inner_resp.tbs_response_data.responses.is_empty() {
             return Err(PyValueError::new_err("OCSP Server did not provide answers"));
         }
 
         let first_resp_for_cert: &SingleResponse = &inner_resp.tbs_response_data.responses[0];
 
-        return Ok(OCSPResponse {
+        Ok(OCSPResponse {
             next_update: first_resp_for_cert
                 .next_update
                 .unwrap()
@@ -124,27 +124,27 @@ impl OCSPResponse {
                 },
                 InternalCertStatus::Good(_) | InternalCertStatus::Unknown(_) => None,
             },
-        });
+        })
     }
 
     #[getter]
     pub fn next_update(&self) -> u64 {
-        return self.next_update;
+        self.next_update
     }
 
     #[getter]
     pub fn response_status(&self) -> OCSPResponseStatus {
-        return self.response_status;
+        self.response_status
     }
 
     #[getter]
     pub fn certificate_status(&self) -> OCSPCertStatus {
-        return self.certificate_status;
+        self.certificate_status
     }
 
     #[getter]
     pub fn revocation_reason(&self) -> Option<ReasonFlags> {
-        return self.revocation_reason;
+        self.revocation_reason
     }
 }
 
@@ -157,22 +157,22 @@ pub struct OCSPRequest {
 impl OCSPRequest {
     #[new]
     pub fn py_new(peer_certificate: &PyBytes, issuer_certificate: &PyBytes) -> PyResult<Self> {
-        let issuer = Certificate::from_der(&issuer_certificate.as_bytes()).unwrap();
-        let cert = Certificate::from_der(&peer_certificate.as_bytes()).unwrap();
+        let issuer = Certificate::from_der(issuer_certificate.as_bytes()).unwrap();
+        let cert = Certificate::from_der(peer_certificate.as_bytes()).unwrap();
 
         let req: InternalOcspRequest = OcspRequestBuilder::default()
             .with_request(Request::from_cert::<Sha1>(&issuer, &cert).unwrap())
             .build();
 
-        return match req.to_der() {
+        match req.to_der() {
             Ok(raw_der) => Ok(OCSPRequest {
                 inner_request: raw_der,
             }),
             Err(_) => Err(PyValueError::new_err("unable to generate the request")),
-        };
+        }
     }
 
     pub fn public_bytes<'a>(&self, py: Python<'a>) -> &'a PyBytes {
-        return PyBytes::new(py, &self.inner_request);
+        PyBytes::new(py, &self.inner_request)
     }
 }

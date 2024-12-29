@@ -21,8 +21,8 @@ impl Rsa {
         let public_key = RsaPublicKey::from(&private_key);
 
         Rsa {
-            public_key: public_key,
-            private_key: private_key,
+            public_key,
+            private_key,
         }
     }
 
@@ -34,10 +34,10 @@ impl Rsa {
 
         let enc_data = self
             .public_key
-            .encrypt(&mut rng, padding, &payload_to_enc[..])
+            .encrypt(&mut rng, padding, payload_to_enc)
             .expect("failed to encrypt");
 
-        return PyBytes::new(py, &enc_data);
+        PyBytes::new(py, &enc_data)
     }
 
     pub fn decrypt<'a>(&self, py: Python<'a>, data: &PyBytes) -> &'a PyBytes {
@@ -46,9 +46,9 @@ impl Rsa {
         let padding = Oaep::new::<Sha256>();
         let dec_data = self
             .private_key
-            .decrypt(padding, &payload_to_dec)
+            .decrypt(padding, payload_to_dec)
             .expect("failed to decrypt");
 
-        return PyBytes::new(py, &dec_data);
+        PyBytes::new(py, &dec_data)
     }
 }
