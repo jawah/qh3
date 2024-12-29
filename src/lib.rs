@@ -15,7 +15,7 @@ mod rsa;
 pub use self::aead::{AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305};
 pub use self::agreement::{
     ECDHP256KeyExchange, ECDHP384KeyExchange, ECDHP521KeyExchange, X25519KeyExchange,
-    X25519Kyber768Draft00KeyExchange,
+    X25519ML768KeyExchange,
 };
 pub use self::buffer::{Buffer, BufferReadError, BufferWriteError};
 pub use self::certificate::{
@@ -87,7 +87,7 @@ fn _hazmat(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<ECDHP256KeyExchange>()?;
     m.add_class::<ECDHP384KeyExchange>()?;
     m.add_class::<ECDHP521KeyExchange>()?;
-    m.add_class::<X25519Kyber768Draft00KeyExchange>()?;
+    m.add_class::<X25519ML768KeyExchange>()?;
     // General Crypto Error
     m.add("CryptoError", py.get_type::<CryptoError>())?;
     // Niquests OCSP helper

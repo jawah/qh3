@@ -1,7 +1,7 @@
 use aws_lc_rs::{agreement, error};
 
 use aws_lc_rs::kem;
-use aws_lc_rs::unstable::kem::{get_algorithm, AlgorithmId};
+use aws_lc_rs::kem::{ML_KEM_768, AlgorithmId};
 
 use rustls::crypto::SharedSecret;
 
@@ -16,11 +16,11 @@ const X25519_KYBER_COMBINED_PUBKEY_LEN: usize = X25519_LEN + 1184;
 const X25519_KYBER_COMBINED_CIPHERTEXT_LEN: usize = X25519_LEN + KYBER_CIPHERTEXT_LEN;
 const X25519_KYBER_COMBINED_SHARED_SECRET_LEN: usize = X25519_LEN + 32;
 
-struct X25519Kyber768CombinedSecret([u8; X25519_KYBER_COMBINED_SHARED_SECRET_LEN]);
+struct X25519Ml768CombinedSecret([u8; X25519_KYBER_COMBINED_SHARED_SECRET_LEN]);
 
-impl X25519Kyber768CombinedSecret {
+impl X25519Ml768CombinedSecret {
     fn combine(x25519: SharedSecret, kyber: kem::SharedSecret) -> Self {
-        let mut out = X25519Kyber768CombinedSecret([0u8; X25519_KYBER_COMBINED_SHARED_SECRET_LEN]);
+        let mut out = X25519Ml768CombinedSecret([0u8; X25519_KYBER_COMBINED_SHARED_SECRET_LEN]);
         out.0[..X25519_LEN].copy_from_slice(x25519.secret_bytes());
         out.0[X25519_LEN..].copy_from_slice(kyber.as_ref());
         out
@@ -48,19 +48,19 @@ pub struct ECDHP521KeyExchange {
 }
 
 #[pyclass(module = "qh3._hazmat")]
-pub struct X25519Kyber768Draft00KeyExchange {
+pub struct X25519ML768KeyExchange {
     x25519_private: agreement::PrivateKey,
     kyber768_decapsulation_key: kem::DecapsulationKey<AlgorithmId>,
 }
 
 #[pymethods]
-impl X25519Kyber768Draft00KeyExchange {
+impl X25519ML768KeyExchange {
     #[new]
     pub fn py_new() -> Self {
-        X25519Kyber768Draft00KeyExchange {
+        X25519ML768KeyExchange {
             x25519_private: agreement::PrivateKey::generate(&agreement::X25519).expect("FAILURE"),
             kyber768_decapsulation_key: kem::DecapsulationKey::generate(
-                get_algorithm(AlgorithmId::Kyber768_R3).expect("Kyber768_R3 not available"),
+                &ML_KEM_768
             )
             .expect("FAILURE"),
         }
@@ -105,7 +105,7 @@ impl X25519Kyber768Draft00KeyExchange {
             .decapsulate(kyber.into())
             .expect("FAILURE");
 
-        let combined_secret = X25519Kyber768CombinedSecret::combine(
+        let combined_secret = X25519Ml768CombinedSecret::combine(
             SharedSecret::from(&x25519_secret[..]),
             kyber_secret,
         );

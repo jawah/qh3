@@ -35,7 +35,7 @@ from ._hazmat import (
     SignatureError,
     UnacceptableCertificateError,
     X25519KeyExchange,
-    X25519Kyber768Draft00KeyExchange,
+    X25519ML768KeyExchange,
     verify_with_public_key,
 )
 from .buffer import Buffer
@@ -473,6 +473,7 @@ class Group(IntEnum):
     SECP384R1 = 0x0018
     SECP521R1 = 0x0019
     X25519KYBER768DRAFT00 = 0x6399
+    X25519ML768 = 0x11EC
     X25519 = 0x001D
     X448 = 0x001E
     GREASE = 0xAAAA
@@ -1354,7 +1355,7 @@ class Context:
 
         self._supported_groups = [
             Group.GREASE,
-            Group.X25519KYBER768DRAFT00,
+            Group.X25519ML768,
             Group.X25519,
             Group.SECP256R1,
             Group.SECP384R1,
@@ -1384,7 +1385,7 @@ class Context:
         self._ec_p384_private_key: ECDHP384KeyExchange | None = None
         self._ec_p521_private_key: ECDHP521KeyExchange | None = None
         self._x25519_private_key: X25519KeyExchange | None = None
-        self._x25519_kyber_768_private_key: X25519Kyber768Draft00KeyExchange | None = (
+        self._x25519_kyber_768_private_key: X25519ML768KeyExchange | None = (
             None
         )
 
@@ -1545,15 +1546,15 @@ class Context:
                 self._x25519_private_key = X25519KeyExchange()
                 key_share.append((Group.X25519, self._x25519_private_key.public_key()))
                 supported_groups.append(Group.X25519)
-            elif group == Group.X25519KYBER768DRAFT00:
-                self._x25519_kyber_768_private_key = X25519Kyber768Draft00KeyExchange()
+            elif group == Group.X25519ML768:
+                self._x25519_kyber_768_private_key = X25519ML768KeyExchange()
                 key_share.append(
                     (
-                        Group.X25519KYBER768DRAFT00,
+                        Group.X25519ML768,
                         self._x25519_kyber_768_private_key.public_key(),
                     )
                 )
-                supported_groups.append(Group.X25519KYBER768DRAFT00)
+                supported_groups.append(Group.X25519ML768)
             elif group == Group.GREASE:
                 key_share.append((Group.GREASE, b"\x00"))
                 supported_groups.append(Group.GREASE)
@@ -1665,7 +1666,7 @@ class Context:
             and self._x25519_private_key is not None
         ):
             shared_key = self._x25519_private_key.exchange(peer_public_key)
-        elif peer_hello.key_share[0] == Group.X25519KYBER768DRAFT00:
+        elif peer_hello.key_share[0] == Group.X25519ML768:
             shared_key = self._x25519_kyber_768_private_key.exchange(peer_public_key)
         elif (
             peer_hello.key_share[0] == Group.SECP256R1
@@ -2036,13 +2037,13 @@ class Context:
                 shared_key = self._x25519_private_key.exchange(peer_public_key)
                 group_kx = Group.X25519
                 break
-            elif key_share[0] == Group.X25519KYBER768DRAFT00:
-                self._x25519_kyber_768_private_key = X25519Kyber768Draft00KeyExchange()
+            elif key_share[0] == Group.X25519ML768:
+                self._x25519_kyber_768_private_key = X25519ML768KeyExchange()
                 public_key = self._x25519_kyber_768_private_key.public_key()
                 shared_key = self._x25519_kyber_768_private_key.exchange(
                     peer_public_key
                 )
-                group_kx = Group.X25519KYBER768DRAFT00
+                group_kx = Group.X25519ML768
                 break
             elif key_share[0] == Group.SECP256R1:
                 self._ec_p256_private_key = ECDHP256KeyExchange()
