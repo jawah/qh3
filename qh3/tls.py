@@ -1385,9 +1385,7 @@ class Context:
         self._ec_p384_private_key: ECDHP384KeyExchange | None = None
         self._ec_p521_private_key: ECDHP521KeyExchange | None = None
         self._x25519_private_key: X25519KeyExchange | None = None
-        self._x25519_kyber_768_private_key: X25519ML768KeyExchange | None = (
-            None
-        )
+        self._x25519_kyber_768_private_key: X25519ML768KeyExchange | None = None
 
         if is_client:
             self.client_random = os.urandom(32)

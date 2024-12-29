@@ -1,7 +1,7 @@
 use aws_lc_rs::{agreement, error};
 
 use aws_lc_rs::kem;
-use aws_lc_rs::kem::{ML_KEM_768, AlgorithmId};
+use aws_lc_rs::kem::{AlgorithmId, ML_KEM_768};
 
 use rustls::crypto::SharedSecret;
 
@@ -59,10 +59,8 @@ impl X25519ML768KeyExchange {
     pub fn py_new() -> Self {
         X25519ML768KeyExchange {
             x25519_private: agreement::PrivateKey::generate(&agreement::X25519).expect("FAILURE"),
-            kyber768_decapsulation_key: kem::DecapsulationKey::generate(
-                &ML_KEM_768
-            )
-            .expect("FAILURE"),
+            kyber768_decapsulation_key: kem::DecapsulationKey::generate(&ML_KEM_768)
+                .expect("FAILURE"),
         }
     }
 
