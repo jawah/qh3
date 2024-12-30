@@ -1,3 +1,17 @@
+1.3.0 (2024-12-30)
+====================
+
+**Changed**
+- Post-Quantum key-exchange Kyber 768 Draft upgraded to standard Module-Lattice 768.
+- Version negotiation no longer logged as ``INFO``. Every logs generated will always be ``DEBUG`` level.
+- Converted our test suite to run on Pytest instead of unittest.
+
+**Fixed**
+- Clippy warnings in our Rust code.
+
+**Added**
+- noxfile.
+
 1.2.1 (2024-10-15)
 ====================
 
