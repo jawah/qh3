@@ -11,6 +11,7 @@
 
 **Added**
 - noxfile.
+- miscellaneous serialize/deserialize for Certificate, and OCSPResponse.
 
 1.2.1 (2024-10-15)
 ====================

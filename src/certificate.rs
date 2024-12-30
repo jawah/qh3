@@ -5,7 +5,7 @@ use rustls::{CertificateError, Error, RootCertStore};
 
 use pyo3::pyclass;
 use pyo3::pymethods;
-use pyo3::types::{PyBytes, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyList, PyTuple, PyType};
 use pyo3::ToPyObject;
 use pyo3::{PyResult, Python};
 
@@ -14,28 +14,32 @@ use x509_parser::public_key::PublicKey;
 
 use std::sync::Arc;
 
-use pyo3::exceptions::PyException;
-
 use crate::CryptoError;
+use bincode::{deserialize, serialize};
+use pyo3::exceptions::PyException;
+use serde::{Deserialize, Serialize};
 
 pyo3::create_exception!(_hazmat, SelfSignedCertificateError, PyException);
 pyo3::create_exception!(_hazmat, InvalidNameCertificateError, PyException);
 pyo3::create_exception!(_hazmat, ExpiredCertificateError, PyException);
 pyo3::create_exception!(_hazmat, UnacceptableCertificateError, PyException);
 
-#[pyclass(name = "Extension", module = "qh3._hazmat", frozen)]
+#[pyclass(name = "Extension", module = "qh3._hazmat")]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Extension {
     oid: String,
     value: Vec<u8>,
 }
 
-#[pyclass(name = "Subject", module = "qh3._hazmat", frozen)]
+#[pyclass(name = "Subject", module = "qh3._hazmat")]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Subject {
     oid: String,
     value: Vec<u8>,
 }
 
-#[pyclass(name = "Certificate", module = "qh3._hazmat", frozen)]
+#[pyclass(name = "Certificate", module = "qh3._hazmat")]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Certificate {
     version: u8,
     serial_number: String,
@@ -261,6 +265,15 @@ impl Certificate {
 
     fn __eq__(&self, other: &Self) -> bool {
         self.serial_number == other.serial_number
+    }
+
+    pub fn serialize<'py>(&self, py: Python<'py>) -> PyResult<&'py PyBytes> {
+        Ok(PyBytes::new(py, &serialize(&self).unwrap()))
+    }
+
+    #[classmethod]
+    pub fn deserialize(_cls: &PyType, encoded: &PyBytes) -> PyResult<Self> {
+        Ok(deserialize(encoded.as_bytes()).unwrap())
     }
 }
 

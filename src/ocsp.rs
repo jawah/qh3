@@ -3,7 +3,7 @@
 // qh3 has no use for it and we won't implement it for this package
 use pyo3::pyclass;
 use pyo3::pymethods;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyType};
 use pyo3::{PyResult, Python};
 
 use der::{Decode, Encode};
@@ -15,10 +15,12 @@ use x509_ocsp::{
     OcspResponse, OcspResponseStatus as InternalOcspResponseStatus, Request, SingleResponse,
 };
 
+use bincode::{deserialize, serialize};
+use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 
 #[pyclass(module = "qh3._hazmat")]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum ReasonFlags {
     unspecified = 0,
@@ -34,7 +36,7 @@ pub enum ReasonFlags {
 }
 
 #[pyclass(module = "qh3._hazmat")]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum OCSPResponseStatus {
     SUCCESSFUL = 0,
@@ -46,7 +48,7 @@ pub enum OCSPResponseStatus {
 }
 
 #[pyclass(module = "qh3._hazmat")]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum OCSPCertStatus {
     GOOD = 0,
@@ -55,6 +57,7 @@ pub enum OCSPCertStatus {
 }
 
 #[pyclass(module = "qh3._hazmat")]
+#[derive(Clone, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub struct OCSPResponse {
     next_update: u64,
@@ -145,6 +148,15 @@ impl OCSPResponse {
     #[getter]
     pub fn revocation_reason(&self) -> Option<ReasonFlags> {
         self.revocation_reason
+    }
+
+    pub fn serialize<'py>(&self, py: Python<'py>) -> PyResult<&'py PyBytes> {
+        Ok(PyBytes::new(py, &serialize(&self).unwrap()))
+    }
+
+    #[classmethod]
+    pub fn deserialize(_cls: &PyType, encoded: &PyBytes) -> PyResult<Self> {
+        Ok(deserialize(encoded.as_bytes()).unwrap())
     }
 }
 
