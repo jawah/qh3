@@ -15,14 +15,16 @@ const KYBER_CIPHERTEXT_LEN: usize = 1088;
 const X25519_KYBER_COMBINED_PUBKEY_LEN: usize = X25519_LEN + 1184;
 const X25519_KYBER_COMBINED_CIPHERTEXT_LEN: usize = X25519_LEN + KYBER_CIPHERTEXT_LEN;
 const X25519_KYBER_COMBINED_SHARED_SECRET_LEN: usize = X25519_LEN + 32;
+const MLKEM768_SECRET_LEN: usize = 32;
+const MLKEM768_CIPHERTEXT_LEN: usize = 1088;
 
-struct X25519Ml768CombinedSecret([u8; X25519_KYBER_COMBINED_SHARED_SECRET_LEN]);
+struct X25519ML768CombinedSecret([u8; X25519_KYBER_COMBINED_SHARED_SECRET_LEN]);
 
-impl X25519Ml768CombinedSecret {
+impl X25519ML768CombinedSecret {
     fn combine(x25519: SharedSecret, kyber: kem::SharedSecret) -> Self {
-        let mut out = X25519Ml768CombinedSecret([0u8; X25519_KYBER_COMBINED_SHARED_SECRET_LEN]);
-        out.0[..X25519_LEN].copy_from_slice(x25519.secret_bytes());
-        out.0[X25519_LEN..].copy_from_slice(kyber.as_ref());
+        let mut out = X25519ML768CombinedSecret([0u8; X25519_KYBER_COMBINED_SHARED_SECRET_LEN]);
+        out.0[..MLKEM768_SECRET_LEN].copy_from_slice(kyber.as_ref());
+        out.0[MLKEM768_SECRET_LEN..].copy_from_slice(x25519.secret_bytes());
         out
     }
 }
@@ -72,9 +74,9 @@ impl X25519ML768KeyExchange {
 
         let mut combined_pub_key = Vec::with_capacity(X25519_KYBER_COMBINED_PUBKEY_LEN);
 
+        combined_pub_key.extend_from_slice(kyber_pub.key_bytes().unwrap().as_ref());
         combined_pub_key
             .extend_from_slice(self.x25519_private.compute_public_key().unwrap().as_ref());
-        combined_pub_key.extend_from_slice(kyber_pub.key_bytes().unwrap().as_ref());
 
         PyBytes::new(py, combined_pub_key.as_ref())
     }
@@ -86,7 +88,7 @@ impl X25519ML768KeyExchange {
             return PyBytes::new(py, &[]);
         }
 
-        let (x25519, kyber) = cipher_text.split_at(X25519_LEN);
+        let (kyber, x25519) = cipher_text.split_at(MLKEM768_CIPHERTEXT_LEN);
 
         let x25519_peer_public_key = agreement::UnparsedPublicKey::new(&agreement::X25519, x25519);
 
@@ -103,7 +105,7 @@ impl X25519ML768KeyExchange {
             .decapsulate(kyber.into())
             .expect("FAILURE");
 
-        let combined_secret = X25519Ml768CombinedSecret::combine(
+        let combined_secret = X25519ML768CombinedSecret::combine(
             SharedSecret::from(&x25519_secret[..]),
             kyber_secret,
         );

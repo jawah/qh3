@@ -1553,6 +1553,11 @@ class Context:
                     )
                 )
                 supported_groups.append(Group.X25519ML768)
+                if self.__logger is not None:
+                    self.__logger.debug(
+                        "TLS: Advertising to peer post-quantum algorithm "
+                        "using X25519ML768 (0x11EC)"
+                    )
             elif group == Group.GREASE:
                 key_share.append((Group.GREASE, b"\x00"))
                 supported_groups.append(Group.GREASE)
@@ -1666,6 +1671,10 @@ class Context:
             shared_key = self._x25519_private_key.exchange(peer_public_key)
         elif peer_hello.key_share[0] == Group.X25519ML768:
             shared_key = self._x25519_kyber_768_private_key.exchange(peer_public_key)
+            if self.__logger is not None:
+                self.__logger.debug(
+                    "TLS: Post-quantum safety achieved using X25519ML768 (key-exchange)"
+                )
         elif (
             peer_hello.key_share[0] == Group.SECP256R1
             and self._ec_p256_private_key is not None
