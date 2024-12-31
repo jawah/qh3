@@ -37,8 +37,8 @@ pub use self::rsa::Rsa;
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
 
-#[pymodule]
-fn _hazmat(py: Python, m: &PyModule) -> PyResult<()> {
+#[pymodule(gil_used = false)]
+fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ls-qpack bridge
     m.add_class::<QpackDecoder>()?;
     m.add_class::<QpackEncoder>()?;

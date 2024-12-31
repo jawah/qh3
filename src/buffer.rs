@@ -1,6 +1,7 @@
 use pyo3::exceptions::PyValueError;
-use pyo3::pyclass;
 use pyo3::types::PyBytes;
+use pyo3::types::PyBytesMethods;
+use pyo3::{pyclass, Bound};
 use pyo3::{pymethods, PyResult, Python};
 
 pyo3::create_exception!(_hazmat, BufferReadError, PyValueError);
@@ -16,13 +17,13 @@ pub struct Buffer {
 #[pymethods]
 impl Buffer {
     #[new]
-    pub fn py_new(capacity: Option<u64>, data: Option<&PyBytes>) -> PyResult<Self> {
+    pub fn py_new(capacity: Option<u64>, data: Option<Bound<'_, PyBytes>>) -> PyResult<Self> {
         if data.is_some() {
-            let payload = data.unwrap().as_bytes();
+            let payload = data.unwrap();
             return Ok(Buffer {
                 pos: 0,
-                data: payload.to_vec(),
-                capacity: payload.len() as u64,
+                data: payload.as_bytes().to_vec(),
+                capacity: payload.as_bytes().len() as u64,
             });
         }
 
@@ -45,14 +46,19 @@ impl Buffer {
     }
 
     #[getter]
-    pub fn data<'a>(&self, py: Python<'a>) -> &'a PyBytes {
+    pub fn data<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         if self.pos == 0 {
             return PyBytes::new(py, &[]);
         }
         PyBytes::new(py, &self.data[0_usize..self.pos as usize])
     }
 
-    pub fn data_slice<'a>(&self, py: Python<'a>, start: u64, end: u64) -> PyResult<&'a PyBytes> {
+    pub fn data_slice<'a>(
+        &self,
+        py: Python<'a>,
+        start: u64,
+        end: u64,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         if self.capacity < start || self.capacity < end || end < start {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
@@ -78,7 +84,7 @@ impl Buffer {
         self.pos
     }
 
-    pub fn pull_bytes<'a>(&mut self, py: Python<'a>, length: u64) -> PyResult<&'a PyBytes> {
+    pub fn pull_bytes<'a>(&mut self, py: Python<'a>, length: u64) -> PyResult<Bound<'a, PyBytes>> {
         if self.capacity < self.pos + length {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
@@ -189,7 +195,7 @@ impl Buffer {
         }
     }
 
-    pub fn push_bytes(&mut self, data: &PyBytes) -> PyResult<()> {
+    pub fn push_bytes(&mut self, data: Bound<'_, PyBytes>) -> PyResult<()> {
         let data_to_be_pushed = data.as_bytes();
         let end_pos = self.pos + data_to_be_pushed.len() as u64;
 

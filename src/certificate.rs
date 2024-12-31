@@ -3,10 +3,12 @@ use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{CertificateError, Error, RootCertStore};
 
-use pyo3::pyclass;
 use pyo3::pymethods;
+use pyo3::types::PyBytesMethods;
+use pyo3::types::PyListMethods;
 use pyo3::types::{PyBytes, PyList, PyTuple, PyType};
 use pyo3::ToPyObject;
+use pyo3::{pyclass, Bound};
 use pyo3::{PyResult, Python};
 
 use x509_parser::prelude::*;
@@ -56,7 +58,7 @@ pub struct Certificate {
 #[pymethods]
 impl Certificate {
     #[new]
-    pub fn py_new(certificate_der: &PyBytes) -> PyResult<Self> {
+    pub fn py_new(certificate_der: Bound<'_, PyBytes>) -> PyResult<Self> {
         let res = X509Certificate::from_der(certificate_der.as_bytes());
 
         match res {
@@ -138,7 +140,7 @@ impl Certificate {
         &self.serial_number
     }
 
-    pub fn raw_serial_number<'a>(&self, py: Python<'a>) -> &'a PyBytes {
+    pub fn raw_serial_number<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         PyBytes::new(py, &self.raw_serial_number)
     }
 
@@ -158,7 +160,7 @@ impl Certificate {
     }
 
     #[getter]
-    pub fn subject<'a>(&self, py: Python<'a>) -> &'a PyList {
+    pub fn subject<'a>(&self, py: Python<'a>) -> Bound<'a, PyList> {
         let values = PyList::empty(py);
 
         for item in &self.subject {
@@ -175,7 +177,7 @@ impl Certificate {
                 _ => "".to_string(),
             };
 
-            let _ = values.append(PyTuple::new(
+            let _ = values.append(PyTuple::new_bound(
                 py,
                 [
                     item.oid.to_object(py),
@@ -189,7 +191,7 @@ impl Certificate {
     }
 
     #[getter]
-    pub fn issuer<'a>(&self, py: Python<'a>) -> &'a PyList {
+    pub fn issuer<'a>(&self, py: Python<'a>) -> Bound<'a, PyList> {
         let values = PyList::empty(py);
 
         for item in &self.issuer {
@@ -206,7 +208,7 @@ impl Certificate {
                 _ => "",
             };
 
-            let _ = values.append(PyTuple::new(
+            let _ = values.append(PyTuple::new_bound(
                 py,
                 [
                     item.oid.to_object(py),
@@ -219,7 +221,7 @@ impl Certificate {
         values
     }
 
-    pub fn get_subject_alt_names<'a>(&self, py: Python<'a>) -> &'a PyList {
+    pub fn get_subject_alt_names<'a>(&self, py: Python<'a>) -> Bound<'a, PyList> {
         let values = PyList::empty(py);
 
         for item in &self.extensions {
@@ -231,7 +233,7 @@ impl Certificate {
         values
     }
 
-    pub fn get_ocsp_endpoints<'a>(&self, py: Python<'a>) -> &'a PyList {
+    pub fn get_ocsp_endpoints<'a>(&self, py: Python<'a>) -> Bound<'a, PyList> {
         let values = PyList::empty(py);
 
         for item in &self.extensions {
@@ -243,7 +245,7 @@ impl Certificate {
         values
     }
 
-    pub fn get_issuer_endpoints<'a>(&self, py: Python<'a>) -> &'a PyList {
+    pub fn get_issuer_endpoints<'a>(&self, py: Python<'a>) -> Bound<'a, PyList> {
         let values = PyList::empty(py);
 
         for item in &self.extensions {
@@ -255,11 +257,11 @@ impl Certificate {
         values
     }
 
-    pub fn public_bytes<'a>(&self, py: Python<'a>) -> &'a PyBytes {
+    pub fn public_bytes<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         PyBytes::new(py, &self.public_bytes)
     }
 
-    pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
+    pub fn public_key<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         PyBytes::new(py, &self.public_key)
     }
 
@@ -267,12 +269,12 @@ impl Certificate {
         self.serial_number == other.serial_number
     }
 
-    pub fn serialize<'py>(&self, py: Python<'py>) -> PyResult<&'py PyBytes> {
+    pub fn serialize<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         Ok(PyBytes::new(py, &serialize(&self).unwrap()))
     }
 
     #[classmethod]
-    pub fn deserialize(_cls: &PyType, encoded: &PyBytes) -> PyResult<Self> {
+    pub fn deserialize(_cls: Bound<'_, PyType>, encoded: Bound<'_, PyBytes>) -> PyResult<Self> {
         Ok(deserialize(encoded.as_bytes()).unwrap())
     }
 }
@@ -285,12 +287,12 @@ pub struct ServerVerifier {
 #[pymethods]
 impl ServerVerifier {
     #[new]
-    pub fn py_new(authorities: Vec<&PyBytes>) -> PyResult<Self> {
+    pub fn py_new(authorities: Vec<Bound<'_, PyBytes>>) -> PyResult<Self> {
         let mut root_cert_store = RootCertStore::empty();
 
         root_cert_store.add_parsable_certificates(
             authorities
-                .into_iter()
+                .iter()
                 .map(|ca| CertificateDer::from(ca.as_bytes())),
         );
         let res = WebPkiServerVerifier::builder(Arc::new(root_cert_store)).build();
@@ -304,17 +306,17 @@ impl ServerVerifier {
     }
 
     #[allow(unreachable_code)]
-    pub fn verify(
+    pub fn verify<'a>(
         &mut self,
-        peer: &PyBytes,
-        intermediaries: Vec<&PyBytes>,
+        peer: Bound<'a, PyBytes>,
+        intermediaries: Vec<Bound<'a, PyBytes>>,
         server_name: String,
     ) -> PyResult<()> {
         let peer_der = CertificateDer::from(peer.as_bytes());
         let mut intermediaries_der = Vec::new();
 
-        for intermediary in intermediaries {
-            intermediaries_der.push(CertificateDer::from(intermediary.as_bytes()));
+        for intermediary in intermediaries.iter().map(|el| el.as_bytes()) {
+            intermediaries_der.push(CertificateDer::from(intermediary));
         }
 
         let parsed_name_res = ServerName::try_from(server_name);

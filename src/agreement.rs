@@ -5,10 +5,11 @@ use aws_lc_rs::kem::ML_KEM_768;
 use rustls::crypto::SharedSecret;
 
 use crate::CryptoError;
-use pyo3::pymethods;
 use pyo3::types::PyBytes;
+use pyo3::types::PyBytesMethods;
 use pyo3::Python;
 use pyo3::{pyclass, PyResult};
+use pyo3::{pymethods, Bound};
 
 const X25519_LEN: usize = 32;
 const KYBER_CIPHERTEXT_LEN: usize = 1088;
@@ -81,7 +82,7 @@ impl X25519ML768KeyExchange {
         })
     }
 
-    pub fn public_key<'a>(&self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+    pub fn public_key<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyBytes>> {
         let kyber_pub = match self.kyber768_decapsulation_key.encapsulation_key() {
             Ok(key) => key,
             Err(_) => {
@@ -117,7 +118,7 @@ impl X25519ML768KeyExchange {
         Ok(PyBytes::new(py, combined_pub_key.as_ref()))
     }
 
-    pub fn shared_ciphertext<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+    pub fn shared_ciphertext<'a>(&mut self, py: Python<'a>) -> PyResult<Bound<'a, PyBytes>> {
         if self.cipher_text.is_empty() {
             return Err(CryptoError::new_err(
                 "You must receive client share first. Call exchange with client share.",
@@ -146,8 +147,8 @@ impl X25519ML768KeyExchange {
     pub fn exchange<'a>(
         &mut self,
         py: Python<'a>,
-        peer_public_key: &PyBytes,
-    ) -> PyResult<&'a PyBytes> {
+        peer_public_key: Bound<'_, PyBytes>,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         let cipher_text = peer_public_key.as_bytes();
 
         // client share received
@@ -242,7 +243,7 @@ impl X25519KeyExchange {
         Ok(X25519KeyExchange { private: x25519_pk })
     }
 
-    pub fn public_key<'a>(&self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+    pub fn public_key<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyBytes>> {
         let my_public_key = match self.private.compute_public_key() {
             Ok(key) => key,
             Err(_) => {
@@ -255,7 +256,11 @@ impl X25519KeyExchange {
         Ok(PyBytes::new(py, my_public_key.as_ref()))
     }
 
-    pub fn exchange<'a>(&self, py: Python<'a>, peer_public_key: &PyBytes) -> PyResult<&'a PyBytes> {
+    pub fn exchange<'a>(
+        &self,
+        py: Python<'a>,
+        peer_public_key: Bound<'_, PyBytes>,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         let peer_public_key =
             agreement::UnparsedPublicKey::new(&agreement::X25519, peer_public_key.as_bytes());
 
@@ -285,7 +290,7 @@ impl ECDHP256KeyExchange {
         Ok(ECDHP256KeyExchange { private: ecdh_key })
     }
 
-    pub fn public_key<'a>(&self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+    pub fn public_key<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyBytes>> {
         let my_public_key = match self.private.compute_public_key() {
             Ok(key) => key,
             Err(_) => {
@@ -298,7 +303,11 @@ impl ECDHP256KeyExchange {
         Ok(PyBytes::new(py, my_public_key.as_ref()))
     }
 
-    pub fn exchange<'a>(&self, py: Python<'a>, peer_public_key: &PyBytes) -> PyResult<&'a PyBytes> {
+    pub fn exchange<'a>(
+        &self,
+        py: Python<'a>,
+        peer_public_key: Bound<'_, PyBytes>,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         let peer_public_key =
             agreement::UnparsedPublicKey::new(&agreement::ECDH_P256, peer_public_key.as_bytes());
 
@@ -328,7 +337,7 @@ impl ECDHP384KeyExchange {
         Ok(ECDHP384KeyExchange { private: ecdh_key })
     }
 
-    pub fn public_key<'a>(&self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+    pub fn public_key<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyBytes>> {
         let my_public_key = match self.private.compute_public_key() {
             Ok(key) => key,
             Err(_) => {
@@ -341,7 +350,11 @@ impl ECDHP384KeyExchange {
         Ok(PyBytes::new(py, my_public_key.as_ref()))
     }
 
-    pub fn exchange<'a>(&self, py: Python<'a>, peer_public_key: &PyBytes) -> PyResult<&'a PyBytes> {
+    pub fn exchange<'a>(
+        &self,
+        py: Python<'a>,
+        peer_public_key: Bound<'_, PyBytes>,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         let peer_public_key =
             agreement::UnparsedPublicKey::new(&agreement::ECDH_P384, peer_public_key.as_bytes());
 
@@ -371,7 +384,7 @@ impl ECDHP521KeyExchange {
         Ok(ECDHP521KeyExchange { private: ecdh_pk })
     }
 
-    pub fn public_key<'a>(&self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+    pub fn public_key<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyBytes>> {
         let my_public_key = match self.private.compute_public_key() {
             Ok(key) => key,
             Err(_) => {
@@ -384,7 +397,11 @@ impl ECDHP521KeyExchange {
         Ok(PyBytes::new(py, my_public_key.as_ref()))
     }
 
-    pub fn exchange<'a>(&self, py: Python<'a>, peer_public_key: &PyBytes) -> PyResult<&'a PyBytes> {
+    pub fn exchange<'a>(
+        &self,
+        py: Python<'a>,
+        peer_public_key: Bound<'_, PyBytes>,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         let peer_public_key =
             agreement::UnparsedPublicKey::new(&agreement::ECDH_P521, peer_public_key.as_bytes());
 

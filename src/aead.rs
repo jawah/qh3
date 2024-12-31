@@ -8,7 +8,8 @@ use chacha20poly1305::{aead::KeyInit, AeadInPlace, ChaCha20Poly1305, Key as ChaC
 use pyo3::pyclass;
 use pyo3::pymethods;
 use pyo3::types::PyBytes;
-use pyo3::{PyResult, Python};
+use pyo3::{PyResult, Python, Bound};
+use pyo3::types::PyBytesMethods;
 
 use crate::CryptoError;
 
@@ -30,7 +31,7 @@ pub struct AeadAes128Gcm {
 #[pymethods]
 impl AeadAes256Gcm {
     #[new]
-    pub fn py_new(key: &PyBytes) -> Self {
+    pub fn py_new(key: Bound<'_, PyBytes, >) -> Self {
         AeadAes256Gcm {
             key: key.as_bytes().to_vec(),
         }
@@ -39,10 +40,10 @@ impl AeadAes256Gcm {
     pub fn decrypt<'a>(
         &mut self,
         py: Python<'a>,
-        nonce: &PyBytes,
-        data: &PyBytes,
-        associated_data: &PyBytes,
-    ) -> PyResult<&'a PyBytes> {
+        nonce: Bound<'_, PyBytes, >,
+        data: Bound<'_, PyBytes, >,
+        associated_data: Bound<'_, PyBytes, >,
+    )-> PyResult<Bound<'a, PyBytes, >> {
         let mut in_out_buffer = data.as_bytes().to_vec();
         let plaintext_len = in_out_buffer.len() - AES_256_GCM.tag_len();
 
@@ -69,10 +70,10 @@ impl AeadAes256Gcm {
     pub fn encrypt<'a>(
         &mut self,
         py: Python<'a>,
-        nonce: &PyBytes,
-        data: &PyBytes,
-        associated_data: &PyBytes,
-    ) -> PyResult<&'a PyBytes> {
+        nonce: Bound<'_, PyBytes, >,
+        data: Bound<'_, PyBytes, >,
+        associated_data: Bound<'_, PyBytes, >,
+    )-> PyResult<Bound<'a, PyBytes, >> {
         let mut in_out_buffer = Vec::from(data.as_bytes());
 
         let mut sealing_key: TlsRecordSealingKey =
@@ -99,7 +100,7 @@ impl AeadAes256Gcm {
 #[pymethods]
 impl AeadAes128Gcm {
     #[new]
-    pub fn py_new(key: &PyBytes) -> Self {
+    pub fn py_new(key: Bound<'_, PyBytes, >) -> Self {
         AeadAes128Gcm {
             key: key.as_bytes().to_vec(),
         }
@@ -108,10 +109,10 @@ impl AeadAes128Gcm {
     pub fn decrypt<'a>(
         &mut self,
         py: Python<'a>,
-        nonce: &PyBytes,
-        data: &PyBytes,
-        associated_data: &PyBytes,
-    ) -> PyResult<&'a PyBytes> {
+        nonce: Bound<'_, PyBytes, >,
+        data: Bound<'_, PyBytes, >,
+        associated_data: Bound<'_, PyBytes, >,
+    )-> PyResult<Bound<'a, PyBytes, >> {
         let mut in_out_buffer = data.as_bytes().to_vec();
         let plaintext_len = in_out_buffer.len() - AES_128_GCM.tag_len();
 
@@ -138,10 +139,10 @@ impl AeadAes128Gcm {
     pub fn encrypt<'a>(
         &mut self,
         py: Python<'a>,
-        nonce: &PyBytes,
-        data: &PyBytes,
-        associated_data: &PyBytes,
-    ) -> PyResult<&'a PyBytes> {
+        nonce: Bound<'_, PyBytes, >,
+        data: Bound<'_, PyBytes, >,
+        associated_data: Bound<'_, PyBytes, >,
+    )-> PyResult<Bound<'a, PyBytes, >> {
         let mut in_out_buffer = Vec::from(data.as_bytes());
 
         let mut sealing_key =
@@ -168,7 +169,7 @@ impl AeadAes128Gcm {
 #[pymethods]
 impl AeadChaCha20Poly1305 {
     #[new]
-    pub fn py_new(key: &PyBytes) -> Self {
+    pub fn py_new(key: Bound<'_, PyBytes, >) -> Self {
         AeadChaCha20Poly1305 {
             key: key.as_bytes().to_vec(),
         }
@@ -177,10 +178,10 @@ impl AeadChaCha20Poly1305 {
     pub fn decrypt<'a>(
         &mut self,
         py: Python<'a>,
-        nonce: &PyBytes,
-        data: &PyBytes,
-        associated_data: &PyBytes,
-    ) -> PyResult<&'a PyBytes> {
+        nonce: Bound<'_, PyBytes, >,
+        data: Bound<'_, PyBytes, >,
+        associated_data: Bound<'_, PyBytes, >,
+    )-> PyResult<Bound<'a, PyBytes, >> {
         let mut in_out_buffer = data.as_bytes().to_vec();
         let plaintext_len = in_out_buffer.len() - CHACHA20_POLY1305.tag_len();
 
@@ -201,10 +202,10 @@ impl AeadChaCha20Poly1305 {
     pub fn encrypt<'a>(
         &mut self,
         py: Python<'a>,
-        nonce: &PyBytes,
-        data: &PyBytes,
-        associated_data: &PyBytes,
-    ) -> PyResult<&'a PyBytes> {
+        nonce: Bound<'_, PyBytes, >,
+        data: Bound<'_, PyBytes, >,
+        associated_data: Bound<'_, PyBytes, >,
+    )-> PyResult<Bound<'a, PyBytes, >> {
         let mut in_out_buffer = Vec::from(data.as_bytes());
 
         let cipher: ChaCha20Poly1305 = ChaCha20Poly1305::new(ChaCha20Key::from_slice(&self.key));

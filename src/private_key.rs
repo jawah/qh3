@@ -28,10 +28,11 @@ use aws_lc_rs::signature::UnparsedPublicKey;
 
 use crate::CryptoError;
 use pyo3::exceptions::PyException;
-use pyo3::pyclass;
 use pyo3::pyfunction;
 use pyo3::pymethods;
 use pyo3::types::PyBytes;
+use pyo3::types::PyBytesMethods;
+use pyo3::{pyclass, Bound};
 use pyo3::{PyResult, Python};
 
 pyo3::create_exception!(_hazmat, SignatureError, PyException);
@@ -60,7 +61,7 @@ pub struct RsaPrivateKey {
 #[pymethods]
 impl Ed25519PrivateKey {
     #[new]
-    pub fn py_new(pkcs8: &PyBytes) -> PyResult<Self> {
+    pub fn py_new(pkcs8: Bound<'_, PyBytes>) -> PyResult<Self> {
         let pk = match InternalEd25519PrivateKey::from_pkcs8(pkcs8.as_bytes()) {
             Ok(key) => key,
             Err(_) => return Err(CryptoError::new_err("Invalid Ed25519 PrivateKey")),
@@ -69,13 +70,13 @@ impl Ed25519PrivateKey {
         Ok(Ed25519PrivateKey { inner: pk })
     }
 
-    pub fn sign<'a>(&self, py: Python<'a>, data: &PyBytes) -> &'a PyBytes {
+    pub fn sign<'a>(&self, py: Python<'a>, data: Bound<'_, PyBytes>) -> Bound<'a, PyBytes> {
         let signature = self.inner.sign(data.as_bytes());
 
         PyBytes::new(py, signature.as_ref())
     }
 
-    pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
+    pub fn public_key<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         PyBytes::new(py, self.inner.public_key().as_ref())
     }
 }
@@ -83,7 +84,7 @@ impl Ed25519PrivateKey {
 #[pymethods]
 impl EcPrivateKey {
     #[new]
-    pub fn py_new(pkcs8: &PyBytes, curve_type: u32) -> PyResult<Self> {
+    pub fn py_new(pkcs8: Bound<'_, PyBytes>, curve_type: u32) -> PyResult<Self> {
         let signing_algorithm = match curve_type {
             256 => &ECDSA_P256_SHA256_ASN1_SIGNING,
             384 => &ECDSA_P384_SHA384_ASN1_SIGNING,
@@ -106,7 +107,11 @@ impl EcPrivateKey {
         })
     }
 
-    pub fn sign<'a>(&self, py: Python<'a>, data: &PyBytes) -> PyResult<&'a PyBytes> {
+    pub fn sign<'a>(
+        &self,
+        py: Python<'a>,
+        data: Bound<'_, PyBytes>,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         let rng = SystemRandom::new();
         let signature = match self.inner.sign(&rng, data.as_bytes()) {
             Ok(signature) => signature,
@@ -116,7 +121,7 @@ impl EcPrivateKey {
         Ok(PyBytes::new(py, signature.as_ref()))
     }
 
-    pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
+    pub fn public_key<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         PyBytes::new(py, self.inner.public_key().as_ref())
     }
 
@@ -129,7 +134,7 @@ impl EcPrivateKey {
 #[pymethods]
 impl DsaPrivateKey {
     #[new]
-    pub fn py_new(pkcs8: &PyBytes) -> PyResult<Self> {
+    pub fn py_new(pkcs8: Bound<'_, PyBytes>) -> PyResult<Self> {
         let pk = match InternalDsaPrivateKey::from_pkcs8_der(pkcs8.as_bytes()) {
             Ok(key) => key,
             Err(_) => return Err(CryptoError::new_err("Invalid Dsa PrivateKey")),
@@ -138,13 +143,13 @@ impl DsaPrivateKey {
         Ok(DsaPrivateKey { inner: pk })
     }
 
-    pub fn sign<'a>(&self, py: Python<'a>, data: &PyBytes) -> &'a PyBytes {
+    pub fn sign<'a>(&self, py: Python<'a>, data: Bound<'_, PyBytes>) -> Bound<'a, PyBytes> {
         let signature = self.inner.sign(data.as_bytes());
 
         PyBytes::new(py, &signature.to_bytes())
     }
 
-    pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
+    pub fn public_key<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         PyBytes::new(
             py,
             self.inner
@@ -159,7 +164,7 @@ impl DsaPrivateKey {
 #[pymethods]
 impl RsaPrivateKey {
     #[new]
-    pub fn py_new(pkcs8: &PyBytes) -> PyResult<Self> {
+    pub fn py_new(pkcs8: Bound<'_, PyBytes>) -> PyResult<Self> {
         let pk = match InternalRsaPrivateKey::from_pkcs8_der(pkcs8.as_bytes()) {
             Ok(key) => key,
             Err(_) => return Err(CryptoError::new_err("Invalid Rsa PrivateKey")),
@@ -171,10 +176,10 @@ impl RsaPrivateKey {
     pub fn sign<'a>(
         &self,
         py: Python<'a>,
-        data: &PyBytes,
+        data: Bound<'_, PyBytes>,
         is_pss_padding: bool,
         hash_size: u32,
-    ) -> PyResult<&'a PyBytes> {
+    ) -> PyResult<Bound<'a, PyBytes>> {
         let private_key = self.inner.clone();
 
         match is_pss_padding {
@@ -215,7 +220,7 @@ impl RsaPrivateKey {
         }
     }
 
-    pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
+    pub fn public_key<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         let public_key: InternalRsaPublicKey = self.inner.to_public_key();
 
         PyBytes::new(
@@ -228,10 +233,10 @@ impl RsaPrivateKey {
 #[pyfunction]
 #[allow(unreachable_code)]
 pub fn verify_with_public_key(
-    public_key_raw: &PyBytes,
+    public_key_raw: Bound<'_, PyBytes>,
     algorithm: u32,
-    message: &PyBytes,
-    signature: &PyBytes,
+    message: Bound<'_, PyBytes>,
+    signature: Bound<'_, PyBytes>,
 ) -> PyResult<()> {
     let pss_rsae_blind_signature = 0x0804..0x0806;
     let pss_pss_blind_signature = 0x0809..0x080B;

@@ -1,7 +1,8 @@
-use pyo3::pymethods;
 use pyo3::types::PyBytes;
+use pyo3::types::PyBytesMethods;
 use pyo3::Python;
 use pyo3::{pyclass, PyResult};
+use pyo3::{pymethods, Bound};
 
 use crate::CryptoError;
 use rsa::{sha2::Sha256, Oaep, RsaPrivateKey, RsaPublicKey};
@@ -31,7 +32,11 @@ impl Rsa {
         })
     }
 
-    pub fn encrypt<'a>(&mut self, py: Python<'a>, data: &PyBytes) -> PyResult<&'a PyBytes> {
+    pub fn encrypt<'a>(
+        &mut self,
+        py: Python<'a>,
+        data: Bound<'_, PyBytes>,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         let payload_to_enc = data.as_bytes();
 
         let padding = Oaep::new::<Sha256>();
@@ -45,7 +50,11 @@ impl Rsa {
         Ok(PyBytes::new(py, &enc_data))
     }
 
-    pub fn decrypt<'a>(&self, py: Python<'a>, data: &PyBytes) -> PyResult<&'a PyBytes> {
+    pub fn decrypt<'a>(
+        &self,
+        py: Python<'a>,
+        data: Bound<'_, PyBytes>,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         let payload_to_dec = data.as_bytes();
 
         let padding = Oaep::new::<Sha256>();

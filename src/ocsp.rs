@@ -1,9 +1,10 @@
 // OCSP Response Parser and Request Builder
 // This module is created for Niquests
 // qh3 has no use for it and we won't implement it for this package
-use pyo3::pyclass;
 use pyo3::pymethods;
+use pyo3::types::PyBytesMethods;
 use pyo3::types::{PyBytes, PyType};
+use pyo3::{pyclass, Bound};
 use pyo3::{PyResult, Python};
 
 use der::{Decode, Encode};
@@ -69,7 +70,7 @@ pub struct OCSPResponse {
 #[pymethods]
 impl OCSPResponse {
     #[new]
-    pub fn py_new(raw_response: &PyBytes) -> PyResult<Self> {
+    pub fn py_new(raw_response: Bound<'_, PyBytes>) -> PyResult<Self> {
         let ocsp_res: OcspResponse = match OcspResponse::from_der(raw_response.as_bytes()) {
             Ok(ocsp_res) => ocsp_res,
             Err(_) => return Err(PyValueError::new_err("OCSP DER given is invalid")),
@@ -153,12 +154,12 @@ impl OCSPResponse {
         self.revocation_reason
     }
 
-    pub fn serialize<'py>(&self, py: Python<'py>) -> PyResult<&'py PyBytes> {
+    pub fn serialize<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         Ok(PyBytes::new(py, &serialize(&self).unwrap()))
     }
 
     #[classmethod]
-    pub fn deserialize(_cls: &PyType, encoded: &PyBytes) -> PyResult<Self> {
+    pub fn deserialize(_cls: Bound<'_, PyType>, encoded: Bound<'_, PyBytes>) -> PyResult<Self> {
         Ok(deserialize(encoded.as_bytes()).unwrap())
     }
 }
@@ -171,7 +172,10 @@ pub struct OCSPRequest {
 #[pymethods]
 impl OCSPRequest {
     #[new]
-    pub fn py_new(peer_certificate: &PyBytes, issuer_certificate: &PyBytes) -> PyResult<Self> {
+    pub fn py_new(
+        peer_certificate: Bound<'_, PyBytes>,
+        issuer_certificate: Bound<'_, PyBytes>,
+    ) -> PyResult<Self> {
         let issuer = Certificate::from_der(issuer_certificate.as_bytes()).unwrap();
         let cert = Certificate::from_der(peer_certificate.as_bytes()).unwrap();
 
@@ -187,7 +191,7 @@ impl OCSPRequest {
         }
     }
 
-    pub fn public_bytes<'a>(&self, py: Python<'a>) -> &'a PyBytes {
+    pub fn public_bytes<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         PyBytes::new(py, &self.inner_request)
     }
 }

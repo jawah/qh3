@@ -13,7 +13,7 @@ name = "qh3"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.20.3", features = ["extension-module", "abi3-py37", "generate-import-lib"] }
+pyo3 = { version = "0.23.3", features = ["extension-module", "abi3-py37", "generate-import-lib"] }
 ls-qpack = "0.1.4"
 rustls = "0.23.12"
 x509-parser = "0.16.0"

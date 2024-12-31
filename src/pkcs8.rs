@@ -1,7 +1,8 @@
-use pyo3::pymethods;
 use pyo3::types::PyBytes;
+use pyo3::types::PyBytesMethods;
 use pyo3::Python;
 use pyo3::{pyclass, PyResult};
+use pyo3::{pymethods, Bound};
 
 use pkcs8::{der::Encode, DecodePrivateKey, Error, PrivateKeyInfo as InternalPrivateKeyInfo};
 use rsa::{
@@ -68,7 +69,10 @@ impl TryFrom<InternalPrivateKeyInfo<'_>> for PrivateKeyInfo {
 #[pymethods]
 impl PrivateKeyInfo {
     #[new]
-    pub fn py_new(raw_pem_content: &PyBytes, password: Option<&PyBytes>) -> PyResult<Self> {
+    pub fn py_new(
+        raw_pem_content: Bound<'_, PyBytes>,
+        password: Option<Bound<'_, PyBytes>>,
+    ) -> PyResult<Self> {
         let pem_content = raw_pem_content.as_bytes();
         let decoded_bytes = std::str::from_utf8(pem_content)?;
 
@@ -142,7 +146,7 @@ impl PrivateKeyInfo {
         self.cert_type
     }
 
-    pub fn public_bytes<'a>(&self, py: Python<'a>) -> &'a PyBytes {
+    pub fn public_bytes<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         PyBytes::new(py, &self.der_encoded)
     }
 }

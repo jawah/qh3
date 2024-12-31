@@ -1,9 +1,10 @@
 use aws_lc_rs::aead::quic::{HeaderProtectionKey, AES_128, AES_256, CHACHA20};
 
 use crate::CryptoError;
-use pyo3::pyclass;
 use pyo3::pymethods;
 use pyo3::types::PyBytes;
+use pyo3::types::PyBytesMethods;
+use pyo3::{pyclass, Bound};
 use pyo3::{PyResult, Python};
 
 #[pyclass(module = "qh3._hazmat")]
@@ -14,7 +15,7 @@ pub struct QUICHeaderProtection {
 #[pymethods]
 impl QUICHeaderProtection {
     #[new]
-    pub fn py_new(key: &PyBytes, algorithm: u16) -> PyResult<Self> {
+    pub fn py_new(key: Bound<'_, PyBytes>, algorithm: u16) -> PyResult<Self> {
         let inner_hpk = match HeaderProtectionKey::new(
             match algorithm {
                 128 => &AES_128,
@@ -35,7 +36,11 @@ impl QUICHeaderProtection {
         Ok(QUICHeaderProtection { hpk: inner_hpk })
     }
 
-    pub fn mask<'a>(&self, py: Python<'a>, sample: &PyBytes) -> PyResult<&'a PyBytes> {
+    pub fn mask<'a>(
+        &self,
+        py: Python<'a>,
+        sample: Bound<'_, PyBytes>,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         let res = self.hpk.new_mask(sample.as_bytes());
 
         match res {
