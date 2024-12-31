@@ -26,6 +26,7 @@ use aws_lc_rs::rand::SystemRandom;
 use aws_lc_rs::signature;
 use aws_lc_rs::signature::UnparsedPublicKey;
 
+use crate::CryptoError;
 use pyo3::exceptions::PyException;
 use pyo3::pyclass;
 use pyo3::pyfunction;
@@ -59,10 +60,13 @@ pub struct RsaPrivateKey {
 #[pymethods]
 impl Ed25519PrivateKey {
     #[new]
-    pub fn py_new(pkcs8: &PyBytes) -> Self {
-        Ed25519PrivateKey {
-            inner: InternalEd25519PrivateKey::from_pkcs8(pkcs8.as_bytes()).expect("FAILURE"),
-        }
+    pub fn py_new(pkcs8: &PyBytes) -> PyResult<Self> {
+        let pk = match InternalEd25519PrivateKey::from_pkcs8(pkcs8.as_bytes()) {
+            Ok(key) => key,
+            Err(_) => return Err(CryptoError::new_err("Invalid Ed25519 PrivateKey")),
+        };
+
+        Ok(Ed25519PrivateKey { inner: pk })
     }
 
     pub fn sign<'a>(&self, py: Python<'a>, data: &PyBytes) -> &'a PyBytes {
@@ -79,26 +83,37 @@ impl Ed25519PrivateKey {
 #[pymethods]
 impl EcPrivateKey {
     #[new]
-    pub fn py_new(pkcs8: &PyBytes, curve_type: u32) -> Self {
+    pub fn py_new(pkcs8: &PyBytes, curve_type: u32) -> PyResult<Self> {
         let signing_algorithm = match curve_type {
             256 => &ECDSA_P256_SHA256_ASN1_SIGNING,
             384 => &ECDSA_P384_SHA384_ASN1_SIGNING,
             521 => &ECDSA_P521_SHA512_ASN1_SIGNING,
-            _ => panic!("unsupported"),
+            _ => {
+                return Err(CryptoError::new_err(
+                    "Unsupported curve type in EcPrivateKey",
+                ))
+            }
         };
 
-        EcPrivateKey {
-            inner: InternalEcPrivateKey::from_pkcs8(signing_algorithm, pkcs8.as_bytes())
-                .expect("FAILURE"),
+        let pk = match InternalEcPrivateKey::from_pkcs8(signing_algorithm, pkcs8.as_bytes()) {
+            Ok(key) => key,
+            Err(_) => return Err(CryptoError::new_err("Invalid Ec PrivateKey")),
+        };
+
+        Ok(EcPrivateKey {
+            inner: pk,
             curve: curve_type,
-        }
+        })
     }
 
-    pub fn sign<'a>(&self, py: Python<'a>, data: &PyBytes) -> &'a PyBytes {
+    pub fn sign<'a>(&self, py: Python<'a>, data: &PyBytes) -> PyResult<&'a PyBytes> {
         let rng = SystemRandom::new();
-        let signature = self.inner.sign(&rng, data.as_bytes());
+        let signature = match self.inner.sign(&rng, data.as_bytes()) {
+            Ok(signature) => signature,
+            Err(_) => return Err(CryptoError::new_err("Ec signature could not be issued")),
+        };
 
-        PyBytes::new(py, signature.unwrap().as_ref())
+        Ok(PyBytes::new(py, signature.as_ref()))
     }
 
     pub fn public_key<'a>(&self, py: Python<'a>) -> &'a PyBytes {
@@ -114,10 +129,13 @@ impl EcPrivateKey {
 #[pymethods]
 impl DsaPrivateKey {
     #[new]
-    pub fn py_new(pkcs8: &PyBytes) -> Self {
-        DsaPrivateKey {
-            inner: InternalDsaPrivateKey::from_pkcs8_der(pkcs8.as_bytes()).expect("FAILURE"),
-        }
+    pub fn py_new(pkcs8: &PyBytes) -> PyResult<Self> {
+        let pk = match InternalDsaPrivateKey::from_pkcs8_der(pkcs8.as_bytes()) {
+            Ok(key) => key,
+            Err(_) => return Err(CryptoError::new_err("Invalid Dsa PrivateKey")),
+        };
+
+        Ok(DsaPrivateKey { inner: pk })
     }
 
     pub fn sign<'a>(&self, py: Python<'a>, data: &PyBytes) -> &'a PyBytes {
@@ -132,7 +150,7 @@ impl DsaPrivateKey {
             self.inner
                 .verifying_key()
                 .to_public_key_der()
-                .expect("FAILURE")
+                .unwrap()
                 .as_bytes(),
         )
     }
@@ -141,10 +159,13 @@ impl DsaPrivateKey {
 #[pymethods]
 impl RsaPrivateKey {
     #[new]
-    pub fn py_new(pkcs8: &PyBytes) -> Self {
-        RsaPrivateKey {
-            inner: InternalRsaPrivateKey::from_pkcs8_der(pkcs8.as_bytes()).expect("FAILURE"),
-        }
+    pub fn py_new(pkcs8: &PyBytes) -> PyResult<Self> {
+        let pk = match InternalRsaPrivateKey::from_pkcs8_der(pkcs8.as_bytes()) {
+            Ok(key) => key,
+            Err(_) => return Err(CryptoError::new_err("Invalid Rsa PrivateKey")),
+        };
+
+        Ok(RsaPrivateKey { inner: pk })
     }
 
     pub fn sign<'a>(
@@ -153,39 +174,43 @@ impl RsaPrivateKey {
         data: &PyBytes,
         is_pss_padding: bool,
         hash_size: u32,
-    ) -> &'a PyBytes {
+    ) -> PyResult<&'a PyBytes> {
         let private_key = self.inner.clone();
 
         match is_pss_padding {
             true => match hash_size {
                 256 => {
                     let signer = InternalRsaPssSigningKey::<Sha256>::new(private_key);
-                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
+                    Ok(PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec()))
                 }
                 384 => {
                     let signer = InternalRsaPssSigningKey::<Sha384>::new(private_key);
-                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
+                    Ok(PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec()))
                 }
                 512 => {
                     let signer = InternalRsaPssSigningKey::<Sha512>::new(private_key);
-                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
+                    Ok(PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec()))
                 }
-                _ => panic!("unsupported"),
+                _ => Err(CryptoError::new_err(
+                    "unsupported hash size for RSA signing",
+                )),
             },
             false => match hash_size {
                 256 => {
                     let signer = InternalRsaPkcsSigningKey::<Sha256>::new(private_key);
-                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
+                    Ok(PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec()))
                 }
                 384 => {
                     let signer = InternalRsaPkcsSigningKey::<Sha384>::new(private_key);
-                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
+                    Ok(PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec()))
                 }
                 512 => {
                     let signer = InternalRsaPkcsSigningKey::<Sha512>::new(private_key);
-                    PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec())
+                    Ok(PyBytes::new(py, &signer.sign(data.as_bytes()).to_vec()))
                 }
-                _ => panic!("unsupported"),
+                _ => Err(CryptoError::new_err(
+                    "unsupported hash size for RSA signing",
+                )),
             },
         }
     }
@@ -220,7 +245,10 @@ pub fn verify_with_public_key(
         || pkcs115_blind_signature.contains(&algorithm)
     {
         let rsa_parsed_public_key =
-            InternalRsaPublicKey::from_public_key_der(public_key_bytes).expect("FAILURE");
+            match InternalRsaPublicKey::from_public_key_der(public_key_bytes) {
+                Ok(public_key) => public_key,
+                Err(_) => return Err(CryptoError::new_err("Invalid RSA public key")),
+            };
 
         return match algorithm {
             0x0804 | 0x0809 => {
@@ -228,7 +256,10 @@ pub fn verify_with_public_key(
 
                 let res = alt_verifier.verify(
                     message.as_bytes(),
-                    &RsaPssSignature::try_from(signature.as_bytes()).expect("FAILURE"),
+                    match &RsaPssSignature::try_from(signature.as_bytes()) {
+                        Ok(signature) => signature,
+                        Err(_) => return Err(CryptoError::new_err("Invalid RSA PSS signature")),
+                    },
                 );
 
                 return match res {
@@ -241,7 +272,10 @@ pub fn verify_with_public_key(
 
                 let res = alt_verifier.verify(
                     message.as_bytes(),
-                    &RsaPssSignature::try_from(signature.as_bytes()).expect("FAILURE"),
+                    match &RsaPssSignature::try_from(signature.as_bytes()) {
+                        Ok(signature) => signature,
+                        Err(_) => return Err(CryptoError::new_err("Invalid RSA PSS signature")),
+                    },
                 );
 
                 return match res {
@@ -254,7 +288,10 @@ pub fn verify_with_public_key(
 
                 let res = alt_verifier.verify(
                     message.as_bytes(),
-                    &RsaPssSignature::try_from(signature.as_bytes()).expect("FAILURE"),
+                    match &RsaPssSignature::try_from(signature.as_bytes()) {
+                        Ok(signature) => signature,
+                        Err(_) => return Err(CryptoError::new_err("Invalid RSA PSS signature")),
+                    },
                 );
 
                 return match res {
@@ -268,7 +305,10 @@ pub fn verify_with_public_key(
 
                 let res = alt_verifier.verify(
                     message.as_bytes(),
-                    &RsaPkcsSignature::try_from(signature.as_bytes()).expect("FAILURE"),
+                    match &RsaPkcsSignature::try_from(signature.as_bytes()) {
+                        Ok(signature) => signature,
+                        Err(_) => return Err(CryptoError::new_err("Invalid RSA PKCS signature")),
+                    },
                 );
 
                 return match res {
@@ -281,7 +321,10 @@ pub fn verify_with_public_key(
 
                 let res = alt_verifier.verify(
                     message.as_bytes(),
-                    &RsaPkcsSignature::try_from(signature.as_bytes()).expect("FAILURE"),
+                    match &RsaPkcsSignature::try_from(signature.as_bytes()) {
+                        Ok(signature) => signature,
+                        Err(_) => return Err(CryptoError::new_err("Invalid RSA PKCS signature")),
+                    },
                 );
 
                 return match res {
@@ -294,7 +337,10 @@ pub fn verify_with_public_key(
 
                 let res = alt_verifier.verify(
                     message.as_bytes(),
-                    &RsaPkcsSignature::try_from(signature.as_bytes()).expect("FAILURE"),
+                    match &RsaPkcsSignature::try_from(signature.as_bytes()) {
+                        Ok(signature) => signature,
+                        Err(_) => return Err(CryptoError::new_err("Invalid RSA PKCS signature")),
+                    },
                 );
 
                 return match res {
@@ -303,16 +349,20 @@ pub fn verify_with_public_key(
                 };
             }
 
-            _ => panic!("unreachable statement"),
+            _ => Err(CryptoError::new_err("unsupported signature algorithm")),
         };
     }
 
     if algorithm == 0x0807 {
         let ed25519_verifier: Ed25519VerifyingKey =
-            Ed25519VerifyingKey::from_public_key_der(public_key_bytes).expect("FAILURE");
+            match Ed25519VerifyingKey::from_public_key_der(public_key_bytes) {
+                Ok(public_key) => public_key,
+                Err(_) => return Err(CryptoError::new_err("Invalid Ed25519 public key")),
+            };
+
         let res = ed25519_verifier.verify(
             message.as_bytes(),
-            &Ed25519Signature::from_bytes(signature.as_bytes()[0..64].try_into().unwrap()),
+            &Ed25519Signature::from_bytes(signature.as_bytes()[0..64].try_into()?),
         );
 
         return match res {
@@ -326,7 +376,7 @@ pub fn verify_with_public_key(
             0x0403 => &signature::ECDSA_P256_SHA256_ASN1,
             0x0503 => &signature::ECDSA_P384_SHA384_ASN1,
             0x0603 => &signature::ECDSA_P521_SHA512_ASN1,
-            _ => panic!("unsupported algorithm"),
+            _ => return Err(CryptoError::new_err("unsupported signature algorithm")),
         },
         public_key_bytes,
     );

@@ -2046,10 +2046,10 @@ class Context:
                 break
             elif key_share[0] == Group.X25519ML768:
                 self._x25519_kyber_768_private_key = X25519ML768KeyExchange()
-                public_key = self._x25519_kyber_768_private_key.public_key()
                 shared_key = self._x25519_kyber_768_private_key.exchange(
                     peer_public_key
                 )
+                public_key = self._x25519_kyber_768_private_key.shared_ciphertext()
                 group_kx = Group.X25519ML768
                 break
             elif key_share[0] == Group.SECP256R1:

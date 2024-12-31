@@ -8,6 +8,9 @@
 
 **Fixed**
 - Clippy warnings in our Rust code.
+- Rust code may panic due to lack of proper result unpacking on the cryptographic calls. Now any error will
+  raise exception ``CryptoError`` instead.
+- Negotiating post-quantum key exchange (server side).
 
 **Added**
 - noxfile.

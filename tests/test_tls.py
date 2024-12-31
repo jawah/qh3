@@ -539,7 +539,7 @@ class TestContext:
             server.handle_message(server_input, server_buf)
             assert server.state == State.SERVER_EXPECT_FINISHED
             client_input = merge_buffers(server_buf)
-            assert len(client_input) == 1410
+            assert len(client_input) == 1314
             reset_buffers(server_buf)
 
             # Handle server hello, encrypted extensions, certificate,
@@ -622,7 +622,7 @@ class TestContext:
             buf.seek(buf.tell() - 1)
             buf.push_uint8(1)
             client_input = merge_buffers(server_buf)
-            assert len(client_input) == 1410
+            assert len(client_input) == 1314
             reset_buffers(server_buf)
 
             # handle server hello and bomb

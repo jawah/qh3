@@ -47,8 +47,10 @@ impl AeadAes256Gcm {
         let plaintext_len = in_out_buffer.len() - AES_256_GCM.tag_len();
 
         let opening_key: TlsRecordOpeningKey =
-            TlsRecordOpeningKey::new(&AES_256_GCM, TlsProtocolId::TLS13, &self.key)
-                .expect("FAILURE");
+            match TlsRecordOpeningKey::new(&AES_256_GCM, TlsProtocolId::TLS13, &self.key) {
+                Ok(k) => k,
+                Err(_) => return Err(CryptoError::new_err("Invalid AEAD key")),
+            };
 
         let aad = Aad::from(associated_data.as_bytes());
 
@@ -74,8 +76,10 @@ impl AeadAes256Gcm {
         let mut in_out_buffer = Vec::from(data.as_bytes());
 
         let mut sealing_key: TlsRecordSealingKey =
-            TlsRecordSealingKey::new(&AES_256_GCM, TlsProtocolId::TLS13, &self.key)
-                .expect("FAILURE");
+            match TlsRecordSealingKey::new(&AES_256_GCM, TlsProtocolId::TLS13, &self.key) {
+                Ok(k) => k,
+                Err(_) => return Err(CryptoError::new_err("Invalid AEAD key")),
+            };
 
         let aad = Aad::from(associated_data.as_bytes());
 
@@ -111,8 +115,12 @@ impl AeadAes128Gcm {
         let mut in_out_buffer = data.as_bytes().to_vec();
         let plaintext_len = in_out_buffer.len() - AES_128_GCM.tag_len();
 
-        let opening_key = TlsRecordOpeningKey::new(&AES_128_GCM, TlsProtocolId::TLS13, &self.key)
-            .expect("FAILURE");
+        let opening_key =
+            match TlsRecordOpeningKey::new(&AES_128_GCM, TlsProtocolId::TLS13, &self.key) {
+                Ok(k) => k,
+                Err(_) => return Err(CryptoError::new_err("Invalid AEAD key")),
+            };
+
         let aad = Aad::from(associated_data.as_bytes());
 
         let res = opening_key.open_in_place(
@@ -137,8 +145,10 @@ impl AeadAes128Gcm {
         let mut in_out_buffer = Vec::from(data.as_bytes());
 
         let mut sealing_key =
-            TlsRecordSealingKey::new(&AES_128_GCM, TlsProtocolId::TLS13, &self.key)
-                .expect("FAILURE");
+            match TlsRecordSealingKey::new(&AES_128_GCM, TlsProtocolId::TLS13, &self.key) {
+                Ok(k) => k,
+                Err(_) => return Err(CryptoError::new_err("Invalid AEAD key")),
+            };
 
         let aad = Aad::from(associated_data.as_bytes());
 

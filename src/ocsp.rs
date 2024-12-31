@@ -70,7 +70,10 @@ pub struct OCSPResponse {
 impl OCSPResponse {
     #[new]
     pub fn py_new(raw_response: &PyBytes) -> PyResult<Self> {
-        let ocsp_res: OcspResponse = OcspResponse::from_der(raw_response.as_bytes()).unwrap();
+        let ocsp_res: OcspResponse = match OcspResponse::from_der(raw_response.as_bytes()) {
+            Ok(ocsp_res) => ocsp_res,
+            Err(_) => return Err(PyValueError::new_err("OCSP DER given is invalid")),
+        };
 
         if ocsp_res.response_bytes.is_none() {
             return Err(PyValueError::new_err("OCSP Server did not provide answers"));

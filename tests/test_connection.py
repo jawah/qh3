@@ -48,7 +48,7 @@ CLIENT_ADDR = ("1.2.3.4", 1234)
 CLIENT_HANDSHAKE_DATAGRAM_SIZES = [1280]
 
 SERVER_ADDR = ("2.3.4.5", 4433)
-SERVER_INITIAL_DATAGRAM_SIZES = [1280, 1280, 986]
+SERVER_INITIAL_DATAGRAM_SIZES = [1280, 1280, 890]
 
 HANDSHAKE_COMPLETED_EVENTS = [
     events.HandshakeCompleted,
@@ -423,7 +423,7 @@ class TestQuicConnection:
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
             assert server.get_timer() == pytest.approx(0.25)
-            self.assertSentPackets(server, [2, 2, 0])
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # handshake continues normally
@@ -489,7 +489,7 @@ class TestQuicConnection:
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
             assert server.get_timer() == pytest.approx(0.45)
-            self.assertSentPackets(server, [2, 2, 0])
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # handshake continues normally
@@ -548,7 +548,7 @@ class TestQuicConnection:
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
             assert server.get_timer() == 0.25
-            self.assertSentPackets(server, [2, 2, 0])
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # client only receives second datagram, retransmits INITIAL
@@ -628,7 +628,7 @@ class TestQuicConnection:
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
             assert server.get_timer() == 0.25
-            self.assertSentPackets(server, [2, 2, 0])
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # INITIAL + HANDSHAKE are lost, client retransmits INITIAL
@@ -647,7 +647,7 @@ class TestQuicConnection:
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
             assert server.get_timer() == 0.45
-            self.assertSentPackets(server, [2, 2, 0])
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [])
 
             # handshake continues normally
@@ -703,7 +703,7 @@ class TestQuicConnection:
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
             assert server.get_timer() == 0.25
-            self.assertSentPackets(server, [2, 2, 0])
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # client only receives the first datagram and sends ACKS
@@ -789,7 +789,7 @@ class TestQuicConnection:
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
             assert server.get_timer() == 0.25
-            self.assertSentPackets(server, [2, 2, 0])
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # client receives INITIAL + HANDSHAKE

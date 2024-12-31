@@ -1,7 +1,7 @@
-use pyo3::pyclass;
 use pyo3::pymethods;
 use pyo3::types::PyBytes;
 use pyo3::Python;
+use pyo3::{pyclass, PyResult};
 
 use pkcs8::{der::Encode, DecodePrivateKey, Error, PrivateKeyInfo as InternalPrivateKeyInfo};
 use rsa::{
@@ -10,6 +10,7 @@ use rsa::{
     RsaPrivateKey,
 };
 
+use crate::CryptoError;
 use rustls_pemfile::{read_one_from_slice, Item};
 
 #[pyclass(module = "qh3._hazmat")]
@@ -67,9 +68,9 @@ impl TryFrom<InternalPrivateKeyInfo<'_>> for PrivateKeyInfo {
 #[pymethods]
 impl PrivateKeyInfo {
     #[new]
-    pub fn py_new(raw_pem_content: &PyBytes, password: Option<&PyBytes>) -> Self {
+    pub fn py_new(raw_pem_content: &PyBytes, password: Option<&PyBytes>) -> PyResult<Self> {
         let pem_content = raw_pem_content.as_bytes();
-        let decoded_bytes = std::str::from_utf8(pem_content).unwrap();
+        let decoded_bytes = std::str::from_utf8(pem_content)?;
 
         let is_encrypted = decoded_bytes.contains("ENCRYPTED");
         let item = read_one_from_slice(pem_content);
@@ -77,47 +78,63 @@ impl PrivateKeyInfo {
         match item.unwrap().unwrap().0 {
             Item::Pkcs1Key(key) => {
                 if is_encrypted {
-                    panic!("unsupported");
+                    return Err(CryptoError::new_err(
+                        "RSA Pkcs1Key is encrypted, please decrypt it prior to passing it.",
+                    ));
                 }
 
                 let rsa_key: RsaPrivateKey =
-                    RsaPrivateKey::from_pkcs1_der(key.secret_pkcs1_der()).unwrap();
+                    match RsaPrivateKey::from_pkcs1_der(key.secret_pkcs1_der()) {
+                        Ok(rsa_key) => rsa_key,
+                        Err(_) => return Err(CryptoError::new_err("RSA private key is invalid.")),
+                    };
 
-                let pkcs8_pem = rsa_key.to_pkcs8_pem(LineEnding::LF).expect("FAILURE");
+                let pkcs8_pem = match rsa_key.to_pkcs8_pem(LineEnding::LF) {
+                    Ok(pem) => pem,
+                    Err(_) => {
+                        return Err(CryptoError::new_err("malformed/invalid RSA private key?"))
+                    }
+                };
 
                 let pkcs8_pem: &str = pkcs8_pem.as_ref();
 
-                PrivateKeyInfo::from_pkcs8_pem(pkcs8_pem).unwrap()
+                Ok(PrivateKeyInfo::from_pkcs8_pem(pkcs8_pem).unwrap())
             }
             Item::Pkcs8Key(_key) => {
                 if is_encrypted {
-                    return PrivateKeyInfo::from_pkcs8_encrypted_pem(
+                    return match PrivateKeyInfo::from_pkcs8_encrypted_pem(
                         decoded_bytes,
                         password.unwrap().as_bytes(),
-                    )
-                    .unwrap();
+                    ) {
+                        Ok(key) => Ok(key),
+                        Err(_) => Err(CryptoError::new_err(
+                            "unable to decrypt Pkcs8 private key. invalid password?",
+                        )),
+                    };
                 }
 
-                PrivateKeyInfo::from_pkcs8_pem(decoded_bytes).unwrap()
+                Ok(PrivateKeyInfo::from_pkcs8_pem(decoded_bytes).unwrap())
             }
             Item::Sec1Key(key) => {
                 if is_encrypted {
-                    panic!("unsupported");
+                    return Err(CryptoError::new_err(
+                        "Sec1key encrypted is encrypted, please decrypt it prior to passing it.",
+                    ));
                 }
 
                 let sec1_der = key.secret_sec1_der().to_vec();
 
-                PrivateKeyInfo {
+                Ok(PrivateKeyInfo {
                     cert_type: match sec1_der.len() {
                         32..=121 => KeyType::ECDSA_P256,
                         132..=167 => KeyType::ECDSA_P384,
                         200..=400 => KeyType::ECDSA_P521,
-                        _ => panic!("unsupported sec1 key"),
+                        _ => return Err(CryptoError::new_err("unsupported sec1key")),
                     },
                     der_encoded: sec1_der,
-                }
+                })
             }
-            _ => panic!("unsupported"),
+            _ => Err(CryptoError::new_err("unsupported key type")),
         }
     }
 

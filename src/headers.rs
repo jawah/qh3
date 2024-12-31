@@ -41,10 +41,14 @@ impl QpackEncoder {
         dyn_table_capacity: u32,
         blocked_streams: u32,
     ) -> PyResult<&'a PyBytes> {
-        let r = self
-            .encoder
-            .configure(max_table_capacity, dyn_table_capacity, blocked_streams)
-            .expect("FAILURE");
+        let r =
+            match self
+                .encoder
+                .configure(max_table_capacity, dyn_table_capacity, blocked_streams)
+            {
+                Ok(r) => r,
+                Err(_) => return Err(EncoderStreamError::new_err("failed to configure encoder")),
+            };
 
         Ok(PyBytes::new(py, r.data()))
     }

@@ -113,11 +113,8 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u16::from_be_bytes(
-            self.data[self.pos as usize..(self.pos + 2) as usize]
-                .try_into()
-                .expect("failure"),
-        );
+        let extract =
+            u16::from_be_bytes(self.data[self.pos as usize..(self.pos + 2) as usize].try_into()?);
         self.pos += 2;
 
         Ok(extract)
@@ -132,11 +129,8 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u32::from_be_bytes(
-            self.data[self.pos as usize..(self.pos + 4) as usize]
-                .try_into()
-                .expect("failure"),
-        );
+        let extract =
+            u32::from_be_bytes(self.data[self.pos as usize..(self.pos + 4) as usize].try_into()?);
         self.pos += 4;
 
         Ok(extract)
@@ -151,11 +145,8 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u64::from_be_bytes(
-            self.data[self.pos as usize..(self.pos + 8) as usize]
-                .try_into()
-                .expect("failure"),
-        );
+        let extract =
+            u64::from_be_bytes(self.data[self.pos as usize..(self.pos + 8) as usize].try_into()?);
         self.pos += 8;
 
         Ok(extract)
