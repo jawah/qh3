@@ -177,14 +177,17 @@ impl Certificate {
                 _ => "".to_string(),
             };
 
-            let _ = values.append(PyTuple::new_bound(
-                py,
-                [
-                    item.oid.to_object(py),
-                    oid_short.to_object(py),
-                    PyBytes::new(py, &item.value).into(),
-                ],
-            ));
+            let _ = values.append(
+                PyTuple::new(
+                    py,
+                    [
+                        item.oid.to_object(py),
+                        oid_short.to_object(py),
+                        PyBytes::new(py, &item.value).into(),
+                    ],
+                )
+                .unwrap(),
+            );
         }
 
         values
@@ -208,14 +211,17 @@ impl Certificate {
                 _ => "",
             };
 
-            let _ = values.append(PyTuple::new_bound(
-                py,
-                [
-                    item.oid.to_object(py),
-                    oid_short.to_object(py),
-                    PyBytes::new(py, &item.value).into(),
-                ],
-            ));
+            let _ = values.append(
+                PyTuple::new(
+                    py,
+                    [
+                        item.oid.to_object(py),
+                        oid_short.to_object(py),
+                        PyBytes::new(py, &item.value).into(),
+                    ],
+                )
+                .unwrap(),
+            );
         }
 
         values

@@ -17,6 +17,7 @@ pub struct Buffer {
 #[pymethods]
 impl Buffer {
     #[new]
+    #[pyo3(signature = (capacity=None, data=None))]
     pub fn py_new(capacity: Option<u64>, data: Option<Bound<'_, PyBytes>>) -> PyResult<Self> {
         if data.is_some() {
             let payload = data.unwrap();

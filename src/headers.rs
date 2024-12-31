@@ -138,22 +138,26 @@ impl QpackDecoder {
                 let decoded_headers = PyList::new(py, Vec::<(String, String)>::new()).unwrap();
 
                 for header in buffer.headers() {
-                    let _ = decoded_headers.append(PyTuple::new_bound(
-                        py,
-                        [
-                            PyBytes::new(py, header.name().as_bytes()),
-                            PyBytes::new(py, header.value().as_bytes()),
-                        ],
-                    ));
+                    let _ = decoded_headers.append(
+                        PyTuple::new(
+                            py,
+                            [
+                                PyBytes::new(py, header.name().as_bytes()),
+                                PyBytes::new(py, header.value().as_bytes()),
+                            ],
+                        )
+                        .unwrap(),
+                    );
                 }
 
-                Ok(PyTuple::new_bound(
+                Ok(PyTuple::new(
                     py,
                     [
                         PyBytes::new(py, buffer.stream()).to_object(py),
                         decoded_headers.to_object(py),
                     ],
-                ))
+                )
+                .unwrap())
             }
             Ok(DecoderOutput::BlockedStream) => Err(StreamBlocked::new_err(
                 "stream is blocked, need more data to pursue decoding",
@@ -182,22 +186,26 @@ impl QpackDecoder {
                 let decoded_headers = PyList::new(py, Vec::<(String, String)>::new()).unwrap();
 
                 for header in buffer.headers() {
-                    let _ = decoded_headers.append(PyTuple::new_bound(
-                        py,
-                        [
-                            PyBytes::new(py, header.name().as_bytes()),
-                            PyBytes::new(py, header.value().as_bytes()),
-                        ],
-                    ));
+                    let _ = decoded_headers.append(
+                        PyTuple::new(
+                            py,
+                            [
+                                PyBytes::new(py, header.name().as_bytes()),
+                                PyBytes::new(py, header.value().as_bytes()),
+                            ],
+                        )
+                        .unwrap(),
+                    );
                 }
 
-                Ok(PyTuple::new_bound(
+                Ok(PyTuple::new(
                     py,
                     [
                         PyBytes::new(py, buffer.stream()).to_object(py),
                         decoded_headers.to_object(py),
                     ],
-                ))
+                )
+                .unwrap())
             }
             Ok(DecoderOutput::BlockedStream) => Err(StreamBlocked::new_err(
                 "stream is blocked, need more data to pursue decoding",

@@ -14,8 +14,8 @@ use rsa::{
 use crate::CryptoError;
 use rustls_pemfile::{read_one_from_slice, Item};
 
-#[pyclass(module = "qh3._hazmat")]
-#[derive(Clone, Copy)]
+#[pyclass(module = "qh3._hazmat", eq, eq_int)]
+#[derive(Clone, Copy, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum KeyType {
     ECDSA_P256,
@@ -69,6 +69,7 @@ impl TryFrom<InternalPrivateKeyInfo<'_>> for PrivateKeyInfo {
 #[pymethods]
 impl PrivateKeyInfo {
     #[new]
+    #[pyo3(signature = (raw_pem_content, password=None))]
     pub fn py_new(
         raw_pem_content: Bound<'_, PyBytes>,
         password: Option<Bound<'_, PyBytes>>,

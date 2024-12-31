@@ -20,8 +20,8 @@ use bincode::{deserialize, serialize};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 
-#[pyclass(module = "qh3._hazmat")]
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[pyclass(module = "qh3._hazmat", eq, eq_int)]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum ReasonFlags {
     unspecified = 0,
@@ -36,8 +36,8 @@ pub enum ReasonFlags {
     remove_from_crl = 8,
 }
 
-#[pyclass(module = "qh3._hazmat")]
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[pyclass(module = "qh3._hazmat", eq, eq_int)]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum OCSPResponseStatus {
     SUCCESSFUL = 0,
@@ -48,8 +48,8 @@ pub enum OCSPResponseStatus {
     UNAUTHORIZED = 6,
 }
 
-#[pyclass(module = "qh3._hazmat")]
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[pyclass(module = "qh3._hazmat", eq, eq_int)]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum OCSPCertStatus {
     GOOD = 0,
