@@ -16,6 +16,7 @@
 **Added**
 - noxfile.
 - miscellaneous serialize/deserialize for Certificate, and OCSPResponse.
+- Initial support for Python 3.13 freethreaded experimental build.
 
 1.2.1 (2024-10-15)
 ====================
