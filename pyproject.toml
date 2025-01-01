@@ -45,9 +45,6 @@ module-name = "qh3._hazmat"
 homepage = "https://github.com/jawah/qh3"
 documentation = "https://qh3.readthedocs.io/"
 
-[tool.coverage.run]
-source = ["qh3"]
-
 [tool.pytest.ini_options]
 xfail_strict = true
 log_level = "DEBUG"

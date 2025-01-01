@@ -1404,7 +1404,7 @@ class QuicConnection:
         if self._configuration.certificate is not None and not isinstance(
             self._configuration.certificate, X509Certificate
         ):
-            raise RuntimeError(
+            raise RuntimeError(  # Defensive: migration from cryptography
                 "qh3 v1.0+ no longer support passing cryptography "
                 "certificate objects within a QuicConfiguration object. "
                 "Use configuration.load_cert_chain(...) instead using "
@@ -1414,7 +1414,7 @@ class QuicConnection:
         if self._configuration.certificate_chain and not isinstance(
             self._configuration.certificate_chain[0], X509Certificate
         ):
-            raise RuntimeError(
+            raise RuntimeError(  # Defensive: migration from cryptography
                 "qh3 v1.0+ no longer support passing cryptography "
                 "certificate objects within a QuicConfiguration object. "
                 "Use configuration.load_cert_chain(...) instead using "
@@ -1424,7 +1424,7 @@ class QuicConnection:
         if self._configuration.private_key and "cryptography" in str(
             type(self._configuration.private_key)
         ):
-            raise RuntimeError(
+            raise RuntimeError(  # Defensive: migration from cryptography
                 "qh3 v1.0+ no longer support passing cryptography "
                 "private key object within a QuicConfiguration object. "
                 "Use configuration.load_cert_chain(...) instead using "
