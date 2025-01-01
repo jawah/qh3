@@ -22,36 +22,36 @@ def tests_impl(
     session.run("python", "--version")
     session.run("python", "-c", "import struct; print(struct.calcsize('P') * 8)")
 
-    # Inspired from https://hynek.me/articles/ditch-codecov-python/
-    # We use parallel mode and then combine in a later CI step
-    session.run(
-        "python",
-        "-m",
-        *(
-            (
-                "coverage",
-                "run",
-                "--parallel-mode",
-                "-m",
-            )
-            if tracemalloc_enable is False
-            else ()
-        ),
-        "pytest",
-        "-v",
-        "-ra",
-        f"--color={'yes' if 'GITHUB_ACTIONS' in os.environ else 'auto'}",
-        "--tb=native",
-        "--durations=10",
-        "--strict-config",
-        "--strict-markers",
-        *(session.posargs or ("tests/",)),
-        env={
-            "PYTHONWARNINGS": "always::DeprecationWarning",
-            "COVERAGE_CORE": "sysmon",
-            "PYTHONTRACEMALLOC": "25" if tracemalloc_enable else "",
-        },
-    )
+    with session.chdir("./src"):
+
+        session.run(
+            "python",
+            "-m",
+            *(
+                (
+                    "coverage",
+                    "run",
+                    "--parallel-mode",
+                    "-m",
+                )
+                if tracemalloc_enable is False
+                else ()
+            ),
+            "pytest",
+            "-v",
+            "-ra",
+            f"--color={'yes' if 'GITHUB_ACTIONS' in os.environ else 'auto'}",
+            "--tb=native",
+            "--durations=10",
+            "--strict-config",
+            "--strict-markers",
+            *(session.posargs or ("../tests/",)),
+            env={
+                "PYTHONWARNINGS": "always::DeprecationWarning",
+                "COVERAGE_CORE": "sysmon",
+                "PYTHONTRACEMALLOC": "25" if tracemalloc_enable else "",
+            },
+        )
 
 
 @nox.session(
