@@ -61,11 +61,11 @@ jobs:
       - uses: ilammy/setup-nasm@v1
         if: matrix.os == 'windows-latest'
       - name: Run test CPython
-        if: matrix.python_version != 'pypy-3.9' && matrix.python_version != 'pypy-3.10'
+        if: !startsWith(matrix.python_version, 'pypy')
         run: nox -s test-${{ matrix.python_version }}
       - name: Run test PyPy
-        if: matrix.python_version == 'pypy-3.9' || matrix.python_version == 'pypy-3.10'
-        run: nox -s pypy
+        if: startsWith(matrix.python_version, 'pypy')
+        run: nox -s test-pypy
 
   integration:
     timeout-minutes: 20
