@@ -63,16 +63,44 @@ jobs:
       - name: Run test
         run: nox -s test-${{ matrix.python_version }}
 
+  integration:
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-22.04, macos-13, windows-latest ]
+        python_version: [ '3.13', 'pypy-3.10' ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+          allow-prereleases: true
+      - name: Setup nox
+        run: pip install nox
+      - name: Set up Clang (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: sudo apt-get install clang
+      - name: Set up Clang (Cygwin)
+        if: matrix.os == 'windows-latest'
+        run: choco install llvm -y
+      - uses: ilammy/setup-nasm@v1
+        if: matrix.os == 'windows-latest'
+      - name: Run test
+        run: nox -s downstream_niquests
+
   linux:
     runs-on: ubuntu-22.04
     needs:
       - test
       - lint
+      - integration
     strategy:
       fail-fast: false
       matrix:
         target: [ x86_64, s390x, aarch64, armv7l, ppc64le, ppc64 ]
-        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10' ]
+        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', '3.13t' ]
         manylinux: [ 'manylinux2014', 'musllinux_1_1' ]
         exclude:
           - manylinux: musllinux_1_1
@@ -84,17 +112,25 @@ jobs:
 
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
+        if: matrix.python_version != '3.13t'
         with:
           python-version: ${{ matrix.python_version }}
+      - uses: Quansight-Labs/setup-python@v5
+        if: matrix.python_version == '3.13t'
+        with:
+          python-version: 3.13t
       - name: Build wheels (no workarounds)
         if: matrix.target == 'x86_64'
         uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
           sccache: 'true'
           manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
             sudo apt-get update || echo "no apt support"
             sudo apt-get install -y libclang || echo "no apt support"
@@ -113,11 +149,13 @@ jobs:
         uses: PyO3/maturin-action@v1
         env:
           CFLAGS_aarch64_unknown_linux_gnu: "-D__ARM_ARCH=8"
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
           sccache: 'true'
           manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
             sudo apt-get update || echo "no apt support"
             sudo apt-get install -y libclang || echo "no apt support"
@@ -135,11 +173,13 @@ jobs:
         uses: PyO3/maturin-action@v1
         env:
           CFLAGS_aarch64_unknown_linux_gnu: "-D__ARM_ARCH=8"
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
           sccache: 'true'
           manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
             sudo apt-get update || echo "no apt support"
             sudo apt-get install -y libclang || echo "no apt support"
@@ -154,11 +194,14 @@ jobs:
       - name: Build wheels (s390x+manylinux2014 workaround)
         if: matrix.target == 's390x' && matrix.manylinux == 'manylinux2014'
         uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
           sccache: 'true'
           manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
             sudo apt-get update || echo "no apt support"
             sudo apt-get install -y libclang || echo "no apt support"
@@ -173,11 +216,14 @@ jobs:
       - name: Build wheels (ppc64le+manylinux2014 workaround)
         if: matrix.target == 'ppc64le' && matrix.manylinux == 'manylinux2014'
         uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
           sccache: 'true'
           manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
             sudo apt-get update || echo "no apt support"
             sudo apt-get install -y libclang || echo "no apt support"
@@ -193,11 +239,14 @@ jobs:
       - name: Build wheels (ppc64+manylinux2014 workaround)
         if: matrix.target == 'ppc64' && matrix.manylinux == 'manylinux2014'
         uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
           sccache: 'true'
           manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
             sudo apt-get update || echo "no apt support"
             sudo apt-get install -y libclang || echo "no apt support"
@@ -212,11 +261,14 @@ jobs:
       - name: Build wheels (armv7l+manylinux workaround)
         if: matrix.target == 'armv7l' && matrix.manylinux == 'manylinux2014'
         uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
           sccache: 'true'
           manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
             sudo apt-get update || echo "no apt support"
             sudo apt-get install -y libclang || echo "no apt support"
@@ -231,11 +283,14 @@ jobs:
       - name: Build wheels (armv7l+musl workaround)
         if: matrix.target == 'armv7l' && matrix.manylinux == 'musllinux_1_1'
         uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
           sccache: 'true'
           manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
             sudo apt-get update || echo "no apt support"
             sudo apt-get install -y libclang || echo "no apt support"
@@ -258,12 +313,13 @@ jobs:
     needs:
       - test
       - lint
+      - integration
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
         target: [ x64, aarch64 ]
-        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10' ]
+        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', '3.13t' ]
         exclude:
           - target: aarch64
             python_version: pypy-3.7
@@ -273,11 +329,19 @@ jobs:
             python_version: pypy-3.9
           - target: aarch64
             python_version: pypy-3.10
+          - target: aarch64
+            python_version: 3.13t
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
+        if: matrix.python_version != '3.13t'
         with:
           python-version: ${{ matrix.python_version }}
+          architecture: x64
+      - uses: Quansight-Labs/setup-python@v5
+        if: matrix.python_version == '3.13t'
+        with:
+          python-version: 3.13t
           architecture: x64
       - uses: ilammy/setup-nasm@v1
       - name: Set up Clang (Cygwin)
@@ -289,6 +353,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         env:
           XWIN_VERSION: 16  # fix for "no cab file specified by MSI" ...?
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist
@@ -303,19 +368,27 @@ jobs:
     needs:
       - test
       - lint
+      - integration
     runs-on: macos-13
     strategy:
       fail-fast: false
       matrix:
-        target: [ x86_64, aarch64, universal2 ]
-        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10' ]
+        target: [ universal2 ]
+        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', '3.13t' ]
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
+        if: matrix.python_version != '3.13t'
         with:
           python-version: ${{ matrix.python_version }}
+      - uses: Quansight-Labs/setup-python@v5
+        if: matrix.python_version == '3.13t'
+        with:
+          python-version: 3.13t
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
@@ -330,6 +403,7 @@ jobs:
     needs:
       - test
       - lint
+      - integration
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
@@ -392,7 +466,7 @@ jobs:
         with:
           name: wheels
       - name: Publish to PyPI
-        uses: PyO3/maturin-action@v1.42.1
+        uses: PyO3/maturin-action@v1
         with:
           command: upload
           args: --non-interactive --skip-existing *
