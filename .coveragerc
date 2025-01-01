@@ -10,6 +10,7 @@ source =
     */qh3
     *\qh3
 
+[report]
 exclude_lines =
     except ModuleNotFoundError:
     except ImportError:
