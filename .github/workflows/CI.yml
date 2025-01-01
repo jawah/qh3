@@ -353,7 +353,19 @@ jobs:
       - name: Add Ninja (aarch64 build requirement)
         if: matrix.target == 'aarch64'
         run: choco install ninja -y
-      - name: Build wheels
+      - name: Build wheels (w/ PYO3_CROSS)
+        if: matrix.target == 'aarch64'
+        uses: PyO3/maturin-action@v1
+        env:
+          XWIN_VERSION: 16  # fix for "no cab file specified by MSI" ...?
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
+          PYO3_CROSS: 1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          sccache: 'true'
+      - name: Build wheels (wo/ PYO3_CROSS)
+        if: matrix.target != 'aarch64'
         uses: PyO3/maturin-action@v1
         env:
           XWIN_VERSION: 16  # fix for "no cab file specified by MSI" ...?
