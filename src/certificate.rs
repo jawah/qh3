@@ -3,11 +3,11 @@ use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{CertificateError, Error, RootCertStore};
 
-use pyo3::{pymethods, IntoPyObject};
 use pyo3::types::PyBytesMethods;
 use pyo3::types::PyListMethods;
 use pyo3::types::{PyBytes, PyList, PyTuple, PyType};
 use pyo3::{pyclass, Bound};
+use pyo3::{pymethods, IntoPyObject};
 use pyo3::{PyResult, Python};
 
 use x509_parser::prelude::*;
@@ -182,7 +182,10 @@ impl Certificate {
                     [
                         item.clone().oid.into_pyobject(py).unwrap().into_any(),
                         oid_short.into_pyobject(py).unwrap().into_any(),
-                        PyBytes::new(py, &item.value).into_pyobject(py).unwrap().into_any(),
+                        PyBytes::new(py, &item.value)
+                            .into_pyobject(py)
+                            .unwrap()
+                            .into_any(),
                     ],
                 )
                 .unwrap(),
@@ -216,7 +219,10 @@ impl Certificate {
                     [
                         item.clone().oid.into_pyobject(py).unwrap().into_any(),
                         oid_short.into_pyobject(py).unwrap().into_any(),
-                        PyBytes::new(py, &item.value).into_pyobject(py).unwrap().into_any(),
+                        PyBytes::new(py, &item.value)
+                            .into_pyobject(py)
+                            .unwrap()
+                            .into_any(),
                     ],
                 )
                 .unwrap(),
