@@ -1,11 +1,11 @@
-1.3.0 (2024-12-30)
+1.3.0 (2025-01-01)
 ====================
 
 **Changed**
 - Post-Quantum key-exchange Kyber 768 Draft upgraded to standard Module-Lattice 768.
 - Version negotiation no longer logged as ``INFO``. Every logs generated will always be ``DEBUG`` level.
 - Converted our test suite to run on Pytest instead of unittest.
-- Migrated pyo3 from 0.20.3 to 0.23.3 and fixed most of the deprecation warnings.
+- Migrated pyo3 from 0.20.3 to 0.23.3
 
 **Fixed**
 - Clippy warnings in our Rust code.
