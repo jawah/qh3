@@ -1003,7 +1003,7 @@ class QuicConnection:
                     context, plain_payload, crypto_frame_required
                 )
             except QuicConnectionError as exc:
-                self._logger.warning(exc)
+                self._logger.debug(exc)
                 self.close(
                     error_code=exc.error_code,
                     frame_type=exc.frame_type,
@@ -2563,7 +2563,7 @@ class QuicConnection:
             #
             # https://datatracker.ietf.org/doc/html/rfc9368#section-4
             if self._version in header.supported_versions:
-                self._logger.warning(
+                self._logger.debug(
                     "Version negotiation packet contains protocol version %s",
                     pretty_protocol_version(self._version),
                 )
