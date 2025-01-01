@@ -38,7 +38,7 @@ dynamic = [
 ]
 
 [tool.maturin]
-features = ["pyo3/extension-module", "pyo3/generate-import-lib"]
+features = ["pyo3/extension-module", "pyo3/abi3-py37", "pyo3/generate-import-lib"]
 module-name = "qh3._hazmat"
 
 [project.urls]
