@@ -440,12 +440,15 @@ class TestHighLevel:
         config4 = QuicConfiguration()
         config1.load_cert_chain(SERVER_CERTFILE, SERVER_KEYFILE)
         config2.load_cert_chain(SERVER_COMBINEDFILE)
-        config3.load_cert_chain(
-            open(SERVER_CERTFILE).read(), open(SERVER_KEYFILE).read()
-        )
-        config4.load_cert_chain(
-            open(SERVER_CERTFILE, "rb").read(), open(SERVER_KEYFILE, "rb").read()
-        )
+        with open(SERVER_CERTFILE) as fp1, open(SERVER_KEYFILE) as fp2:
+            config3.load_cert_chain(
+                fp1.read(), fp2.read()
+            )
+
+        with open(SERVER_CERTFILE, "rb") as fp1, open(SERVER_KEYFILE, "rb") as fp2:
+            config4.load_cert_chain(
+                fp1.read(), fp2.read()
+            )
 
         assert config1.certificate == config2.certificate
         assert config1.certificate == config3.certificate
