@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import shutil
 
 import nox
@@ -11,10 +12,10 @@ def tests_impl(
     tracemalloc_enable: bool = False,
 ) -> None:
     # Install deps and the package itself.
-    session.install("-U", "pip", "setuptools", silent=False)
+    session.install("-U", "pip", "maturin", silent=False)
     session.install("-r", "dev-requirements.txt", silent=False)
 
-    session.install(".", silent=False)
+    session.run("maturin", "develop")
 
     # Show the pip version.
     session.run("pip", "--version")
@@ -22,36 +23,34 @@ def tests_impl(
     session.run("python", "--version")
     session.run("python", "-c", "import struct; print(struct.calcsize('P') * 8)")
 
-    with session.chdir("./src"):
-
-        session.run(
-            "python",
-            "-m",
-            *(
-                (
-                    "coverage",
-                    "run",
-                    "--parallel-mode",
-                    "-m",
-                )
-                if tracemalloc_enable is False
-                else ()
-            ),
-            "pytest",
-            "-v",
-            "-ra",
-            f"--color={'yes' if 'GITHUB_ACTIONS' in os.environ else 'auto'}",
-            "--tb=native",
-            "--durations=10",
-            "--strict-config",
-            "--strict-markers",
-            *(session.posargs or ("../tests/",)),
-            env={
-                "PYTHONWARNINGS": "always::DeprecationWarning",
-                "COVERAGE_CORE": "sysmon",
-                "PYTHONTRACEMALLOC": "25" if tracemalloc_enable else "",
-            },
-        )
+    session.run(
+        "python",
+        "-m",
+        *(
+            (
+                "coverage",
+                "run",
+                "--parallel-mode",
+                "-m",
+            )
+            if tracemalloc_enable is False
+            else ()
+        ),
+        "pytest",
+        "-v",
+        "-ra",
+        f"--color={'yes' if 'GITHUB_ACTIONS' in os.environ else 'auto'}",
+        "--tb=native",
+        "--durations=10",
+        "--strict-config",
+        "--strict-markers",
+        *(session.posargs or ("tests/",)),
+        env={
+            "PYTHONWARNINGS": "always::DeprecationWarning",
+            "COVERAGE_CORE": "sysmon",
+            "PYTHONTRACEMALLOC": "25" if tracemalloc_enable else "",
+        },
+    )
 
 
 @nox.session(
