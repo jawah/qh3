@@ -2508,7 +2508,7 @@ class QuicConnection:
             self._peer_token = header.token
             self._retry_count += 1
             self._retry_source_connection_id = header.source_cid
-            self._logger.info("Retrying with token (%d bytes)" % len(header.token))
+            self._logger.debug("Retrying with token (%d bytes)" % len(header.token))
             self._connect(now=now)
         else:
             # Unexpected or invalid retry packet.
@@ -2589,7 +2589,7 @@ class QuicConnection:
                     },
                 )
             if chosen_version is None:
-                self._logger.error("Could not find a common protocol version")
+                self._logger.debug("Could not find a common protocol version")
                 self._close_event = events.ConnectionTerminated(
                     error_code=QuicErrorCode.INTERNAL_ERROR,
                     frame_type=QuicFrameType.PADDING,
@@ -2600,7 +2600,7 @@ class QuicConnection:
             self._packet_number = 0
             self._version = chosen_version
             self._version_negotiated_incompatible = True
-            self._logger.info(
+            self._logger.debug(
                 "Retrying with protocol version %s",
                 pretty_protocol_version(self._version),
             )
@@ -2936,7 +2936,7 @@ class QuicConnection:
         ):
             self._version = self._crypto_packet_version
             self._version_negotiated_compatible = True
-            self._logger.info(
+            self._logger.debug(
                 "Negotiated protocol version %s", pretty_protocol_version(self._version)
             )
 
