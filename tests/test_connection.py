@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import pytest
 import binascii
 import contextlib
 import io
 import time
 from typing import List, Tuple
-from unittest import TestCase, skipIf
 
 from qh3 import tls
 from qh3.buffer import UINT_VAR_MAX, Buffer, encode_uint_var
@@ -48,7 +48,7 @@ CLIENT_ADDR = ("1.2.3.4", 1234)
 CLIENT_HANDSHAKE_DATAGRAM_SIZES = [1280]
 
 SERVER_ADDR = ("2.3.4.5", 4433)
-SERVER_INITIAL_DATAGRAM_SIZES = [1280, 1280, 986]
+SERVER_INITIAL_DATAGRAM_SIZES = [1280, 1280, 890]
 
 HANDSHAKE_COMPLETED_EVENTS = [
     events.HandshakeCompleted,
@@ -103,7 +103,7 @@ def create_standalone_client(self, **client_options):
 
     # kick-off handshake
     client.connect(SERVER_ADDR, now=time.time())
-    self.assertEqual(drop(client), 2)
+    assert drop(client) == 2
 
     return client
 
@@ -235,7 +235,7 @@ def transfer(sender, receiver):
     return datagrams
 
 
-class QuicConnectionTest(TestCase):
+class TestQuicConnection:
     def assertEvents(self, connection: QuicConnection, expected: list):
         types = []
         while True:
@@ -245,7 +245,7 @@ class QuicConnectionTest(TestCase):
             else:
                 break
 
-        self.assertListEqual(types, expected)
+        assert types == expected
 
     def assertPacketDropped(self, connection: QuicConnection, trigger: str):
         log = connection.configuration.quic_logger.to_dict()
@@ -254,37 +254,37 @@ class QuicConnectionTest(TestCase):
             if event["name"] == "transport:packet_dropped":
                 found_trigger = event["data"]["trigger"]
                 break
-        self.assertEqual(found_trigger, trigger)
+        assert found_trigger == trigger
 
     def assertSentPackets(self, connection: QuicConnection, expected: List[int]):
         counts = [len(space.sent_packets) for space in connection._loss.spaces]
-        self.assertEqual(counts, expected)
+        assert counts == expected
 
     def check_handshake(self, client, server, alpn_protocol=None):
         """
         Check handshake completed.
         """
         event = client.next_event()
-        self.assertEqual(type(event), events.ProtocolNegotiated)
-        self.assertEqual(event.alpn_protocol, alpn_protocol)
+        assert type(event) == events.ProtocolNegotiated
+        assert event.alpn_protocol == alpn_protocol
         event = client.next_event()
-        self.assertEqual(type(event), events.HandshakeCompleted)
-        self.assertEqual(event.alpn_protocol, alpn_protocol)
-        self.assertEqual(event.early_data_accepted, False)
-        self.assertEqual(event.session_resumed, False)
+        assert type(event) == events.HandshakeCompleted
+        assert event.alpn_protocol == alpn_protocol
+        assert event.early_data_accepted == False
+        assert event.session_resumed == False
         for i in range(7):
-            self.assertEqual(type(client.next_event()), events.ConnectionIdIssued)
-        self.assertIsNone(client.next_event())
+            assert type(client.next_event()) == events.ConnectionIdIssued
+        assert client.next_event() is None
 
         event = server.next_event()
-        self.assertEqual(type(event), events.ProtocolNegotiated)
-        self.assertEqual(event.alpn_protocol, alpn_protocol)
+        assert type(event) == events.ProtocolNegotiated
+        assert event.alpn_protocol == alpn_protocol
         event = server.next_event()
-        self.assertEqual(type(event), events.HandshakeCompleted)
-        self.assertEqual(event.alpn_protocol, alpn_protocol)
+        assert type(event) == events.HandshakeCompleted
+        assert event.alpn_protocol == alpn_protocol
         for i in range(7):
-            self.assertEqual(type(server.next_event()), events.ConnectionIdIssued)
-        self.assertIsNone(server.next_event())
+            assert type(server.next_event()) == events.ConnectionIdIssued
+        assert server.next_event() is None
 
     def test_connect(self):
         with client_and_server() as (client, server):
@@ -292,42 +292,38 @@ class QuicConnectionTest(TestCase):
             self.check_handshake(client=client, server=server)
 
             # check each endpoint has available connection IDs for the peer
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [1, 2, 3, 4, 5, 6, 7]
-            )
-            self.assertEqual(
-                sequence_numbers(server._peer_cid_available), [1, 2, 3, 4, 5, 6, 7]
-            )
+            assert sequence_numbers(client._peer_cid_available) == [1, 2, 3, 4, 5, 6, 7]
+            assert sequence_numbers(server._peer_cid_available) == [1, 2, 3, 4, 5, 6, 7]
 
             # client closes the connection
             client.close()
-            self.assertEqual(transfer(client, server), 1)
+            assert transfer(client, server) == 1
 
             # check connection closes on the client side
             client.handle_timer(client.get_timer())
             event = client.next_event()
-            self.assertEqual(type(event), events.ConnectionTerminated)
-            self.assertEqual(event.error_code, QuicErrorCode.NO_ERROR)
-            self.assertEqual(event.frame_type, None)
-            self.assertEqual(event.reason_phrase, "")
-            self.assertIsNone(client.next_event())
+            assert type(event) == events.ConnectionTerminated
+            assert event.error_code == QuicErrorCode.NO_ERROR
+            assert event.frame_type == None
+            assert event.reason_phrase == ""
+            assert client.next_event() is None
 
             # check connection closes on the server side
             server.handle_timer(server.get_timer())
             event = server.next_event()
-            self.assertEqual(type(event), events.ConnectionTerminated)
-            self.assertEqual(event.error_code, QuicErrorCode.NO_ERROR)
-            self.assertEqual(event.frame_type, None)
-            self.assertEqual(event.reason_phrase, "")
-            self.assertIsNone(server.next_event())
+            assert type(event) == events.ConnectionTerminated
+            assert event.error_code == QuicErrorCode.NO_ERROR
+            assert event.frame_type == None
+            assert event.reason_phrase == ""
+            assert server.next_event() is None
 
             # check client log
             client_log = client.configuration.quic_logger.to_dict()
-            self.assertGreater(len(client_log["traces"][0]["events"]), 20)
+            assert len(client_log["traces"][0]["events"]) > 20
 
             # check server log
             server_log = server.configuration.quic_logger.to_dict()
-            self.assertGreater(len(server_log["traces"][0]["events"]), 20)
+            assert len(server_log["traces"][0]["events"]) > 20
 
     def test_connect_with_alpn(self):
         with client_and_server(
@@ -350,19 +346,17 @@ class QuicConnectionTest(TestCase):
             # check secrets were logged
             client_log = client_log_file.getvalue()
             server_log = server_log_file.getvalue()
-            self.assertEqual(client_log, server_log)
+            assert client_log == server_log
             labels = []
             for line in client_log.splitlines():
                 labels.append(line.split()[0])
-            self.assertEqual(
-                labels,
+            assert labels == \
                 [
                     "SERVER_HANDSHAKE_TRAFFIC_SECRET",
                     "CLIENT_HANDSHAKE_TRAFFIC_SECRET",
                     "SERVER_TRAFFIC_SECRET_0",
                     "CLIENT_TRAFFIC_SECRET_0",
-                ],
-            )
+                ]
 
     def test_connect_with_cert_chain(self):
         with client_and_server(server_certfile=SERVER_CERTFILE_WITH_CHAIN) as (
@@ -380,12 +374,8 @@ class QuicConnectionTest(TestCase):
             self.check_handshake(client=client, server=server)
 
             # check selected cipher suite
-            self.assertEqual(
-                client.tls.key_schedule.cipher_suite, tls.CipherSuite.AES_128_GCM_SHA256
-            )
-            self.assertEqual(
-                server.tls.key_schedule.cipher_suite, tls.CipherSuite.AES_128_GCM_SHA256
-            )
+            assert client.tls.key_schedule.cipher_suite == tls.CipherSuite.AES_128_GCM_SHA256
+            assert server.tls.key_schedule.cipher_suite == tls.CipherSuite.AES_128_GCM_SHA256
 
     def test_connect_with_cipher_suite_aes256(self):
         with client_and_server(
@@ -395,14 +385,10 @@ class QuicConnectionTest(TestCase):
             self.check_handshake(client=client, server=server)
 
             # check selected cipher suite
-            self.assertEqual(
-                client.tls.key_schedule.cipher_suite, tls.CipherSuite.AES_256_GCM_SHA384
-            )
-            self.assertEqual(
-                server.tls.key_schedule.cipher_suite, tls.CipherSuite.AES_256_GCM_SHA384
-            )
+            assert client.tls.key_schedule.cipher_suite == tls.CipherSuite.AES_256_GCM_SHA384
+            assert server.tls.key_schedule.cipher_suite == tls.CipherSuite.AES_256_GCM_SHA384
 
-    @skipIf("chacha20" in SKIP_TESTS, "Skipping chacha20 tests")
+    @pytest.mark.skipif("chacha20" in SKIP_TESTS, reason="Skipping chacha20 tests")
     def test_connect_with_cipher_suite_chacha20(self):
         with client_and_server(
             client_options={"cipher_suites": [tls.CipherSuite.CHACHA20_POLY1305_SHA256]}
@@ -411,14 +397,10 @@ class QuicConnectionTest(TestCase):
             self.check_handshake(client=client, server=server)
 
             # check selected cipher suite
-            self.assertEqual(
-                client.tls.key_schedule.cipher_suite,
-                tls.CipherSuite.CHACHA20_POLY1305_SHA256,
-            )
-            self.assertEqual(
-                server.tls.key_schedule.cipher_suite,
-                tls.CipherSuite.CHACHA20_POLY1305_SHA256,
-            )
+            assert client.tls.key_schedule.cipher_suite == \
+                tls.CipherSuite.CHACHA20_POLY1305_SHA256
+            assert server.tls.key_schedule.cipher_suite == \
+                tls.CipherSuite.CHACHA20_POLY1305_SHA256
 
     def test_connect_without_loss(self):
         """
@@ -429,8 +411,8 @@ class QuicConnectionTest(TestCase):
             now = 0.0
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280, 1280])
-            self.assertEqual(client.get_timer(), 0.2)
+            assert datagram_sizes(items) == [1280, 1280]
+            assert client.get_timer() == 0.2
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -439,9 +421,9 @@ class QuicConnectionTest(TestCase):
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), SERVER_INITIAL_DATAGRAM_SIZES)
-            self.assertAlmostEqual(server.get_timer(), 0.25)
-            self.assertSentPackets(server, [2, 2, 0])
+            assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
+            assert server.get_timer() == pytest.approx(0.25)
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # handshake continues normally
@@ -450,8 +432,8 @@ class QuicConnectionTest(TestCase):
             client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             client.receive_datagram(items[2][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), CLIENT_HANDSHAKE_DATAGRAM_SIZES)
-            self.assertAlmostEqual(client.get_timer(), 0.425)
+            assert datagram_sizes(items) == CLIENT_HANDSHAKE_DATAGRAM_SIZES
+            assert client.get_timer() == pytest.approx(0.425)
             self.assertSentPackets(client, [0, 1, 1])
             self.assertEvents(
                 client, [events.ProtocolNegotiated] + HANDSHAKE_COMPLETED_EVENTS
@@ -460,16 +442,17 @@ class QuicConnectionTest(TestCase):
             now += TICK
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [229])
-            self.assertAlmostEqual(server.get_timer(), 0.425)
+            assert datagram_sizes(items) == [229]
+            assert server.get_timer() == pytest.approx(0.425)
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS)
 
             now += TICK
             client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [32])
-            self.assertAlmostEqual(client.get_timer(), 60.2)  # idle timeout
+            assert datagram_sizes(items) == [32]
+            # idle timeout
+            assert client.get_timer() == pytest.approx(60.2)
             self.assertSentPackets(client, [0, 0, 1])
             self.assertEvents(client, [])
     
@@ -485,8 +468,8 @@ class QuicConnectionTest(TestCase):
             now = 0.0
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280, 1280])
-            self.assertEqual(client.get_timer(), 0.2)
+            assert datagram_sizes(items) == [1280, 1280]
+            assert client.get_timer() == 0.2
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -494,8 +477,8 @@ class QuicConnectionTest(TestCase):
             now = client.get_timer()
             client.handle_timer(now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280, 1280])
-            self.assertAlmostEqual(client.get_timer(), 0.6)
+            assert datagram_sizes(items) == [1280, 1280]
+            assert client.get_timer() == pytest.approx(0.6)
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -504,9 +487,9 @@ class QuicConnectionTest(TestCase):
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), SERVER_INITIAL_DATAGRAM_SIZES)
-            self.assertAlmostEqual(server.get_timer(), 0.45)
-            self.assertSentPackets(server, [2, 2, 0])
+            assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
+            assert server.get_timer() == pytest.approx(0.45)
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # handshake continues normally
@@ -515,8 +498,8 @@ class QuicConnectionTest(TestCase):
             client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             client.receive_datagram(items[2][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), CLIENT_HANDSHAKE_DATAGRAM_SIZES)
-            self.assertAlmostEqual(client.get_timer(), 0.625)
+            assert datagram_sizes(items) == CLIENT_HANDSHAKE_DATAGRAM_SIZES
+            assert client.get_timer() == pytest.approx(0.625)
             self.assertSentPackets(client, [0, 1, 1])
             self.assertEvents(
                 client, [events.ProtocolNegotiated] + HANDSHAKE_COMPLETED_EVENTS
@@ -525,16 +508,17 @@ class QuicConnectionTest(TestCase):
             now += TICK
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [229])
-            self.assertAlmostEqual(server.get_timer(), 0.625)
+            assert datagram_sizes(items) == [229]
+            assert server.get_timer() == pytest.approx(0.625)
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS)
 
             now += TICK
             client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [32])
-            self.assertAlmostEqual(client.get_timer(), 60.4)  # idle timeout
+            assert datagram_sizes(items) == [32]
+            # idle timeout
+            assert client.get_timer() == pytest.approx(60.4)
             self.assertSentPackets(client, [0, 0, 1])
             self.assertEvents(client, [])
 
@@ -551,8 +535,8 @@ class QuicConnectionTest(TestCase):
             now = 0.0
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280, 1280])
-            self.assertEqual(client.get_timer(), 0.2)
+            assert datagram_sizes(items) == [1280, 1280]
+            assert client.get_timer() == 0.2
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -562,17 +546,17 @@ class QuicConnectionTest(TestCase):
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), SERVER_INITIAL_DATAGRAM_SIZES)
-            self.assertEqual(server.get_timer(), 0.25)
-            self.assertSentPackets(server, [2, 2, 0])
+            assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
+            assert server.get_timer() == 0.25
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # client only receives second datagram, retransmits INITIAL
             now += TICK
             client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280, 1280])
-            self.assertAlmostEqual(client.get_timer(), 0.3)
+            assert datagram_sizes(items) == [1280, 1280]
+            assert client.get_timer() == pytest.approx(0.3)
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -583,7 +567,7 @@ class QuicConnectionTest(TestCase):
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280, 1280, 890])
+            assert datagram_sizes(items) == [1280, 1280, 890]
             # self.assertAlmostEqual(server.get_timer(), 0.35)
             self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [])
@@ -594,7 +578,7 @@ class QuicConnectionTest(TestCase):
             client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             client.receive_datagram(items[2][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), CLIENT_HANDSHAKE_DATAGRAM_SIZES)
+            assert datagram_sizes(items) == CLIENT_HANDSHAKE_DATAGRAM_SIZES
             # self.assertAlmostEqual(client.get_timer(), 0.525)
             self.assertSentPackets(client, [0, 1, 1])
             self.assertEvents(
@@ -604,7 +588,7 @@ class QuicConnectionTest(TestCase):
             now += TICK
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [229])
+            assert datagram_sizes(items) == [229]
             # self.assertAlmostEqual(server.get_timer(), 0.525)
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS)
@@ -612,8 +596,9 @@ class QuicConnectionTest(TestCase):
             now += TICK
             client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [32])
-            self.assertAlmostEqual(client.get_timer(), 60.3)  # idle timeout
+            assert datagram_sizes(items) == [32]
+            # idle timeout
+            assert client.get_timer() == pytest.approx(60.3)
             self.assertSentPackets(client, [0, 0, 1])
             self.assertEvents(client, [])
 
@@ -631,8 +616,8 @@ class QuicConnectionTest(TestCase):
             now = 0.0
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280, 1280])
-            self.assertEqual(client.get_timer(), 0.2)
+            assert datagram_sizes(items) == [1280, 1280]
+            assert client.get_timer() == 0.2
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -641,17 +626,17 @@ class QuicConnectionTest(TestCase):
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), SERVER_INITIAL_DATAGRAM_SIZES)
-            self.assertEqual(server.get_timer(), 0.25)
-            self.assertSentPackets(server, [2, 2, 0])
+            assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
+            assert server.get_timer() == 0.25
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # INITIAL + HANDSHAKE are lost, client retransmits INITIAL
             now = client.get_timer()
             client.handle_timer(now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280, 1280])
-            self.assertAlmostEqual(client.get_timer(), 0.6)
+            assert datagram_sizes(items) == [1280, 1280]
+            assert client.get_timer() == pytest.approx(0.6)
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -660,9 +645,9 @@ class QuicConnectionTest(TestCase):
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), SERVER_INITIAL_DATAGRAM_SIZES)
-            self.assertEqual(server.get_timer(), 0.45)
-            self.assertSentPackets(server, [2, 2, 0])
+            assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
+            assert server.get_timer() == 0.45
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [])
 
             # handshake continues normally
@@ -671,9 +656,9 @@ class QuicConnectionTest(TestCase):
             client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             client.receive_datagram(items[2][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), CLIENT_HANDSHAKE_DATAGRAM_SIZES)
-            self.assertGreaterEqual(client.get_timer(), 0.5)
-            self.assertLessEqual(client.get_timer(), 0.63)
+            assert datagram_sizes(items) == CLIENT_HANDSHAKE_DATAGRAM_SIZES
+            assert client.get_timer() >= 0.5
+            assert client.get_timer() <= 0.63
             self.assertSentPackets(client, [0, 1, 1])
             self.assertEvents(
                 client, [events.ProtocolNegotiated] + HANDSHAKE_COMPLETED_EVENTS
@@ -682,16 +667,17 @@ class QuicConnectionTest(TestCase):
             now += TICK
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [229])
-            self.assertAlmostEqual(server.get_timer(), 0.625)
+            assert datagram_sizes(items) == [229]
+            assert server.get_timer() == pytest.approx(0.625)
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS)
 
             now += TICK
             client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [32])
-            self.assertAlmostEqual(client.get_timer(), 60.4)  # idle timeout
+            assert datagram_sizes(items) == [32]
+            # idle timeout
+            assert client.get_timer() == pytest.approx(60.4)
             self.assertSentPackets(client, [0, 0, 1])
             self.assertEvents(client, [])
 
@@ -704,8 +690,8 @@ class QuicConnectionTest(TestCase):
             now = 0.0
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280, 1280])
-            self.assertEqual(client.get_timer(), 0.2)
+            assert datagram_sizes(items) == [1280, 1280]
+            assert client.get_timer() == 0.2
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -715,9 +701,9 @@ class QuicConnectionTest(TestCase):
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), SERVER_INITIAL_DATAGRAM_SIZES)
-            self.assertEqual(server.get_timer(), 0.25)
-            self.assertSentPackets(server, [2, 2, 0])
+            assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
+            assert server.get_timer() == 0.25
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # client only receives the first datagram and sends ACKS
@@ -725,8 +711,8 @@ class QuicConnectionTest(TestCase):
             client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
             client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280])
-            self.assertAlmostEqual(client.get_timer(), 0.325)
+            assert datagram_sizes(items) == [1280]
+            assert client.get_timer() == pytest.approx(0.325)
             self.assertSentPackets(client, [0, 1, 0])
             self.assertEvents(client, [events.ProtocolNegotiated])
 
@@ -734,8 +720,8 @@ class QuicConnectionTest(TestCase):
             now = client.get_timer()
             client.handle_timer(now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [45])
-            self.assertAlmostEqual(client.get_timer(), 0.975)
+            assert datagram_sizes(items) == [45]
+            assert client.get_timer() == pytest.approx(0.975)
             self.assertSentPackets(client, [0, 2, 0])
             self.assertEvents(client, [])
 
@@ -743,8 +729,8 @@ class QuicConnectionTest(TestCase):
             now += TICK
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [48])
-            self.assertAlmostEqual(server.get_timer(), 0.25)
+            assert datagram_sizes(items) == [48]
+            assert server.get_timer() == pytest.approx(0.25)
             self.assertSentPackets(server, [0, 3, 0])
             self.assertEvents(server, [])
 
@@ -752,8 +738,8 @@ class QuicConnectionTest(TestCase):
             now = server.get_timer()
             server.handle_timer(now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280, 890])
-            self.assertAlmostEqual(server.get_timer(), 0.65)
+            assert datagram_sizes(items) == [1280, 890]
+            assert server.get_timer() == pytest.approx(0.65)
             self.assertSentPackets(server, [0, 3, 0])
             self.assertEvents(server, [])
 
@@ -762,24 +748,25 @@ class QuicConnectionTest(TestCase):
             client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
             client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [313])
-            self.assertAlmostEqual(client.get_timer(), 0.95)
+            assert datagram_sizes(items) == [313]
+            assert client.get_timer() == pytest.approx(0.95)
             self.assertSentPackets(client, [0, 3, 1])
             self.assertEvents(client, HANDSHAKE_COMPLETED_EVENTS)
 
             now += TICK
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [229])
-            self.assertAlmostEqual(server.get_timer(), 0.675)
+            assert datagram_sizes(items) == [229]
+            assert server.get_timer() == pytest.approx(0.675)
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS)
 
             now += TICK
             client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [32])
-            self.assertAlmostEqual(client.get_timer(), 60.4)  # idle timeout
+            assert datagram_sizes(items) == [32]
+            # idle timeout
+            assert client.get_timer() == pytest.approx(60.4)
             self.assertSentPackets(client, [0, 0, 1])
             self.assertEvents(client, [])
 
@@ -792,17 +779,17 @@ class QuicConnectionTest(TestCase):
             now = 0.0
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [1280, 1280])
-            self.assertEqual(client.get_timer(), 0.2)
+            assert datagram_sizes(items) == [1280, 1280]
+            assert client.get_timer() == 0.2
 
             # server receives INITIAL, sends INITIAL + HANDSHAKE
             now += TICK
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), SERVER_INITIAL_DATAGRAM_SIZES)
-            self.assertEqual(server.get_timer(), 0.25)
-            self.assertSentPackets(server, [2, 2, 0])
+            assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
+            assert server.get_timer() == 0.25
+            self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
             # client receives INITIAL + HANDSHAKE
@@ -811,8 +798,8 @@ class QuicConnectionTest(TestCase):
             client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             client.receive_datagram(items[2][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), CLIENT_HANDSHAKE_DATAGRAM_SIZES)
-            self.assertAlmostEqual(client.get_timer(), 0.425)
+            assert datagram_sizes(items) == CLIENT_HANDSHAKE_DATAGRAM_SIZES
+            assert client.get_timer() == pytest.approx(0.425)
             self.assertSentPackets(client, [0, 1, 1])
             self.assertEvents(
                 client, [events.ProtocolNegotiated] + HANDSHAKE_COMPLETED_EVENTS
@@ -822,8 +809,8 @@ class QuicConnectionTest(TestCase):
             now += TICK
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [229])
-            self.assertAlmostEqual(server.get_timer(), 0.425)
+            assert datagram_sizes(items) == [229]
+            assert server.get_timer() == pytest.approx(0.425)
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS)
 
@@ -831,8 +818,8 @@ class QuicConnectionTest(TestCase):
             now = server.get_timer()
             server.handle_timer(now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [29])
-            self.assertAlmostEqual(server.get_timer(), 0.975)
+            assert datagram_sizes(items) == [29]
+            assert server.get_timer() == pytest.approx(0.975)
             self.assertSentPackets(server, [0, 0, 2])
             self.assertEvents(server, [])
 
@@ -840,20 +827,20 @@ class QuicConnectionTest(TestCase):
             now += TICK
             client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [32])
-            self.assertAlmostEqual(client.get_timer(), 0.425)
+            assert datagram_sizes(items) == [32]
+            assert client.get_timer() == pytest.approx(0.425)
             self.assertSentPackets(client, [0, 1, 2])
             self.assertEvents(client, [])
 
             # server receives ACK, retransmits HANDSHAKE_DONE
             now += TICK
-            self.assertFalse(server._handshake_done_pending)
+            assert not server._handshake_done_pending
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
-            self.assertTrue(server._handshake_done_pending)
+            assert server._handshake_done_pending
             items = server.datagrams_to_send(now=now)
-            self.assertFalse(server._handshake_done_pending)
-            self.assertEqual(datagram_sizes(items), [224])
-            self.assertAlmostEqual(server.get_timer(), 0.7625)
+            assert not server._handshake_done_pending
+            assert datagram_sizes(items) == [224]
+            assert server.get_timer() == pytest.approx(0.7625)
             self.assertSentPackets(server, [0, 0, 1])
             # FIXME: the server re-emits the ConnectionIdIssued events
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS[1:])
@@ -861,16 +848,17 @@ class QuicConnectionTest(TestCase):
             now += TICK
             client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [32])
-            self.assertAlmostEqual(client.get_timer(), 0.425)
+            assert datagram_sizes(items) == [32]
+            assert client.get_timer() == pytest.approx(0.425)
             self.assertSentPackets(client, [0, 0, 3])
             self.assertEvents(client, [])
 
             now += TICK
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
-            self.assertEqual(datagram_sizes(items), [])
-            self.assertAlmostEqual(server.get_timer(), 60.625)  # idle timeout
+            assert datagram_sizes(items) == []
+            # idle timeout
+            assert server.get_timer() == pytest.approx(60.625)
             self.assertSentPackets(server, [0, 0, 0])
             self.assertEvents(server, [])
 
@@ -888,10 +876,8 @@ class QuicConnectionTest(TestCase):
             client._initialize = patched_initialize
 
         with client_and_server(client_patch=patch) as (client, server):
-            self.assertEqual(
-                server._close_event.reason_phrase,
-                "No QUIC transport parameters received",
-            )
+            assert server._close_event.reason_phrase == \
+                "No QUIC transport parameters received"
 
     def test_connect_with_compatible_version_negotiation_1(self):
         """
@@ -906,8 +892,8 @@ class QuicConnectionTest(TestCase):
         ) as (client, server):
             # check handshake completed
             self.check_handshake(client=client, server=server)
-            self.assertEqual(client._version, QuicProtocolVersion.VERSION_1)
-            self.assertEqual(server._version, QuicProtocolVersion.VERSION_1)
+            assert client._version == QuicProtocolVersion.VERSION_1
+            assert server._version == QuicProtocolVersion.VERSION_1
 
     def test_connect_with_compatible_version_negotiation_1_to_2(self):
         """
@@ -926,8 +912,8 @@ class QuicConnectionTest(TestCase):
         ) as (client, server):
             # check handshake completed
             self.check_handshake(client=client, server=server)
-            self.assertEqual(client._version, QuicProtocolVersion.VERSION_2)
-            self.assertEqual(server._version, QuicProtocolVersion.VERSION_2)
+            assert client._version == QuicProtocolVersion.VERSION_2
+            assert server._version == QuicProtocolVersion.VERSION_2
 
     def test_connect_with_compatible_version_negotiation_2(self):
         """
@@ -942,8 +928,8 @@ class QuicConnectionTest(TestCase):
         ) as (client, server):
             # check handshake completed
             self.check_handshake(client=client, server=server)
-            self.assertEqual(client._version, QuicProtocolVersion.VERSION_2)
-            self.assertEqual(server._version, QuicProtocolVersion.VERSION_2)
+            assert client._version == QuicProtocolVersion.VERSION_2
+            assert server._version == QuicProtocolVersion.VERSION_2
 
     def test_connect_with_compatible_version_negotiation_2_to_1(self):
         """
@@ -962,8 +948,8 @@ class QuicConnectionTest(TestCase):
         ) as (client, server):
             # check handshake completed
             self.check_handshake(client=client, server=server)
-            self.assertEqual(client._version, QuicProtocolVersion.VERSION_1)
-            self.assertEqual(server._version, QuicProtocolVersion.VERSION_1)
+            assert client._version == QuicProtocolVersion.VERSION_1
+            assert server._version == QuicProtocolVersion.VERSION_1
 
     def test_connect_with_quantum_readiness(self):
         with client_and_server(client_options={"quantum_readiness_test": True}) as (
@@ -973,7 +959,7 @@ class QuicConnectionTest(TestCase):
             stream_id = client.get_next_available_stream_id()
             client.send_stream_data(stream_id, b"hello")
 
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert roundtrip(client, server) == (1, 1)
 
             received = None
             while True:
@@ -983,7 +969,7 @@ class QuicConnectionTest(TestCase):
                 elif event is None:
                     break
 
-            self.assertEqual(received, b"hello")
+            assert received == b"hello"
 
     def test_connect_with_0rtt(self):
         client_ticket = None
@@ -1008,14 +994,14 @@ class QuicConnectionTest(TestCase):
             stream_id = client.get_next_available_stream_id()
             client.send_stream_data(stream_id, b"hello")
 
-            self.assertEqual(roundtrip(client, server), (2, 2))
+            assert roundtrip(client, server) == (2, 2)
 
             event = server.next_event()
-            self.assertEqual(type(event), events.ProtocolNegotiated)
+            assert type(event) == events.ProtocolNegotiated
 
             event = server.next_event()
-            self.assertEqual(type(event), events.StreamDataReceived)
-            self.assertEqual(event.data, b"hello")
+            assert type(event) == events.StreamDataReceived
+            assert event.data == b"hello"
 
     def test_connect_with_0rtt_bad_max_early_data(self):
         client_ticket = None
@@ -1045,112 +1031,92 @@ class QuicConnectionTest(TestCase):
         ) as (client, server):
             # check handshake failed
             event = client.next_event()
-            self.assertIsNone(event)
+            assert event is None
 
     def test_change_connection_id(self):
         with client_and_server() as (client, server):
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [1, 2, 3, 4, 5, 6, 7]
-            )
+            assert sequence_numbers(client._peer_cid_available) == [1, 2, 3, 4, 5, 6, 7]
 
             # the client changes connection ID
             client.change_connection_id()
-            self.assertEqual(transfer(client, server), 1)
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [2, 3, 4, 5, 6, 7]
-            )
+            assert transfer(client, server) == 1
+            assert sequence_numbers(client._peer_cid_available) == [2, 3, 4, 5, 6, 7]
 
             # the server provides a new connection ID
-            self.assertEqual(transfer(server, client), 1)
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [2, 3, 4, 5, 6, 7, 8]
-            )
+            assert transfer(server, client) == 1
+            assert sequence_numbers(client._peer_cid_available) == [2, 3, 4, 5, 6, 7, 8]
 
     def test_change_connection_id_retransmit_new_connection_id(self):
         with client_and_server() as (client, server):
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [1, 2, 3, 4, 5, 6, 7]
-            )
+            assert sequence_numbers(client._peer_cid_available) == [1, 2, 3, 4, 5, 6, 7]
 
             # the client changes connection ID
             client.change_connection_id()
-            self.assertEqual(transfer(client, server), 1)
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [2, 3, 4, 5, 6, 7]
-            )
+            assert transfer(client, server) == 1
+            assert sequence_numbers(client._peer_cid_available) == [2, 3, 4, 5, 6, 7]
 
             # the server provides a new connection ID, NEW_CONNECTION_ID is lost
-            self.assertEqual(drop(server), 1)
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [2, 3, 4, 5, 6, 7]
-            )
+            assert drop(server) == 1
+            assert sequence_numbers(client._peer_cid_available) == [2, 3, 4, 5, 6, 7]
 
             # NEW_CONNECTION_ID is retransmitted
             server._on_new_connection_id_delivery(
                 QuicDeliveryState.LOST, server._host_cids[-1]
             )
-            self.assertEqual(transfer(server, client), 1)
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [2, 3, 4, 5, 6, 7, 8]
-            )
+            assert transfer(server, client) == 1
+            assert sequence_numbers(client._peer_cid_available) == [2, 3, 4, 5, 6, 7, 8]
 
     def test_change_connection_id_retransmit_retire_connection_id(self):
         with client_and_server() as (client, server):
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [1, 2, 3, 4, 5, 6, 7]
-            )
+            assert sequence_numbers(client._peer_cid_available) == [1, 2, 3, 4, 5, 6, 7]
 
             # the client changes connection ID, RETIRE_CONNECTION_ID is lost
             client.change_connection_id()
-            self.assertEqual(drop(client), 1)
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [2, 3, 4, 5, 6, 7]
-            )
+            assert drop(client) == 1
+            assert sequence_numbers(client._peer_cid_available) == [2, 3, 4, 5, 6, 7]
 
             # RETIRE_CONNECTION_ID is retransmitted
             client._on_retire_connection_id_delivery(QuicDeliveryState.LOST, 0)
-            self.assertEqual(transfer(client, server), 1)
+            assert transfer(client, server) == 1
 
             # the server provides a new connection ID
-            self.assertEqual(transfer(server, client), 1)
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [2, 3, 4, 5, 6, 7, 8]
-            )
+            assert transfer(server, client) == 1
+            assert sequence_numbers(client._peer_cid_available) == [2, 3, 4, 5, 6, 7, 8]
 
     def test_get_next_available_stream_id(self):
         with client_and_server() as (client, server):
             # client
             stream_id = client.get_next_available_stream_id()
-            self.assertEqual(stream_id, 0)
+            assert stream_id == 0
             client.send_stream_data(stream_id, b"hello")
 
             stream_id = client.get_next_available_stream_id()
-            self.assertEqual(stream_id, 4)
+            assert stream_id == 4
             client.send_stream_data(stream_id, b"hello")
 
             stream_id = client.get_next_available_stream_id(is_unidirectional=True)
-            self.assertEqual(stream_id, 2)
+            assert stream_id == 2
             client.send_stream_data(stream_id, b"hello")
 
             stream_id = client.get_next_available_stream_id(is_unidirectional=True)
-            self.assertEqual(stream_id, 6)
+            assert stream_id == 6
             client.send_stream_data(stream_id, b"hello")
 
             # server
             stream_id = server.get_next_available_stream_id()
-            self.assertEqual(stream_id, 1)
+            assert stream_id == 1
             server.send_stream_data(stream_id, b"hello")
 
             stream_id = server.get_next_available_stream_id()
-            self.assertEqual(stream_id, 5)
+            assert stream_id == 5
             server.send_stream_data(stream_id, b"hello")
 
             stream_id = server.get_next_available_stream_id(is_unidirectional=True)
-            self.assertEqual(stream_id, 3)
+            assert stream_id == 3
             server.send_stream_data(stream_id, b"hello")
 
             stream_id = server.get_next_available_stream_id(is_unidirectional=True)
-            self.assertEqual(stream_id, 7)
+            assert stream_id == 7
             server.send_stream_data(stream_id, b"hello")
 
     def test_datagram_frame(self):
@@ -1163,11 +1129,11 @@ class QuicConnectionTest(TestCase):
 
             # send datagram
             client.send_datagram_frame(b"hello")
-            self.assertEqual(transfer(client, server), 1)
+            assert transfer(client, server) == 1
 
             event = server.next_event()
-            self.assertEqual(type(event), events.DatagramFrameReceived)
-            self.assertEqual(event.data, b"hello")
+            assert type(event) == events.DatagramFrameReceived
+            assert event.data == b"hello"
 
     def test_datagram_frame_2(self):
         # payload which exactly fills an entire packet
@@ -1185,21 +1151,21 @@ class QuicConnectionTest(TestCase):
                 client.send_datagram_frame(payload)
 
             # client can only 11 datagrams are sent due to congestion control
-            self.assertEqual(transfer(client, server), 12)
+            assert transfer(client, server) == 12
             for i in range(11):
                 event = server.next_event()
-                self.assertEqual(type(event), events.DatagramFrameReceived)
-                self.assertEqual(event.data, payload)
+                assert type(event) == events.DatagramFrameReceived
+                assert event.data == payload
 
             # server sends ACK
-            self.assertEqual(transfer(server, client), 1)
+            assert transfer(server, client) == 1
 
             # client sends remaining datagrams
-            self.assertEqual(transfer(client, server), 8)
+            assert transfer(client, server) == 8
             for i in range(9):
                 event = server.next_event()
-                self.assertEqual(type(event), events.DatagramFrameReceived)
-                self.assertEqual(event.data, payload)
+                assert type(event) == events.DatagramFrameReceived
+                assert event.data == payload
 
     def test_decryption_error(self):
         with client_and_server() as (client, server):
@@ -1234,10 +1200,10 @@ class QuicConnectionTest(TestCase):
             server.handle_timer(timer_at)
 
             event = server.next_event()
-            self.assertEqual(type(event), events.ConnectionTerminated)
-            self.assertEqual(event.error_code, 326)
-            self.assertEqual(event.frame_type, QuicFrameType.CRYPTO)
-            self.assertEqual(event.reason_phrase, "No supported protocol version")
+            assert type(event) == events.ConnectionTerminated
+            assert event.error_code == 326
+            assert event.frame_type == QuicFrameType.CRYPTO
+            assert event.reason_phrase == "No supported protocol version"
 
     def test_receive_datagram_garbage(self):
         client = create_standalone_client(self)
@@ -1275,15 +1241,13 @@ class QuicConnectionTest(TestCase):
 
         for datagram in builder.flush()[0]:
             client.receive_datagram(datagram, SERVER_ADDR, now=time.time())
-        self.assertEqual(drop(client), 1)
-        self.assertEqual(
-            client._close_event,
+        assert drop(client) == 1
+        assert client._close_event == \
             events.ConnectionTerminated(
                 error_code=QuicErrorCode.PROTOCOL_VIOLATION,
                 frame_type=QuicFrameType.PADDING,
                 reason_phrase="Reserved bits must be zero",
-            ),
-        )
+            )
 
     def test_receive_datagram_wrong_version(self):
         client = create_standalone_client(self)
@@ -1304,7 +1268,7 @@ class QuicConnectionTest(TestCase):
 
         for datagram in builder.flush()[0]:
             client.receive_datagram(datagram, SERVER_ADDR, now=time.time())
-        self.assertEqual(drop(client), 0)
+        assert drop(client) == 0
 
         self.assertPacketDropped(client, "unsupported_version")
 
@@ -1322,7 +1286,7 @@ class QuicConnectionTest(TestCase):
             SERVER_ADDR,
             now=time.time(),
         )
-        self.assertEqual(drop(client), 2)
+        assert drop(client) == 2
 
     def test_receive_datagram_retry_wrong_destination_cid(self):
         client = create_standalone_client(self)
@@ -1338,7 +1302,7 @@ class QuicConnectionTest(TestCase):
             SERVER_ADDR,
             now=time.time(),
         )
-        self.assertEqual(drop(client), 0)
+        assert drop(client) == 0
         self.assertPacketDropped(client, "unknown_connection_id")
 
     def test_receive_datagram_retry_wrong_integrity_tag(self):
@@ -1356,7 +1320,7 @@ class QuicConnectionTest(TestCase):
             SERVER_ADDR,
             now=time.time(),
         )
-        self.assertEqual(drop(client), 0)
+        assert drop(client) == 0
 
     def test_handle_ack_frame_ecn(self):
         client = create_standalone_client(self)
@@ -1374,30 +1338,26 @@ class QuicConnectionTest(TestCase):
                 frame_type=QuicFrameType.ACK,
                 reason_phrase="illegal ACK frame",
             )
-            self.assertEqual(roundtrip(server, client), (1, 0))
+            assert roundtrip(server, client) == (1, 0)
 
-            self.assertEqual(
-                client._close_event,
+            assert client._close_event == \
                 events.ConnectionTerminated(
                     error_code=QuicErrorCode.PROTOCOL_VIOLATION,
                     frame_type=QuicFrameType.ACK,
                     reason_phrase="illegal ACK frame",
-                ),
-            )
+                )
 
     def test_handle_connection_close_frame_app(self):
         with client_and_server() as (client, server):
             server.close(error_code=QuicErrorCode.NO_ERROR, reason_phrase="goodbye")
-            self.assertEqual(roundtrip(server, client), (1, 0))
+            assert roundtrip(server, client) == (1, 0)
 
-            self.assertEqual(
-                client._close_event,
+            assert client._close_event == \
                 events.ConnectionTerminated(
                     error_code=QuicErrorCode.NO_ERROR,
                     frame_type=None,
                     reason_phrase="goodbye",
-                ),
-            )
+                )
 
     def test_handle_connection_close_frame_app_not_utf8(self):
         client = create_standalone_client(self)
@@ -1408,31 +1368,25 @@ class QuicConnectionTest(TestCase):
             Buffer(data=binascii.unhexlify("0008676f6f6462798200")),
         )
 
-        self.assertEqual(
-            client._close_event,
+        assert client._close_event == \
             events.ConnectionTerminated(
                 error_code=QuicErrorCode.NO_ERROR,
                 frame_type=None,
                 reason_phrase="",
-            ),
-        )
+            )
 
     def test_handle_crypto_frame_over_largest_offset(self):
         with client_and_server() as (client, server):
             # client receives offset + length > 2^62 - 1
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_crypto_frame(
                     client_receive_context(client),
                     QuicFrameType.CRYPTO,
                     Buffer(data=encode_uint_var(UINT_VAR_MAX) + encode_uint_var(1)),
                 )
-            self.assertEqual(
-                cm.exception.error_code, QuicErrorCode.FRAME_ENCODING_ERROR
-            )
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
-            self.assertEqual(
-                cm.exception.reason_phrase, "offset + length cannot exceed 2^62 - 1"
-            )
+            assert cm.value.error_code == QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.frame_type == QuicFrameType.CRYPTO
+            assert cm.value.reason_phrase == "offset + length cannot exceed 2^62 - 1"
 
     def test_handle_data_blocked_frame(self):
         with client_and_server() as (client, server):
@@ -1452,35 +1406,33 @@ class QuicConnectionTest(TestCase):
             Buffer(data=b"hello"),
         )
 
-        self.assertEqual(
-            client.next_event(), events.DatagramFrameReceived(data=b"hello")
-        )
+        assert client.next_event() == events.DatagramFrameReceived(data=b"hello")
 
     def test_handle_datagram_frame_not_allowed(self):
         client = create_standalone_client(self, max_datagram_frame_size=None)
 
-        with self.assertRaises(QuicConnectionError) as cm:
+        with pytest.raises(QuicConnectionError) as cm:
             client._handle_datagram_frame(
                 client_receive_context(client),
                 QuicFrameType.DATAGRAM,
                 Buffer(data=b"hello"),
             )
-        self.assertEqual(cm.exception.error_code, QuicErrorCode.PROTOCOL_VIOLATION)
-        self.assertEqual(cm.exception.frame_type, QuicFrameType.DATAGRAM)
-        self.assertEqual(cm.exception.reason_phrase, "Unexpected DATAGRAM frame")
+        assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
+        assert cm.value.frame_type == QuicFrameType.DATAGRAM
+        assert cm.value.reason_phrase == "Unexpected DATAGRAM frame"
 
     def test_handle_datagram_frame_too_large(self):
         client = create_standalone_client(self, max_datagram_frame_size=5)
 
-        with self.assertRaises(QuicConnectionError) as cm:
+        with pytest.raises(QuicConnectionError) as cm:
             client._handle_datagram_frame(
                 client_receive_context(client),
                 QuicFrameType.DATAGRAM,
                 Buffer(data=b"hello"),
             )
-        self.assertEqual(cm.exception.error_code, QuicErrorCode.PROTOCOL_VIOLATION)
-        self.assertEqual(cm.exception.frame_type, QuicFrameType.DATAGRAM)
-        self.assertEqual(cm.exception.reason_phrase, "Unexpected DATAGRAM frame")
+        assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
+        assert cm.value.frame_type == QuicFrameType.DATAGRAM
+        assert cm.value.reason_phrase == "Unexpected DATAGRAM frame"
 
     def test_handle_datagram_frame_with_length(self):
         client = create_standalone_client(self, max_datagram_frame_size=7)
@@ -1491,55 +1443,51 @@ class QuicConnectionTest(TestCase):
             Buffer(data=b"\x05hellojunk"),
         )
 
-        self.assertEqual(
-            client.next_event(), events.DatagramFrameReceived(data=b"hello")
-        )
+        assert client.next_event() == events.DatagramFrameReceived(data=b"hello")
 
     def test_handle_datagram_frame_with_length_not_allowed(self):
         client = create_standalone_client(self, max_datagram_frame_size=None)
 
-        with self.assertRaises(QuicConnectionError) as cm:
+        with pytest.raises(QuicConnectionError) as cm:
             client._handle_datagram_frame(
                 client_receive_context(client),
                 QuicFrameType.DATAGRAM_WITH_LENGTH,
                 Buffer(data=b"\x05hellojunk"),
             )
-        self.assertEqual(cm.exception.error_code, QuicErrorCode.PROTOCOL_VIOLATION)
-        self.assertEqual(cm.exception.frame_type, QuicFrameType.DATAGRAM_WITH_LENGTH)
-        self.assertEqual(cm.exception.reason_phrase, "Unexpected DATAGRAM frame")
+        assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
+        assert cm.value.frame_type == QuicFrameType.DATAGRAM_WITH_LENGTH
+        assert cm.value.reason_phrase == "Unexpected DATAGRAM frame"
 
     def test_handle_datagram_frame_with_length_too_large(self):
         client = create_standalone_client(self, max_datagram_frame_size=6)
 
-        with self.assertRaises(QuicConnectionError) as cm:
+        with pytest.raises(QuicConnectionError) as cm:
             client._handle_datagram_frame(
                 client_receive_context(client),
                 QuicFrameType.DATAGRAM_WITH_LENGTH,
                 Buffer(data=b"\x05hellojunk"),
             )
-        self.assertEqual(cm.exception.error_code, QuicErrorCode.PROTOCOL_VIOLATION)
-        self.assertEqual(cm.exception.frame_type, QuicFrameType.DATAGRAM_WITH_LENGTH)
-        self.assertEqual(cm.exception.reason_phrase, "Unexpected DATAGRAM frame")
+        assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
+        assert cm.value.frame_type == QuicFrameType.DATAGRAM_WITH_LENGTH
+        assert cm.value.reason_phrase == "Unexpected DATAGRAM frame"
 
     def test_handle_handshake_done_not_allowed(self):
         with client_and_server() as (client, server):
             # server receives HANDSHAKE_DONE frame
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 server._handle_handshake_done_frame(
                     client_receive_context(server),
                     QuicFrameType.HANDSHAKE_DONE,
                     Buffer(data=b""),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.PROTOCOL_VIOLATION)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.HANDSHAKE_DONE)
-            self.assertEqual(
-                cm.exception.reason_phrase,
-                "Clients must not send HANDSHAKE_DONE frames",
-            )
+            assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
+            assert cm.value.frame_type == QuicFrameType.HANDSHAKE_DONE
+            assert cm.value.reason_phrase == \
+                "Clients must not send HANDSHAKE_DONE frames"
 
     def test_handle_max_data_frame(self):
         with client_and_server() as (client, server):
-            self.assertEqual(client._remote_max_data, 1048576)
+            assert client._remote_max_data == 1048576
 
             # client receives MAX_DATA raising limit
             client._handle_max_data_frame(
@@ -1547,13 +1495,13 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.MAX_DATA,
                 Buffer(data=encode_uint_var(1048577)),
             )
-            self.assertEqual(client._remote_max_data, 1048577)
+            assert client._remote_max_data == 1048577
 
     def test_handle_max_stream_data_frame(self):
         with client_and_server() as (client, server):
             # client creates bidirectional stream 0
             stream = client._get_or_create_stream_for_send(stream_id=0)
-            self.assertEqual(stream.max_stream_data_remote, 1048576)
+            assert stream.max_stream_data_remote == 1048576
 
             # client receives MAX_STREAM_DATA raising limit
             client._handle_max_stream_data_frame(
@@ -1561,7 +1509,7 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.MAX_STREAM_DATA,
                 Buffer(data=b"\x00" + encode_uint_var(1048577)),
             )
-            self.assertEqual(stream.max_stream_data_remote, 1048577)
+            assert stream.max_stream_data_remote == 1048577
 
             # client receives MAX_STREAM_DATA lowering limit
             client._handle_max_stream_data_frame(
@@ -1569,7 +1517,7 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.MAX_STREAM_DATA,
                 Buffer(data=b"\x00" + encode_uint_var(1048575)),
             )
-            self.assertEqual(stream.max_stream_data_remote, 1048577)
+            assert stream.max_stream_data_remote == 1048577
 
     def test_handle_max_stream_data_frame_receive_only(self):
         with client_and_server() as (client, server):
@@ -1577,19 +1525,19 @@ class QuicConnectionTest(TestCase):
             server.send_stream_data(stream_id=3, data=b"hello")
 
             # client receives MAX_STREAM_DATA: 3, 1
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_max_stream_data_frame(
                     client_receive_context(client),
                     QuicFrameType.MAX_STREAM_DATA,
                     Buffer(data=b"\x03\x01"),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.STREAM_STATE_ERROR)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.MAX_STREAM_DATA)
-            self.assertEqual(cm.exception.reason_phrase, "Stream is receive-only")
+            assert cm.value.error_code == QuicErrorCode.STREAM_STATE_ERROR
+            assert cm.value.frame_type == QuicFrameType.MAX_STREAM_DATA
+            assert cm.value.reason_phrase == "Stream is receive-only"
 
     def test_handle_max_streams_bidi_frame(self):
         with client_and_server() as (client, server):
-            self.assertEqual(client._remote_max_streams_bidi, 128)
+            assert client._remote_max_streams_bidi == 128
 
             # client receives MAX_STREAMS_BIDI raising limit
             client._handle_max_streams_bidi_frame(
@@ -1597,7 +1545,7 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.MAX_STREAMS_BIDI,
                 Buffer(data=encode_uint_var(129)),
             )
-            self.assertEqual(client._remote_max_streams_bidi, 129)
+            assert client._remote_max_streams_bidi == 129
 
             # client receives MAX_STREAMS_BIDI lowering limit
             client._handle_max_streams_bidi_frame(
@@ -1605,27 +1553,23 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.MAX_STREAMS_BIDI,
                 Buffer(data=encode_uint_var(127)),
             )
-            self.assertEqual(client._remote_max_streams_bidi, 129)
+            assert client._remote_max_streams_bidi == 129
 
             # client receives invalid MAX_STREAMS_BIDI
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_max_streams_bidi_frame(
                     client_receive_context(client),
                     QuicFrameType.MAX_STREAMS_BIDI,
                     Buffer(data=encode_uint_var(STREAM_COUNT_MAX + 1)),
                 )
-            self.assertEqual(
-                cm.exception.error_code,
-                QuicErrorCode.FRAME_ENCODING_ERROR,
-            )
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.MAX_STREAMS_BIDI)
-            self.assertEqual(
-                cm.exception.reason_phrase, "Maximum Streams cannot exceed 2^60"
-            )
+            assert cm.value.error_code == \
+                QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.frame_type == QuicFrameType.MAX_STREAMS_BIDI
+            assert cm.value.reason_phrase == "Maximum Streams cannot exceed 2^60"
 
     def test_handle_max_streams_uni_frame(self):
         with client_and_server() as (client, server):
-            self.assertEqual(client._remote_max_streams_uni, 128)
+            assert client._remote_max_streams_uni == 128
 
             # client receives MAX_STREAMS_UNI raising limit
             client._handle_max_streams_uni_frame(
@@ -1633,7 +1577,7 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.MAX_STREAMS_UNI,
                 Buffer(data=encode_uint_var(129)),
             )
-            self.assertEqual(client._remote_max_streams_uni, 129)
+            assert client._remote_max_streams_uni == 129
 
             # client receives MAX_STREAMS_UNI raising limit
             client._handle_max_streams_uni_frame(
@@ -1641,23 +1585,19 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.MAX_STREAMS_UNI,
                 Buffer(data=encode_uint_var(127)),
             )
-            self.assertEqual(client._remote_max_streams_uni, 129)
+            assert client._remote_max_streams_uni == 129
 
             # client receives invalid MAX_STREAMS_UNI
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_max_streams_uni_frame(
                     client_receive_context(client),
                     QuicFrameType.MAX_STREAMS_UNI,
                     Buffer(data=encode_uint_var(STREAM_COUNT_MAX + 1)),
                 )
-            self.assertEqual(
-                cm.exception.error_code,
-                QuicErrorCode.FRAME_ENCODING_ERROR,
-            )
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.MAX_STREAMS_UNI)
-            self.assertEqual(
-                cm.exception.reason_phrase, "Maximum Streams cannot exceed 2^60"
-            )
+            assert cm.value.error_code == \
+                QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.frame_type == QuicFrameType.MAX_STREAMS_UNI
+            assert cm.value.reason_phrase == "Maximum Streams cannot exceed 2^60"
 
     def test_handle_new_connection_id_duplicate(self):
         with client_and_server() as (client, server):
@@ -1670,29 +1610,23 @@ class QuicConnectionTest(TestCase):
                 buf,
             )
 
-            self.assertEqual(client._peer_cid.sequence_number, 0)
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [1, 2, 3, 4, 5, 6, 7]
-            )
+            assert client._peer_cid.sequence_number == 0
+            assert sequence_numbers(client._peer_cid_available) == [1, 2, 3, 4, 5, 6, 7]
 
     def test_handle_new_connection_id_over_limit(self):
         with client_and_server() as (client, server):
             buf = new_connection_id(sequence_number=8)
 
             # client receives NEW_CONNECTION_ID
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_new_connection_id_frame(
                     client_receive_context(client),
                     QuicFrameType.NEW_CONNECTION_ID,
                     buf,
                 )
-            self.assertEqual(
-                cm.exception.error_code, QuicErrorCode.CONNECTION_ID_LIMIT_ERROR
-            )
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.NEW_CONNECTION_ID)
-            self.assertEqual(
-                cm.exception.reason_phrase, "Too many active connection IDs"
-            )
+            assert cm.value.error_code == QuicErrorCode.CONNECTION_ID_LIMIT_ERROR
+            assert cm.value.frame_type == QuicFrameType.NEW_CONNECTION_ID
+            assert cm.value.reason_phrase == "Too many active connection IDs"
 
     def test_handle_new_connection_id_with_retire_prior_to(self):
         with client_and_server() as (client, server):
@@ -1705,10 +1639,8 @@ class QuicConnectionTest(TestCase):
                 buf,
             )
 
-            self.assertEqual(client._peer_cid.sequence_number, 2)
-            self.assertEqual(
-                sequence_numbers(client._peer_cid_available), [3, 4, 5, 6, 7, 8]
-            )
+            assert client._peer_cid.sequence_number == 2
+            assert sequence_numbers(client._peer_cid_available) == [3, 4, 5, 6, 7, 8]
 
     def test_handle_new_connection_id_with_retire_prior_to_lower(self):
         with client_and_server() as (client, server):
@@ -1719,8 +1651,8 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.NEW_CONNECTION_ID,
                 buf,
             )
-            self.assertEqual(client._peer_cid.sequence_number, 80)
-            self.assertEqual(sequence_numbers(client._peer_cid_available), [])
+            assert client._peer_cid.sequence_number == 80
+            assert sequence_numbers(client._peer_cid_available) == []
             buf = new_connection_id(sequence_number=30, retire_prior_to=30)
             # client receives NEW_CONNECTION_ID
             client._handle_new_connection_id_frame(
@@ -1728,8 +1660,8 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.NEW_CONNECTION_ID,
                 buf,
             )
-            self.assertEqual(client._peer_cid.sequence_number, 80)
-            self.assertEqual(sequence_numbers(client._peer_cid_available), [])
+            assert client._peer_cid.sequence_number == 80
+            assert sequence_numbers(client._peer_cid_available) == []
 
     def test_handle_excessive_new_connection_id_retires(self):
         with client_and_server() as (client, server):
@@ -1746,25 +1678,21 @@ class QuicConnectionTest(TestCase):
                 )
             # So far, so good!  We should be at the (default) limit of 4*8 pending
             # retirements.
-            self.assertEqual(len(client._retire_connection_ids), 32)
+            assert len(client._retire_connection_ids) == 32
             # Now we will go one too many!
             sequence_number = 8 + 25
             buf = new_connection_id(
                 sequence_number=sequence_number, retire_prior_to=sequence_number
             )
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_new_connection_id_frame(
                     client_receive_context(client),
                     QuicFrameType.NEW_CONNECTION_ID,
                     buf,
                 )
-            self.assertEqual(
-                cm.exception.error_code, QuicErrorCode.CONNECTION_ID_LIMIT_ERROR
-            )
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.NEW_CONNECTION_ID)
-            self.assertEqual(
-                cm.exception.reason_phrase, "Too many pending retired connection IDs"
-            )
+            assert cm.value.error_code == QuicErrorCode.CONNECTION_ID_LIMIT_ERROR
+            assert cm.value.frame_type == QuicFrameType.NEW_CONNECTION_ID
+            assert cm.value.reason_phrase == "Too many pending retired connection IDs"
 
     def test_handle_new_connection_id_with_connection_id_invalid(self):
         with client_and_server() as (client, server):
@@ -1773,42 +1701,34 @@ class QuicConnectionTest(TestCase):
             )
 
             # client receives NEW_CONNECTION_ID
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_new_connection_id_frame(
                     client_receive_context(client),
                     QuicFrameType.NEW_CONNECTION_ID,
                     buf,
                 )
-            self.assertEqual(
-                cm.exception.error_code,
-                QuicErrorCode.FRAME_ENCODING_ERROR,
-            )
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.NEW_CONNECTION_ID)
-            self.assertEqual(
-                cm.exception.reason_phrase,
-                "Length must be greater than 0 and less than 20",
-            )
+            assert cm.value.error_code == \
+                QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.frame_type == QuicFrameType.NEW_CONNECTION_ID
+            assert cm.value.reason_phrase == \
+                "Length must be greater than 0 and less than 20"
 
     def test_handle_new_connection_id_with_retire_prior_to_invalid(self):
         with client_and_server() as (client, server):
             buf = new_connection_id(sequence_number=8, retire_prior_to=9)
 
             # client receives NEW_CONNECTION_ID
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_new_connection_id_frame(
                     client_receive_context(client),
                     QuicFrameType.NEW_CONNECTION_ID,
                     buf,
                 )
-            self.assertEqual(
-                cm.exception.error_code,
-                QuicErrorCode.PROTOCOL_VIOLATION,
-            )
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.NEW_CONNECTION_ID)
-            self.assertEqual(
-                cm.exception.reason_phrase,
-                "Retire Prior To is greater than Sequence Number",
-            )
+            assert cm.value.error_code == \
+                QuicErrorCode.PROTOCOL_VIOLATION
+            assert cm.value.frame_type == QuicFrameType.NEW_CONNECTION_ID
+            assert cm.value.reason_phrase == \
+                "Retire Prior To is greater than Sequence Number"
 
     def test_handle_new_token_frame(self):
         with client_and_server() as (client, server):
@@ -1822,17 +1742,15 @@ class QuicConnectionTest(TestCase):
     def test_handle_new_token_frame_from_client(self):
         with client_and_server() as (client, server):
             # server receives NEW_TOKEN
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 server._handle_new_token_frame(
                     client_receive_context(client),
                     QuicFrameType.NEW_TOKEN,
                     Buffer(data=binascii.unhexlify("080102030405060708")),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.PROTOCOL_VIOLATION)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.NEW_TOKEN)
-            self.assertEqual(
-                cm.exception.reason_phrase, "Clients must not send NEW_TOKEN frames"
-            )
+            assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
+            assert cm.value.frame_type == QuicFrameType.NEW_TOKEN
+            assert cm.value.reason_phrase == "Clients must not send NEW_TOKEN frames"
 
     def test_handle_path_challenge_frame(self):
         with client_and_server() as (client, server):
@@ -1842,11 +1760,11 @@ class QuicConnectionTest(TestCase):
                 server.receive_datagram(data, ("1.2.3.4", 2345), now=time.time())
 
             # check paths
-            self.assertEqual(len(server._network_paths), 2)
-            self.assertEqual(server._network_paths[0].addr, ("1.2.3.4", 2345))
-            self.assertFalse(server._network_paths[0].is_validated)
-            self.assertEqual(server._network_paths[1].addr, ("1.2.3.4", 1234))
-            self.assertTrue(server._network_paths[1].is_validated)
+            assert len(server._network_paths) == 2
+            assert server._network_paths[0].addr == ("1.2.3.4", 2345)
+            assert not server._network_paths[0].is_validated
+            assert server._network_paths[1].addr == ("1.2.3.4", 1234)
+            assert server._network_paths[1].is_validated
 
             # server sends PATH_CHALLENGE and receives PATH_RESPONSE
             for data, addr in server.datagrams_to_send(now=time.time()):
@@ -1855,10 +1773,10 @@ class QuicConnectionTest(TestCase):
                 server.receive_datagram(data, ("1.2.3.4", 2345), now=time.time())
 
             # check paths
-            self.assertEqual(server._network_paths[0].addr, ("1.2.3.4", 2345))
-            self.assertTrue(server._network_paths[0].is_validated)
-            self.assertEqual(server._network_paths[1].addr, ("1.2.3.4", 1234))
-            self.assertTrue(server._network_paths[1].is_validated)
+            assert server._network_paths[0].addr == ("1.2.3.4", 2345)
+            assert server._network_paths[0].is_validated
+            assert server._network_paths[1].addr == ("1.2.3.4", 1234)
+            assert server._network_paths[1].is_validated
 
     def test_handle_path_challenge_response_on_different_path(self):
         with client_and_server() as (client, server):
@@ -1867,11 +1785,11 @@ class QuicConnectionTest(TestCase):
             for data, addr in client.datagrams_to_send(now=time.time()):
                 server.receive_datagram(data, ("1.2.3.4", 2345), now=time.time())
             # check paths
-            self.assertEqual(len(server._network_paths), 2)
-            self.assertEqual(server._network_paths[0].addr, ("1.2.3.4", 2345))
-            self.assertFalse(server._network_paths[0].is_validated)
-            self.assertEqual(server._network_paths[1].addr, ("1.2.3.4", 1234))
-            self.assertTrue(server._network_paths[1].is_validated)
+            assert len(server._network_paths) == 2
+            assert server._network_paths[0].addr == ("1.2.3.4", 2345)
+            assert not server._network_paths[0].is_validated
+            assert server._network_paths[1].addr == ("1.2.3.4", 1234)
+            assert server._network_paths[1].is_validated
             # server sends PATH_CHALLENGE and receives PATH_RESPONSE on the 1234
             # path instead of the expected 2345 path.
             for data, addr in server.datagrams_to_send(now=time.time()):
@@ -1880,10 +1798,10 @@ class QuicConnectionTest(TestCase):
                 server.receive_datagram(data, ("1.2.3.4", 1234), now=time.time())
             # check paths; note that the order is backwards from the prior test
             # as receiving on 1234 promotes it to first in the list
-            self.assertEqual(server._network_paths[0].addr, ("1.2.3.4", 1234))
-            self.assertTrue(server._network_paths[0].is_validated)
-            self.assertEqual(server._network_paths[1].addr, ("1.2.3.4", 2345))
-            self.assertTrue(server._network_paths[1].is_validated)
+            assert server._network_paths[0].addr == ("1.2.3.4", 1234)
+            assert server._network_paths[0].is_validated
+            assert server._network_paths[1].addr == ("1.2.3.4", 2345)
+            assert server._network_paths[1].is_validated
 
     def test_local_path_challenges_are_bounded(self):
         with client_and_server() as (client, server):
@@ -1891,24 +1809,22 @@ class QuicConnectionTest(TestCase):
                 server._add_local_challenge(
                     int.to_bytes(i, 8, "big"), QuicNetworkPath(f"1.2.3.{i}")
                 )
-            self.assertEqual(len(server._local_challenges), MAX_LOCAL_CHALLENGES)
+            assert len(server._local_challenges) == MAX_LOCAL_CHALLENGES
             for i in range(2, MAX_LOCAL_CHALLENGES + 2):
-                self.assertEqual(
-                    server._local_challenges[int.to_bytes(i, 8, "big")].addr,
-                    f"1.2.3.{i}",
-                )
+                assert server._local_challenges[int.to_bytes(i, 8, "big")].addr == \
+                    f"1.2.3.{i}"
 
     def test_handle_path_response_frame_bad(self):
         with client_and_server() as (client, server):
             # server receives unsolicited PATH_RESPONSE
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 server._handle_path_response_frame(
                     client_receive_context(client),
                     QuicFrameType.PATH_RESPONSE,
                     Buffer(data=b"\x11\x22\x33\x44\x55\x66\x77\x88"),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.PROTOCOL_VIOLATION)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.PATH_RESPONSE)
+            assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
+            assert cm.value.frame_type == QuicFrameType.PATH_RESPONSE
 
     def test_handle_padding_frame(self):
         client = create_standalone_client(self)
@@ -1918,21 +1834,21 @@ class QuicConnectionTest(TestCase):
         client._handle_padding_frame(
             client_receive_context(client), QuicFrameType.PADDING, buf
         )
-        self.assertEqual(buf.tell(), 0)
+        assert buf.tell() == 0
 
         # padding until end
         buf = Buffer(data=bytes(10))
         client._handle_padding_frame(
             client_receive_context(client), QuicFrameType.PADDING, buf
         )
-        self.assertEqual(buf.tell(), 10)
+        assert buf.tell() == 10
 
         # padding then something else
         buf = Buffer(data=bytes(10) + b"\x01")
         client._handle_padding_frame(
             client_receive_context(client), QuicFrameType.PADDING, buf
         )
-        self.assertEqual(buf.tell(), 10)
+        assert buf.tell() == 10
 
     def test_handle_reset_stream_frame(self):
         stream_id = 0
@@ -1953,9 +1869,9 @@ class QuicConnectionTest(TestCase):
             )
 
             event = client.next_event()
-            self.assertEqual(type(event), events.StreamReset)
-            self.assertEqual(event.error_code, QuicErrorCode.INTERNAL_ERROR)
-            self.assertEqual(event.stream_id, stream_id)
+            assert type(event) == events.StreamReset
+            assert event.error_code == QuicErrorCode.INTERNAL_ERROR
+            assert event.stream_id == stream_id
 
     def test_handle_reset_stream_frame_final_size_error(self):
         stream_id = 0
@@ -1976,12 +1892,12 @@ class QuicConnectionTest(TestCase):
             )
 
             event = client.next_event()
-            self.assertEqual(type(event), events.StreamReset)
-            self.assertEqual(event.error_code, QuicErrorCode.NO_ERROR)
-            self.assertEqual(event.stream_id, stream_id)
+            assert type(event) == events.StreamReset
+            assert event.error_code == QuicErrorCode.NO_ERROR
+            assert event.stream_id == stream_id
 
             # client receives RESET_STREAM at offset 5
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_reset_stream_frame(
                     client_receive_context(client),
                     QuicFrameType.RESET_STREAM,
@@ -1991,9 +1907,9 @@ class QuicConnectionTest(TestCase):
                         + encode_uint_var(5)
                     ),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.FINAL_SIZE_ERROR)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.RESET_STREAM)
-            self.assertEqual(cm.exception.reason_phrase, "Cannot change final size")
+            assert cm.value.error_code == QuicErrorCode.FINAL_SIZE_ERROR
+            assert cm.value.frame_type == QuicFrameType.RESET_STREAM
+            assert cm.value.reason_phrase == "Cannot change final size"
 
     def test_handle_reset_stream_frame_over_max_data(self):
         stream_id = 0
@@ -2006,7 +1922,7 @@ class QuicConnectionTest(TestCase):
             client._local_max_data.used = client._local_max_data.value
 
             # client receives RESET_STREAM frame
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_reset_stream_frame(
                     client_receive_context(client),
                     QuicFrameType.RESET_STREAM,
@@ -2016,9 +1932,9 @@ class QuicConnectionTest(TestCase):
                         + encode_uint_var(1)
                     ),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.FLOW_CONTROL_ERROR)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.RESET_STREAM)
-            self.assertEqual(cm.exception.reason_phrase, "Over connection data limit")
+            assert cm.value.error_code == QuicErrorCode.FLOW_CONTROL_ERROR
+            assert cm.value.frame_type == QuicFrameType.RESET_STREAM
+            assert cm.value.reason_phrase == "Over connection data limit"
 
     def test_handle_reset_stream_frame_over_max_stream_data(self):
         stream_id = 0
@@ -2028,7 +1944,7 @@ class QuicConnectionTest(TestCase):
             consume_events(client)
 
             # client receives STREAM frame
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_reset_stream_frame(
                     client_receive_context(client),
                     QuicFrameType.RESET_STREAM,
@@ -2038,9 +1954,9 @@ class QuicConnectionTest(TestCase):
                         + encode_uint_var(client._local_max_stream_data_bidi_local + 1)
                     ),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.FLOW_CONTROL_ERROR)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.RESET_STREAM)
-            self.assertEqual(cm.exception.reason_phrase, "Over stream data limit")
+            assert cm.value.error_code == QuicErrorCode.FLOW_CONTROL_ERROR
+            assert cm.value.frame_type == QuicFrameType.RESET_STREAM
+            assert cm.value.reason_phrase == "Over stream data limit"
 
     def test_handle_reset_stream_frame_send_only(self):
         with client_and_server() as (client, server):
@@ -2048,15 +1964,15 @@ class QuicConnectionTest(TestCase):
             client.send_stream_data(stream_id=2, data=b"hello")
 
             # client receives RESET_STREAM
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_reset_stream_frame(
                     client_receive_context(client),
                     QuicFrameType.RESET_STREAM,
                     Buffer(data=binascii.unhexlify("021100")),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.STREAM_STATE_ERROR)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.RESET_STREAM)
-            self.assertEqual(cm.exception.reason_phrase, "Stream is send-only")
+            assert cm.value.error_code == QuicErrorCode.STREAM_STATE_ERROR
+            assert cm.value.frame_type == QuicFrameType.RESET_STREAM
+            assert cm.value.reason_phrase == "Stream is send-only"
 
     def test_handle_reset_stream_frame_twice(self):
         stream_id = 3
@@ -2076,24 +1992,22 @@ class QuicConnectionTest(TestCase):
             client._payload_received(client_receive_context(client), reset_stream_data)
 
             event = client.next_event()
-            self.assertEqual(type(event), events.StreamReset)
-            self.assertEqual(event.error_code, QuicErrorCode.INTERNAL_ERROR)
-            self.assertEqual(event.stream_id, stream_id)
+            assert type(event) == events.StreamReset
+            assert event.error_code == QuicErrorCode.INTERNAL_ERROR
+            assert event.stream_id == stream_id
 
             # stream gets discarded
-            self.assertEqual(drop(client), 0)
+            assert drop(client) == 0
 
             # client receives RESET_STREAM again
             client._payload_received(client_receive_context(client), reset_stream_data)
 
             event = client.next_event()
-            self.assertIsNone(event)
+            assert event is None
 
     def test_handle_retire_connection_id_frame(self):
         with client_and_server() as (client, server):
-            self.assertEqual(
-                sequence_numbers(client._host_cids), [0, 1, 2, 3, 4, 5, 6, 7]
-            )
+            assert sequence_numbers(client._host_cids) == [0, 1, 2, 3, 4, 5, 6, 7]
 
             # client receives RETIRE_CONNECTION_ID
             client._handle_retire_connection_id_frame(
@@ -2101,57 +2015,39 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.RETIRE_CONNECTION_ID,
                 Buffer(data=b"\x02"),
             )
-            self.assertEqual(
-                sequence_numbers(client._host_cids), [0, 1, 3, 4, 5, 6, 7, 8]
-            )
+            assert sequence_numbers(client._host_cids) == [0, 1, 3, 4, 5, 6, 7, 8]
 
     def test_handle_retire_connection_id_frame_current_cid(self):
         with client_and_server() as (client, server):
-            self.assertEqual(
-                sequence_numbers(client._host_cids), [0, 1, 2, 3, 4, 5, 6, 7]
-            )
+            assert sequence_numbers(client._host_cids) == [0, 1, 2, 3, 4, 5, 6, 7]
 
             # client receives RETIRE_CONNECTION_ID for the current CID
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_retire_connection_id_frame(
                     client_receive_context(client),
                     QuicFrameType.RETIRE_CONNECTION_ID,
                     Buffer(data=b"\x00"),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.PROTOCOL_VIOLATION)
-            self.assertEqual(
-                cm.exception.frame_type, QuicFrameType.RETIRE_CONNECTION_ID
-            )
-            self.assertEqual(
-                cm.exception.reason_phrase, "Cannot retire current connection ID"
-            )
-            self.assertEqual(
-                sequence_numbers(client._host_cids), [0, 1, 2, 3, 4, 5, 6, 7]
-            )
+            assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
+            assert cm.value.frame_type == QuicFrameType.RETIRE_CONNECTION_ID
+            assert cm.value.reason_phrase == "Cannot retire current connection ID"
+            assert sequence_numbers(client._host_cids) == [0, 1, 2, 3, 4, 5, 6, 7]
 
     def test_handle_retire_connection_id_frame_invalid_sequence_number(self):
         with client_and_server() as (client, server):
-            self.assertEqual(
-                sequence_numbers(client._host_cids), [0, 1, 2, 3, 4, 5, 6, 7]
-            )
+            assert sequence_numbers(client._host_cids) == [0, 1, 2, 3, 4, 5, 6, 7]
 
             # client receives RETIRE_CONNECTION_ID
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_retire_connection_id_frame(
                     client_receive_context(client),
                     QuicFrameType.RETIRE_CONNECTION_ID,
                     Buffer(data=b"\x08"),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.PROTOCOL_VIOLATION)
-            self.assertEqual(
-                cm.exception.frame_type, QuicFrameType.RETIRE_CONNECTION_ID
-            )
-            self.assertEqual(
-                cm.exception.reason_phrase, "Cannot retire unknown connection ID"
-            )
-            self.assertEqual(
-                sequence_numbers(client._host_cids), [0, 1, 2, 3, 4, 5, 6, 7]
-            )
+            assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
+            assert cm.value.frame_type == QuicFrameType.RETIRE_CONNECTION_ID
+            assert cm.value.reason_phrase == "Cannot retire unknown connection ID"
+            assert sequence_numbers(client._host_cids) == [0, 1, 2, 3, 4, 5, 6, 7]
 
     def test_handle_stop_sending_frame(self):
         with client_and_server() as (client, server):
@@ -2166,17 +2062,17 @@ class QuicConnectionTest(TestCase):
             )
 
             # check events
-            self.assertEqual(type(client.next_event()), events.ProtocolNegotiated)
-            self.assertEqual(type(client.next_event()), events.HandshakeCompleted)
+            assert type(client.next_event()) == events.ProtocolNegotiated
+            assert type(client.next_event()) == events.HandshakeCompleted
             for i in range(7):
-                self.assertEqual(type(client.next_event()), events.ConnectionIdIssued)
+                assert type(client.next_event()) == events.ConnectionIdIssued
 
             event = client.next_event()
-            self.assertEqual(type(event), events.StopSendingReceived)
-            self.assertEqual(event.stream_id, 0)
-            self.assertEqual(event.error_code, 0x11)
+            assert type(event) == events.StopSendingReceived
+            assert event.stream_id == 0
+            assert event.error_code == 0x11
 
-            self.assertIsNone(client.next_event())
+            assert client.next_event() is None
 
     def test_handle_stop_sending_frame_receive_only(self):
         with client_and_server() as (client, server):
@@ -2184,15 +2080,15 @@ class QuicConnectionTest(TestCase):
             server.send_stream_data(stream_id=3, data=b"hello")
 
             # client receives STOP_SENDING
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_stop_sending_frame(
                     client_receive_context(client),
                     QuicFrameType.STOP_SENDING,
                     Buffer(data=b"\x03\x11"),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.STREAM_STATE_ERROR)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.STOP_SENDING)
-            self.assertEqual(cm.exception.reason_phrase, "Stream is receive-only")
+            assert cm.value.error_code == QuicErrorCode.STREAM_STATE_ERROR
+            assert cm.value.frame_type == QuicFrameType.STOP_SENDING
+            assert cm.value.reason_phrase == "Stream is receive-only"
 
     def test_handle_stream_frame_final_size_error(self):
         with client_and_server() as (client, server):
@@ -2211,7 +2107,7 @@ class QuicConnectionTest(TestCase):
             )
 
             # client receives FIN at offset 5
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_stream_frame(
                     client_receive_context(client),
                     frame_type,
@@ -2221,16 +2117,16 @@ class QuicConnectionTest(TestCase):
                         + encode_uint_var(0)
                     ),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.FINAL_SIZE_ERROR)
-            self.assertEqual(cm.exception.frame_type, frame_type)
-            self.assertEqual(cm.exception.reason_phrase, "Cannot change final size")
+            assert cm.value.error_code == QuicErrorCode.FINAL_SIZE_ERROR
+            assert cm.value.frame_type == frame_type
+            assert cm.value.reason_phrase == "Cannot change final size"
 
     def test_handle_stream_frame_over_largest_offset(self):
         with client_and_server() as (client, server):
             # client receives offset + length > 2^62 - 1
             frame_type = QuicFrameType.STREAM_BASE | 6
             stream_id = 1
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_stream_frame(
                     client_receive_context(client),
                     frame_type,
@@ -2240,13 +2136,9 @@ class QuicConnectionTest(TestCase):
                         + encode_uint_var(1)
                     ),
                 )
-            self.assertEqual(
-                cm.exception.error_code, QuicErrorCode.FRAME_ENCODING_ERROR
-            )
-            self.assertEqual(cm.exception.frame_type, frame_type)
-            self.assertEqual(
-                cm.exception.reason_phrase, "offset + length cannot exceed 2^62 - 1"
-            )
+            assert cm.value.error_code == QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.frame_type == frame_type
+            assert cm.value.reason_phrase == "offset + length cannot exceed 2^62 - 1"
 
     def test_handle_stream_frame_over_max_data(self):
         with client_and_server() as (client, server):
@@ -2256,22 +2148,22 @@ class QuicConnectionTest(TestCase):
             # client receives STREAM frame
             frame_type = QuicFrameType.STREAM_BASE | 4
             stream_id = 1
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_stream_frame(
                     client_receive_context(client),
                     frame_type,
                     Buffer(data=encode_uint_var(stream_id) + encode_uint_var(1)),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.FLOW_CONTROL_ERROR)
-            self.assertEqual(cm.exception.frame_type, frame_type)
-            self.assertEqual(cm.exception.reason_phrase, "Over connection data limit")
+            assert cm.value.error_code == QuicErrorCode.FLOW_CONTROL_ERROR
+            assert cm.value.frame_type == frame_type
+            assert cm.value.reason_phrase == "Over connection data limit"
 
     def test_handle_stream_frame_over_max_stream_data(self):
         with client_and_server() as (client, server):
             # client receives STREAM frame
             frame_type = QuicFrameType.STREAM_BASE | 4
             stream_id = 1
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_stream_frame(
                     client_receive_context(client),
                     frame_type,
@@ -2280,14 +2172,14 @@ class QuicConnectionTest(TestCase):
                         + encode_uint_var(client._local_max_stream_data_bidi_remote + 1)
                     ),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.FLOW_CONTROL_ERROR)
-            self.assertEqual(cm.exception.frame_type, frame_type)
-            self.assertEqual(cm.exception.reason_phrase, "Over stream data limit")
+            assert cm.value.error_code == QuicErrorCode.FLOW_CONTROL_ERROR
+            assert cm.value.frame_type == frame_type
+            assert cm.value.reason_phrase == "Over stream data limit"
 
     def test_handle_stream_frame_over_max_streams(self):
         with client_and_server() as (client, server):
             # client receives STREAM frame
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_stream_frame(
                     client_receive_context(client),
                     QuicFrameType.STREAM_BASE,
@@ -2295,9 +2187,9 @@ class QuicConnectionTest(TestCase):
                         data=encode_uint_var(client._local_max_stream_data_uni * 4 + 3)
                     ),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.STREAM_LIMIT_ERROR)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.STREAM_BASE)
-            self.assertEqual(cm.exception.reason_phrase, "Too many streams open")
+            assert cm.value.error_code == QuicErrorCode.STREAM_LIMIT_ERROR
+            assert cm.value.frame_type == QuicFrameType.STREAM_BASE
+            assert cm.value.reason_phrase == "Too many streams open"
 
     def test_handle_stream_frame_send_only(self):
         with client_and_server() as (client, server):
@@ -2305,28 +2197,28 @@ class QuicConnectionTest(TestCase):
             client.send_stream_data(stream_id=2, data=b"hello")
 
             # client receives STREAM frame
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_stream_frame(
                     client_receive_context(client),
                     QuicFrameType.STREAM_BASE,
                     Buffer(data=b"\x02"),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.STREAM_STATE_ERROR)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.STREAM_BASE)
-            self.assertEqual(cm.exception.reason_phrase, "Stream is send-only")
+            assert cm.value.error_code == QuicErrorCode.STREAM_STATE_ERROR
+            assert cm.value.frame_type == QuicFrameType.STREAM_BASE
+            assert cm.value.reason_phrase == "Stream is send-only"
 
     def test_handle_stream_frame_wrong_initiator(self):
         with client_and_server() as (client, server):
             # client receives STREAM frame
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_stream_frame(
                     client_receive_context(client),
                     QuicFrameType.STREAM_BASE,
                     Buffer(data=b"\x00"),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.STREAM_STATE_ERROR)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.STREAM_BASE)
-            self.assertEqual(cm.exception.reason_phrase, "Wrong stream initiator")
+            assert cm.value.error_code == QuicErrorCode.STREAM_STATE_ERROR
+            assert cm.value.frame_type == QuicFrameType.STREAM_BASE
+            assert cm.value.reason_phrase == "Wrong stream initiator"
 
     def test_handle_stream_data_blocked_frame(self):
         with client_and_server() as (client, server):
@@ -2346,15 +2238,15 @@ class QuicConnectionTest(TestCase):
             client.send_stream_data(stream_id=2, data=b"hello")
 
             # client receives STREAM_DATA_BLOCKED
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_stream_data_blocked_frame(
                     client_receive_context(client),
                     QuicFrameType.STREAM_DATA_BLOCKED,
                     Buffer(data=b"\x02\x01"),
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.STREAM_STATE_ERROR)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.STREAM_DATA_BLOCKED)
-            self.assertEqual(cm.exception.reason_phrase, "Stream is send-only")
+            assert cm.value.error_code == QuicErrorCode.STREAM_STATE_ERROR
+            assert cm.value.frame_type == QuicFrameType.STREAM_DATA_BLOCKED
+            assert cm.value.reason_phrase == "Stream is send-only"
 
     def test_handle_streams_blocked_uni_frame(self):
         with client_and_server() as (client, server):
@@ -2366,20 +2258,16 @@ class QuicConnectionTest(TestCase):
             )
 
             # client receives invalid STREAMS_BLOCKED_UNI
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._handle_streams_blocked_frame(
                     client_receive_context(client),
                     QuicFrameType.STREAMS_BLOCKED_UNI,
                     Buffer(data=encode_uint_var(STREAM_COUNT_MAX + 1)),
                 )
-            self.assertEqual(
-                cm.exception.error_code,
-                QuicErrorCode.FRAME_ENCODING_ERROR,
-            )
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.STREAMS_BLOCKED_UNI)
-            self.assertEqual(
-                cm.exception.reason_phrase, "Maximum Streams cannot exceed 2^60"
-            )
+            assert cm.value.error_code == \
+                QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.frame_type == QuicFrameType.STREAMS_BLOCKED_UNI
+            assert cm.value.reason_phrase == "Maximum Streams cannot exceed 2^60"
 
     def test_parse_transport_parameters(self):
         client = create_standalone_client(self)
@@ -2394,15 +2282,11 @@ class QuicConnectionTest(TestCase):
     def test_parse_transport_parameters_malformed(self):
         client = create_standalone_client(self)
 
-        with self.assertRaises(QuicConnectionError) as cm:
+        with pytest.raises(QuicConnectionError) as cm:
             client._parse_transport_parameters(b"0")
-        self.assertEqual(
-            cm.exception.error_code, QuicErrorCode.TRANSPORT_PARAMETER_ERROR
-        )
-        self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
-        self.assertEqual(
-            cm.exception.reason_phrase, "Could not parse QUIC transport parameters"
-        )
+        assert cm.value.error_code == QuicErrorCode.TRANSPORT_PARAMETER_ERROR
+        assert cm.value.frame_type == QuicFrameType.CRYPTO
+        assert cm.value.reason_phrase == "Could not parse QUIC transport parameters"
 
     def test_parse_transport_parameters_with_bad_ack_delay_exponent(self):
         client = create_standalone_client(self)
@@ -2413,13 +2297,11 @@ class QuicConnectionTest(TestCase):
                 original_destination_connection_id=client.original_destination_connection_id,
             )
         )
-        with self.assertRaises(QuicConnectionError) as cm:
+        with pytest.raises(QuicConnectionError) as cm:
             client._parse_transport_parameters(data)
-        self.assertEqual(
-            cm.exception.error_code, QuicErrorCode.TRANSPORT_PARAMETER_ERROR
-        )
-        self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
-        self.assertEqual(cm.exception.reason_phrase, "ack_delay_exponent must be <= 20")
+        assert cm.value.error_code == QuicErrorCode.TRANSPORT_PARAMETER_ERROR
+        assert cm.value.frame_type == QuicFrameType.CRYPTO
+        assert cm.value.reason_phrase == "ack_delay_exponent must be <= 20"
 
     def test_parse_transport_parameters_with_bad_active_connection_id_limit(self):
         client = create_standalone_client(self)
@@ -2431,16 +2313,12 @@ class QuicConnectionTest(TestCase):
                     original_destination_connection_id=client.original_destination_connection_id,
                 )
             )
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._parse_transport_parameters(data)
-            self.assertEqual(
-                cm.exception.error_code, QuicErrorCode.TRANSPORT_PARAMETER_ERROR
-            )
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
-            self.assertEqual(
-                cm.exception.reason_phrase,
-                "active_connection_id_limit must be no less than 2",
-            )
+            assert cm.value.error_code == QuicErrorCode.TRANSPORT_PARAMETER_ERROR
+            assert cm.value.frame_type == QuicFrameType.CRYPTO
+            assert cm.value.reason_phrase == \
+                "active_connection_id_limit must be no less than 2"
 
     def test_parse_transport_parameters_with_bad_max_ack_delay(self):
         client = create_standalone_client(self)
@@ -2451,13 +2329,11 @@ class QuicConnectionTest(TestCase):
                 original_destination_connection_id=client.original_destination_connection_id,
             )
         )
-        with self.assertRaises(QuicConnectionError) as cm:
+        with pytest.raises(QuicConnectionError) as cm:
             client._parse_transport_parameters(data)
-        self.assertEqual(
-            cm.exception.error_code, QuicErrorCode.TRANSPORT_PARAMETER_ERROR
-        )
-        self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
-        self.assertEqual(cm.exception.reason_phrase, "max_ack_delay must be < 2^14")
+        assert cm.value.error_code == QuicErrorCode.TRANSPORT_PARAMETER_ERROR
+        assert cm.value.frame_type == QuicFrameType.CRYPTO
+        assert cm.value.reason_phrase == "max_ack_delay must be < 2^14"
 
     def test_parse_transport_parameters_with_bad_max_udp_payload_size(self):
         client = create_standalone_client(self)
@@ -2468,15 +2344,11 @@ class QuicConnectionTest(TestCase):
                 original_destination_connection_id=client.original_destination_connection_id,
             )
         )
-        with self.assertRaises(QuicConnectionError) as cm:
+        with pytest.raises(QuicConnectionError) as cm:
             client._parse_transport_parameters(data)
-        self.assertEqual(
-            cm.exception.error_code, QuicErrorCode.TRANSPORT_PARAMETER_ERROR
-        )
-        self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
-        self.assertEqual(
-            cm.exception.reason_phrase, "max_udp_payload_size must be >= 1200"
-        )
+        assert cm.value.error_code == QuicErrorCode.TRANSPORT_PARAMETER_ERROR
+        assert cm.value.frame_type == QuicFrameType.CRYPTO
+        assert cm.value.reason_phrase == "max_udp_payload_size must be >= 1200"
 
     def test_parse_transport_parameters_with_bad_initial_source_connection_id(self):
         client = create_standalone_client(self)
@@ -2488,15 +2360,11 @@ class QuicConnectionTest(TestCase):
                 original_destination_connection_id=client.original_destination_connection_id,
             )
         )
-        with self.assertRaises(QuicConnectionError) as cm:
+        with pytest.raises(QuicConnectionError) as cm:
             client._parse_transport_parameters(data)
-        self.assertEqual(
-            cm.exception.error_code, QuicErrorCode.TRANSPORT_PARAMETER_ERROR
-        )
-        self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
-        self.assertEqual(
-            cm.exception.reason_phrase, "initial_source_connection_id does not match"
-        )
+        assert cm.value.error_code == QuicErrorCode.TRANSPORT_PARAMETER_ERROR
+        assert cm.value.frame_type == QuicFrameType.CRYPTO
+        assert cm.value.reason_phrase == "initial_source_connection_id does not match"
 
     def test_parse_transport_parameters_with_bad_version_information_1(self):
         server = create_standalone_server(self)
@@ -2508,17 +2376,13 @@ class QuicConnectionTest(TestCase):
                 )
             )
         )
-        with self.assertRaises(QuicConnectionError) as cm:
+        with pytest.raises(QuicConnectionError) as cm:
             server._parse_transport_parameters(data)
-        self.assertEqual(
-            cm.exception.error_code, QuicErrorCode.TRANSPORT_PARAMETER_ERROR
-        )
-        self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
-        self.assertEqual(
-            cm.exception.reason_phrase,
-            "version_information's chosen_version is not included in "
-            "available_versions",
-        )
+        assert cm.value.error_code == QuicErrorCode.TRANSPORT_PARAMETER_ERROR
+        assert cm.value.frame_type == QuicFrameType.CRYPTO
+        assert cm.value.reason_phrase == \
+            "version_information's chosen_version is not included in " \
+            "available_versions"
 
     def test_parse_transport_parameters_with_bad_version_information_2(self):
         server = create_standalone_server(self)
@@ -2534,25 +2398,21 @@ class QuicConnectionTest(TestCase):
             )
         )
         server._crypto_packet_version = QuicProtocolVersion.VERSION_2
-        with self.assertRaises(QuicConnectionError) as cm:
+        with pytest.raises(QuicConnectionError) as cm:
             server._parse_transport_parameters(data)
-        self.assertEqual(
-            cm.exception.error_code, QuicErrorCode.VERSION_NEGOTIATION_ERROR
-        )
-        self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
-        self.assertEqual(
-            cm.exception.reason_phrase,
-            "version_information's chosen_version does not match the version in use",
-        )
+        assert cm.value.error_code == QuicErrorCode.VERSION_NEGOTIATION_ERROR
+        assert cm.value.frame_type == QuicFrameType.CRYPTO
+        assert cm.value.reason_phrase == \
+            "version_information's chosen_version does not match the version in use"
 
     def test_payload_received_empty(self):
         with client_and_server() as (client, server):
             # client receives empty payload
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._payload_received(client_receive_context(client), b"")
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.PROTOCOL_VIOLATION)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.PADDING)
-            self.assertEqual(cm.exception.reason_phrase, "Packet contains no frames")
+            assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
+            assert cm.value.frame_type == QuicFrameType.PADDING
+            assert cm.value.reason_phrase == "Packet contains no frames"
 
     def test_payload_received_padding_only(self):
         with client_and_server() as (client, server):
@@ -2560,166 +2420,162 @@ class QuicConnectionTest(TestCase):
             is_ack_eliciting, is_probing = client._payload_received(
                 client_receive_context(client), b"\x00" * 1200
             )
-            self.assertFalse(is_ack_eliciting)
-            self.assertTrue(is_probing)
+            assert not is_ack_eliciting
+            assert is_probing
 
     def test_payload_received_malformed_frame_type(self):
         with client_and_server() as (client, server):
             # client receives a malformed frame type
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._payload_received(client_receive_context(client), b"\xff")
-            self.assertEqual(
-                cm.exception.error_code, QuicErrorCode.FRAME_ENCODING_ERROR
-            )
-            self.assertEqual(cm.exception.frame_type, None)
-            self.assertEqual(cm.exception.reason_phrase, "Malformed frame type")
+            assert cm.value.error_code == QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.frame_type == None
+            assert cm.value.reason_phrase == "Malformed frame type"
 
     def test_payload_received_unknown_frame(self):
         with client_and_server() as (client, server):
             # client receives unknown frame
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._payload_received(client_receive_context(client), b"\x1f")
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.FRAME_ENCODING_ERROR)
-            self.assertEqual(cm.exception.frame_type, 0x1F)
-            self.assertEqual(cm.exception.reason_phrase, "Unknown frame type")
+            assert cm.value.error_code == QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.frame_type == 0x1F
+            assert cm.value.reason_phrase == "Unknown frame type"
 
     def test_payload_received_unexpected_frame(self):
         with client_and_server() as (client, server):
             # client receives CRYPTO frame in 0-RTT
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._payload_received(
                     client_receive_context(client, epoch=tls.Epoch.ZERO_RTT), b"\x06"
                 )
-            self.assertEqual(cm.exception.error_code, QuicErrorCode.PROTOCOL_VIOLATION)
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
-            self.assertEqual(cm.exception.reason_phrase, "Unexpected frame type")
+            assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
+            assert cm.value.frame_type == QuicFrameType.CRYPTO
+            assert cm.value.reason_phrase == "Unexpected frame type"
 
     def test_payload_received_malformed_frame(self):
         with client_and_server() as (client, server):
             # client receives malformed TRANSPORT_CLOSE frame
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 client._payload_received(
                     client_receive_context(client), b"\x1c\x00\x01"
                 )
-            self.assertEqual(
-                cm.exception.error_code, QuicErrorCode.FRAME_ENCODING_ERROR
-            )
-            self.assertEqual(cm.exception.frame_type, 0x1C)
-            self.assertEqual(cm.exception.reason_phrase, "Failed to parse frame")
+            assert cm.value.error_code == QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.frame_type == 0x1C
+            assert cm.value.reason_phrase == "Failed to parse frame"
 
     def test_send_max_data_blocked_by_cc(self):
         with client_and_server() as (client, server):
             # check congestion control
-            self.assertEqual(client._loss.bytes_in_flight, 0)
-            self.assertGreaterEqual(client._loss.congestion_window, 13530)
-            self.assertLessEqual(client._loss.congestion_window, 16000)
+            assert client._loss.bytes_in_flight == 0
+            assert client._loss.congestion_window >= 13530
+            assert client._loss.congestion_window <= 16000
 
             # artificially raise received data counter
             client._local_max_data_used = client._local_max_data
-            self.assertEqual(server._remote_max_data, 1048576)
+            assert server._remote_max_data == 1048576
 
             # artificially raise bytes in flight
             client._loss._cc.bytes_in_flight = client._loss.congestion_window
 
             # MAX_DATA is not sent due to congestion control
-            self.assertEqual(drop(client), 0)
+            assert drop(client) == 0
 
     def test_send_max_data_retransmit(self):
         with client_and_server() as (client, server):
             # artificially raise received data counter
             client._local_max_data.used = client._local_max_data.value
-            self.assertEqual(client._local_max_data.sent, 1048576)
-            self.assertEqual(client._local_max_data.used, 1048576)
-            self.assertEqual(client._local_max_data.value, 1048576)
-            self.assertEqual(server._remote_max_data, 1048576)
+            assert client._local_max_data.sent == 1048576
+            assert client._local_max_data.used == 1048576
+            assert client._local_max_data.value == 1048576
+            assert server._remote_max_data == 1048576
 
             # MAX_DATA is sent and lost
-            self.assertEqual(drop(client), 1)
-            self.assertEqual(client._local_max_data.sent, 2097152)
-            self.assertEqual(client._local_max_data.used, 1048576)
-            self.assertEqual(client._local_max_data.value, 2097152)
-            self.assertEqual(server._remote_max_data, 1048576)
+            assert drop(client) == 1
+            assert client._local_max_data.sent == 2097152
+            assert client._local_max_data.used == 1048576
+            assert client._local_max_data.value == 2097152
+            assert server._remote_max_data == 1048576
 
             # MAX_DATA loss is detected
             client._on_connection_limit_delivery(
                 QuicDeliveryState.LOST, client._local_max_data
             )
-            self.assertEqual(client._local_max_data.sent, 0)
-            self.assertEqual(client._local_max_data.used, 1048576)
-            self.assertEqual(client._local_max_data.value, 2097152)
+            assert client._local_max_data.sent == 0
+            assert client._local_max_data.used == 1048576
+            assert client._local_max_data.value == 2097152
 
             # MAX_DATA is retransmitted and acked
-            self.assertEqual(roundtrip(client, server), (1, 1))
-            self.assertEqual(client._local_max_data.sent, 2097152)
-            self.assertEqual(client._local_max_data.used, 1048576)
-            self.assertEqual(client._local_max_data.value, 2097152)
-            self.assertEqual(server._remote_max_data, 2097152)
+            assert roundtrip(client, server) == (1, 1)
+            assert client._local_max_data.sent == 2097152
+            assert client._local_max_data.used == 1048576
+            assert client._local_max_data.value == 2097152
+            assert server._remote_max_data == 2097152
 
     def test_send_max_stream_data_retransmit(self):
         with client_and_server() as (client, server):
             # client creates bidirectional stream 0
             stream = client._get_or_create_stream_for_send(stream_id=0)
             client.send_stream_data(0, b"hello")
-            self.assertEqual(stream.max_stream_data_local, 1048576)
-            self.assertEqual(stream.max_stream_data_local_sent, 1048576)
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert stream.max_stream_data_local == 1048576
+            assert stream.max_stream_data_local_sent == 1048576
+            assert roundtrip(client, server) == (1, 1)
 
             # server sends data, just before raising MAX_STREAM_DATA
             server.send_stream_data(0, b"Z" * 524288)  # 1048576 // 2
             for i in range(10):
                 roundtrip(server, client)
-            self.assertEqual(stream.max_stream_data_local, 1048576)
-            self.assertEqual(stream.max_stream_data_local_sent, 1048576)
+            assert stream.max_stream_data_local == 1048576
+            assert stream.max_stream_data_local_sent == 1048576
 
             # server sends one more byte
             server.send_stream_data(0, b"Z")
-            self.assertEqual(transfer(server, client), 1)
+            assert transfer(server, client) == 1
 
             # MAX_STREAM_DATA is sent and lost
-            self.assertEqual(drop(client), 1)
-            self.assertEqual(stream.max_stream_data_local, 2097152)
-            self.assertEqual(stream.max_stream_data_local_sent, 2097152)
+            assert drop(client) == 1
+            assert stream.max_stream_data_local == 2097152
+            assert stream.max_stream_data_local_sent == 2097152
             client._on_max_stream_data_delivery(QuicDeliveryState.LOST, stream)
-            self.assertEqual(stream.max_stream_data_local, 2097152)
-            self.assertEqual(stream.max_stream_data_local_sent, 0)
+            assert stream.max_stream_data_local == 2097152
+            assert stream.max_stream_data_local_sent == 0
 
             # MAX_DATA is retransmitted and acked
-            self.assertEqual(roundtrip(client, server), (1, 1))
-            self.assertEqual(stream.max_stream_data_local, 2097152)
-            self.assertEqual(stream.max_stream_data_local_sent, 2097152)
+            assert roundtrip(client, server) == (1, 1)
+            assert stream.max_stream_data_local == 2097152
+            assert stream.max_stream_data_local_sent == 2097152
 
     def test_send_max_streams_retransmit(self):
         with client_and_server() as (client, server):
             # client opens 65 streams
             client.send_stream_data(4 * 64, b"Z")
-            self.assertEqual(transfer(client, server), 1)
-            self.assertEqual(client._remote_max_streams_bidi, 128)
-            self.assertEqual(server._local_max_streams_bidi.sent, 128)
-            self.assertEqual(server._local_max_streams_bidi.used, 65)
-            self.assertEqual(server._local_max_streams_bidi.value, 128)
+            assert transfer(client, server) == 1
+            assert client._remote_max_streams_bidi == 128
+            assert server._local_max_streams_bidi.sent == 128
+            assert server._local_max_streams_bidi.used == 65
+            assert server._local_max_streams_bidi.value == 128
 
             # MAX_STREAMS is sent and lost
-            self.assertEqual(drop(server), 1)
-            self.assertEqual(client._remote_max_streams_bidi, 128)
-            self.assertEqual(server._local_max_streams_bidi.sent, 256)
-            self.assertEqual(server._local_max_streams_bidi.used, 65)
-            self.assertEqual(server._local_max_streams_bidi.value, 256)
+            assert drop(server) == 1
+            assert client._remote_max_streams_bidi == 128
+            assert server._local_max_streams_bidi.sent == 256
+            assert server._local_max_streams_bidi.used == 65
+            assert server._local_max_streams_bidi.value == 256
 
             # MAX_STREAMS loss is detected
             server._on_connection_limit_delivery(
                 QuicDeliveryState.LOST, server._local_max_streams_bidi
             )
-            self.assertEqual(client._remote_max_streams_bidi, 128)
-            self.assertEqual(server._local_max_streams_bidi.sent, 0)
-            self.assertEqual(server._local_max_streams_bidi.used, 65)
-            self.assertEqual(server._local_max_streams_bidi.value, 256)
+            assert client._remote_max_streams_bidi == 128
+            assert server._local_max_streams_bidi.sent == 0
+            assert server._local_max_streams_bidi.used == 65
+            assert server._local_max_streams_bidi.value == 256
 
             # MAX_STREAMS is retransmitted and acked
-            self.assertEqual(roundtrip(server, client), (1, 1))
-            self.assertEqual(client._remote_max_streams_bidi, 256)
-            self.assertEqual(server._local_max_streams_bidi.sent, 256)
-            self.assertEqual(server._local_max_streams_bidi.used, 65)
-            self.assertEqual(server._local_max_streams_bidi.value, 256)
+            assert roundtrip(server, client) == (1, 1)
+            assert client._remote_max_streams_bidi == 256
+            assert server._local_max_streams_bidi.sent == 256
+            assert server._local_max_streams_bidi.used == 65
+            assert server._local_max_streams_bidi.value == 256
 
     def test_send_ping(self):
         with client_and_server() as (client, server):
@@ -2727,12 +2583,12 @@ class QuicConnectionTest(TestCase):
 
             # client sends ping, server ACKs it
             client.send_ping(uid=12345)
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert roundtrip(client, server) == (1, 1)
 
             # check event
             event = client.next_event()
-            self.assertEqual(type(event), events.PingAcknowledged)
-            self.assertEqual(event.uid, 12345)
+            assert type(event) == events.PingAcknowledged
+            assert event.uid == 12345
 
     def test_send_ping_retransmit(self):
         with client_and_server() as (client, server):
@@ -2740,26 +2596,26 @@ class QuicConnectionTest(TestCase):
 
             # client sends another ping, PING is lost
             client.send_ping(uid=12345)
-            self.assertEqual(drop(client), 1)
+            assert drop(client) == 1
 
             # PING is retransmitted and acked
             client._on_ping_delivery(QuicDeliveryState.LOST, (12345,))
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert roundtrip(client, server) == (1, 1)
 
             # check event
             event = client.next_event()
-            self.assertEqual(type(event), events.PingAcknowledged)
-            self.assertEqual(event.uid, 12345)
+            assert type(event) == events.PingAcknowledged
+            assert event.uid == 12345
 
     def test_send_reset_stream(self):
         with client_and_server() as (client, server):
             # client creates bidirectional stream
             client.send_stream_data(0, b"hello")
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert roundtrip(client, server) == (1, 1)
 
             # client resets stream
             client.reset_stream(0, QuicErrorCode.NO_ERROR)
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert roundtrip(client, server) == (1, 1)
 
     def test_send_stop_sending(self):
         with client_and_server() as (client, server):
@@ -2768,17 +2624,17 @@ class QuicConnectionTest(TestCase):
 
             # client creates bidirectional stream
             client.send_stream_data(0, b"hello")
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert roundtrip(client, server) == (1, 1)
 
             # client sends STOP_SENDING frame
             client.stop_stream(0, QuicErrorCode.NO_ERROR)
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert roundtrip(client, server) == (1, 1)
 
             # client receives STREAM_RESET frame
             event = client.next_event()
-            self.assertEqual(type(event), events.StreamReset)
-            self.assertEqual(event.error_code, QuicErrorCode.NO_ERROR)
-            self.assertEqual(event.stream_id, 0)
+            assert type(event) == events.StreamReset
+            assert event.error_code == QuicErrorCode.NO_ERROR
+            assert event.stream_id == 0
 
     def test_send_stop_sending_uni_stream(self):
         with client_and_server() as (client, server):
@@ -2786,12 +2642,10 @@ class QuicConnectionTest(TestCase):
             self.check_handshake(client=client, server=server)
 
             # client sends STOP_SENDING frame
-            with self.assertRaises(ValueError) as cm:
+            with pytest.raises(ValueError) as cm:
                 client.stop_stream(2, QuicErrorCode.NO_ERROR)
-            self.assertEqual(
-                str(cm.exception),
-                "Cannot stop receiving on a local-initiated unidirectional stream",
-            )
+            assert str(cm.value) == \
+                "Cannot stop receiving on a local-initiated unidirectional stream"
 
     def test_send_stop_sending_unknown_stream(self):
         with client_and_server() as (client, server):
@@ -2799,11 +2653,9 @@ class QuicConnectionTest(TestCase):
             self.check_handshake(client=client, server=server)
 
             # client sends STOP_SENDING frame
-            with self.assertRaises(ValueError) as cm:
+            with pytest.raises(ValueError) as cm:
                 client.stop_stream(0, QuicErrorCode.NO_ERROR)
-            self.assertEqual(
-                str(cm.exception), "Cannot stop receiving on an unknown stream"
-            )
+            assert str(cm.value) == "Cannot stop receiving on an unknown stream"
 
     def test_send_stream_data_over_max_streams_bidi(self):
         with client_and_server() as (client, server):
@@ -2811,18 +2663,18 @@ class QuicConnectionTest(TestCase):
             for i in range(128):
                 stream_id = i * 4
                 client.send_stream_data(stream_id, b"")
-                self.assertFalse(client._streams[stream_id].is_blocked)
-            self.assertEqual(len(client._streams_blocked_bidi), 0)
-            self.assertEqual(len(client._streams_blocked_uni), 0)
-            self.assertEqual(roundtrip(client, server), (0, 0))
+                assert not client._streams[stream_id].is_blocked
+            assert len(client._streams_blocked_bidi) == 0
+            assert len(client._streams_blocked_uni) == 0
+            assert roundtrip(client, server) == (0, 0)
 
             # create one too many -> STREAMS_BLOCKED
             stream_id = 128 * 4
             client.send_stream_data(stream_id, b"")
-            self.assertTrue(client._streams[stream_id].is_blocked)
-            self.assertEqual(len(client._streams_blocked_bidi), 1)
-            self.assertEqual(len(client._streams_blocked_uni), 0)
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert client._streams[stream_id].is_blocked
+            assert len(client._streams_blocked_bidi) == 1
+            assert len(client._streams_blocked_uni) == 0
+            assert roundtrip(client, server) == (1, 1)
 
             # peer raises max streams
             client._handle_max_streams_bidi_frame(
@@ -2830,7 +2682,7 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.MAX_STREAMS_BIDI,
                 Buffer(data=encode_uint_var(129)),
             )
-            self.assertFalse(client._streams[stream_id].is_blocked)
+            assert not client._streams[stream_id].is_blocked
 
     def test_send_stream_data_over_max_streams_uni(self):
         with client_and_server() as (client, server):
@@ -2838,18 +2690,18 @@ class QuicConnectionTest(TestCase):
             for i in range(128):
                 stream_id = i * 4 + 2
                 client.send_stream_data(stream_id, b"")
-                self.assertFalse(client._streams[stream_id].is_blocked)
-            self.assertEqual(len(client._streams_blocked_bidi), 0)
-            self.assertEqual(len(client._streams_blocked_uni), 0)
-            self.assertEqual(roundtrip(client, server), (0, 0))
+                assert not client._streams[stream_id].is_blocked
+            assert len(client._streams_blocked_bidi) == 0
+            assert len(client._streams_blocked_uni) == 0
+            assert roundtrip(client, server) == (0, 0)
 
             # create one too many -> STREAMS_BLOCKED
             stream_id = 128 * 4 + 2
             client.send_stream_data(stream_id, b"")
-            self.assertTrue(client._streams[stream_id].is_blocked)
-            self.assertEqual(len(client._streams_blocked_bidi), 0)
-            self.assertEqual(len(client._streams_blocked_uni), 1)
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert client._streams[stream_id].is_blocked
+            assert len(client._streams_blocked_bidi) == 0
+            assert len(client._streams_blocked_uni) == 1
+            assert roundtrip(client, server) == (1, 1)
 
             # peer raises max streams
             client._handle_max_streams_uni_frame(
@@ -2857,86 +2709,78 @@ class QuicConnectionTest(TestCase):
                 QuicFrameType.MAX_STREAMS_UNI,
                 Buffer(data=encode_uint_var(129)),
             )
-            self.assertFalse(client._streams[stream_id].is_blocked)
+            assert not client._streams[stream_id].is_blocked
 
     def test_send_stream_data_peer_initiated(self):
         with client_and_server() as (client, server):
             # server creates bidirectional stream
             server.send_stream_data(1, b"hello")
-            self.assertEqual(roundtrip(server, client), (1, 1))
+            assert roundtrip(server, client) == (1, 1)
 
             # server creates unidirectional stream
             server.send_stream_data(3, b"hello")
-            self.assertEqual(roundtrip(server, client), (1, 1))
+            assert roundtrip(server, client) == (1, 1)
 
             # client creates bidirectional stream
             client.send_stream_data(0, b"hello")
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert roundtrip(client, server) == (1, 1)
 
             # client sends data on server-initiated bidirectional stream
             client.send_stream_data(1, b"hello")
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert roundtrip(client, server) == (1, 1)
 
             # client creates unidirectional stream
             client.send_stream_data(2, b"hello")
-            self.assertEqual(roundtrip(client, server), (1, 1))
+            assert roundtrip(client, server) == (1, 1)
 
             # client tries to reset server-initiated unidirectional stream
-            with self.assertRaises(ValueError) as cm:
+            with pytest.raises(ValueError) as cm:
                 client.reset_stream(3, QuicErrorCode.NO_ERROR)
-            self.assertEqual(
-                str(cm.exception),
-                "Cannot send data on peer-initiated unidirectional stream",
-            )
+            assert str(cm.value) == \
+                "Cannot send data on peer-initiated unidirectional stream"
 
             # client tries to reset unknown server-initiated bidirectional stream
-            with self.assertRaises(ValueError) as cm:
+            with pytest.raises(ValueError) as cm:
                 client.reset_stream(5, QuicErrorCode.NO_ERROR)
-            self.assertEqual(
-                str(cm.exception), "Cannot send data on unknown peer-initiated stream"
-            )
+            assert str(cm.value) == "Cannot send data on unknown peer-initiated stream"
 
             # client tries to send data on server-initiated unidirectional stream
-            with self.assertRaises(ValueError) as cm:
+            with pytest.raises(ValueError) as cm:
                 client.send_stream_data(3, b"hello")
-            self.assertEqual(
-                str(cm.exception),
-                "Cannot send data on peer-initiated unidirectional stream",
-            )
+            assert str(cm.value) == \
+                "Cannot send data on peer-initiated unidirectional stream"
 
             # client tries to send data on unknown server-initiated bidirectional stream
-            with self.assertRaises(ValueError) as cm:
+            with pytest.raises(ValueError) as cm:
                 client.send_stream_data(5, b"hello")
-            self.assertEqual(
-                str(cm.exception), "Cannot send data on unknown peer-initiated stream"
-            )
+            assert str(cm.value) == "Cannot send data on unknown peer-initiated stream"
 
     def test_stream_direction(self):
         with client_and_server() as (client, server):
             for off in [0, 4, 8]:
                 # Client-Initiated, Bidirectional
-                self.assertTrue(client._stream_can_receive(off))
-                self.assertTrue(client._stream_can_send(off))
-                self.assertTrue(server._stream_can_receive(off))
-                self.assertTrue(server._stream_can_send(off))
+                assert client._stream_can_receive(off)
+                assert client._stream_can_send(off)
+                assert server._stream_can_receive(off)
+                assert server._stream_can_send(off)
 
                 # Server-Initiated, Bidirectional
-                self.assertTrue(client._stream_can_receive(off + 1))
-                self.assertTrue(client._stream_can_send(off + 1))
-                self.assertTrue(server._stream_can_receive(off + 1))
-                self.assertTrue(server._stream_can_send(off + 1))
+                assert client._stream_can_receive(off + 1)
+                assert client._stream_can_send(off + 1)
+                assert server._stream_can_receive(off + 1)
+                assert server._stream_can_send(off + 1)
 
                 # Client-Initiated, Unidirectional
-                self.assertFalse(client._stream_can_receive(off + 2))
-                self.assertTrue(client._stream_can_send(off + 2))
-                self.assertTrue(server._stream_can_receive(off + 2))
-                self.assertFalse(server._stream_can_send(off + 2))
+                assert not client._stream_can_receive(off + 2)
+                assert client._stream_can_send(off + 2)
+                assert server._stream_can_receive(off + 2)
+                assert not server._stream_can_send(off + 2)
 
                 # Server-Initiated, Unidirectional
-                self.assertTrue(client._stream_can_receive(off + 3))
-                self.assertFalse(client._stream_can_send(off + 3))
-                self.assertFalse(server._stream_can_receive(off + 3))
-                self.assertTrue(server._stream_can_send(off + 3))
+                assert client._stream_can_receive(off + 3)
+                assert not client._stream_can_send(off + 3)
+                assert not server._stream_can_receive(off + 3)
+                assert server._stream_can_send(off + 3)
 
     def test_version_negotiation_fail(self):
         client = create_standalone_client(self)
@@ -2951,15 +2795,13 @@ class QuicConnectionTest(TestCase):
             SERVER_ADDR,
             now=time.time(),
         )
-        self.assertEqual(drop(client), 0)
+        assert drop(client) == 0
 
         event = client.next_event()
-        self.assertEqual(type(event), events.ConnectionTerminated)
-        self.assertEqual(event.error_code, QuicErrorCode.INTERNAL_ERROR)
-        self.assertEqual(event.frame_type, QuicFrameType.PADDING)
-        self.assertEqual(
-            event.reason_phrase, "Could not find a common protocol version"
-        )
+        assert type(event) == events.ConnectionTerminated
+        assert event.error_code == QuicErrorCode.INTERNAL_ERROR
+        assert event.frame_type == QuicFrameType.PADDING
+        assert event.reason_phrase == "Could not find a common protocol version"
 
     def test_version_negotiation_ignore(self):
         client = create_standalone_client(self)
@@ -2974,7 +2816,7 @@ class QuicConnectionTest(TestCase):
             SERVER_ADDR,
             now=time.time(),
         )
-        self.assertEqual(drop(client), 0)
+        assert drop(client) == 0
 
     def test_version_negotiation_ignore_server(self):
         server = create_standalone_server(self)
@@ -3004,7 +2846,7 @@ class QuicConnectionTest(TestCase):
             SERVER_ADDR,
             now=time.time(),
         )
-        self.assertEqual(drop(client), 0)  # todo: investigate!
+        assert drop(client) == 0# todo: investigate!
 
     def test_write_connection_close_early(self):
         client = create_standalone_client(self)
@@ -3026,8 +2868,7 @@ class QuicConnectionTest(TestCase):
             reason_phrase="some reason",
         )
 
-        self.assertEqual(
-            builder.quic_logger_frames,
+        assert builder.quic_logger_frames == \
             [
                 {
                     "error_code": QuicErrorCode.APPLICATION_ERROR,
@@ -3036,9 +2877,8 @@ class QuicConnectionTest(TestCase):
                     "raw_error_code": QuicErrorCode.APPLICATION_ERROR,
                     "reason": "",
                     "trigger_frame_type": QuicFrameType.PADDING,
-                }
-            ],
-        )
+                } \
+            ]
 
     def test_excessive_crypto_buffering(self):
         with client_and_server() as (client, server):
@@ -3048,7 +2888,7 @@ class QuicConnectionTest(TestCase):
             # how much buffering is needed.  We send fragments of only 100 bytes
             # at offsets 10000, 20000, 30000 etc.
             highest_good_offset = 0
-            with self.assertRaises(QuicConnectionError) as cm:
+            with pytest.raises(QuicConnectionError) as cm:
                 # We don't start at zero as we want to force buffering, not cause
                 # a TLS error.
                 for offset in range(10000, 1000000, 10000):
@@ -3062,31 +2902,29 @@ class QuicConnectionTest(TestCase):
                         ),
                     )
                     highest_good_offset = offset
-            self.assertEqual(
-                cm.exception.error_code, QuicErrorCode.CRYPTO_BUFFER_EXCEEDED
-            )
-            self.assertEqual(cm.exception.frame_type, QuicFrameType.CRYPTO)
-            self.assertEqual(highest_good_offset, (MAX_PENDING_CRYPTO // 10000) * 10000)
+            assert cm.value.error_code == QuicErrorCode.CRYPTO_BUFFER_EXCEEDED
+            assert cm.value.frame_type == QuicFrameType.CRYPTO
+            assert highest_good_offset == (MAX_PENDING_CRYPTO // 10000) * 10000
 
 
-class QuicNetworkPathTest(TestCase):
+class TestQuicNetworkPath:
     def test_can_send(self):
         path = QuicNetworkPath(("1.2.3.4", 1234))
-        self.assertFalse(path.is_validated)
+        assert not path.is_validated
 
         # initially, cannot send any data
-        self.assertTrue(path.can_send(0))
-        self.assertFalse(path.can_send(1))
+        assert path.can_send(0)
+        assert not path.can_send(1)
 
         # receive some data
         path.bytes_received += 1
-        self.assertTrue(path.can_send(0))
-        self.assertTrue(path.can_send(1))
-        self.assertTrue(path.can_send(2))
-        self.assertTrue(path.can_send(3))
-        self.assertFalse(path.can_send(4))
+        assert path.can_send(0)
+        assert path.can_send(1)
+        assert path.can_send(2)
+        assert path.can_send(3)
+        assert not path.can_send(4)
 
         # send some data
         path.bytes_sent += 3
-        self.assertTrue(path.can_send(0))
-        self.assertFalse(path.can_send(1))
+        assert path.can_send(0)
+        assert not path.can_send(1)

@@ -1,84 +1,74 @@
-use pyo3::types::{PyBytes};
+use pyo3::exceptions::PyValueError;
+use pyo3::types::PyBytes;
+use pyo3::types::PyBytesMethods;
+use pyo3::{pyclass, Bound};
 use pyo3::{pymethods, PyResult, Python};
-use pyo3::pyclass;
-use pyo3::exceptions::{PyValueError};
 
 pyo3::create_exception!(_hazmat, BufferReadError, PyValueError);
 pyo3::create_exception!(_hazmat, BufferWriteError, PyValueError);
-
 
 #[pyclass(module = "qh3._hazmat")]
 pub struct Buffer {
     pos: u64,
     data: Vec<u8>,
-    capacity: u64
+    capacity: u64,
 }
-
 
 #[pymethods]
 impl Buffer {
     #[new]
-    pub fn py_new(capacity: Option<u64>, data: Option<&PyBytes>) -> PyResult<Self> {
+    #[pyo3(signature = (capacity=None, data=None))]
+    pub fn py_new(capacity: Option<u64>, data: Option<Bound<'_, PyBytes>>) -> PyResult<Self> {
         if data.is_some() {
-            let payload = data.unwrap().as_bytes();
-            return Ok(
-                Buffer {
-                    pos: 0,
-                    data: payload.to_vec(),
-                    capacity: payload.len() as u64
-                }
-            );
-        }
-
-        if !capacity.is_some() {
-            return Err(
-                PyValueError::new_err("mandatory capacity without data args")
-            );
-        }
-
-        return Ok(
-            Buffer {
+            let payload = data.unwrap();
+            return Ok(Buffer {
                 pos: 0,
-                data: vec![0; capacity.unwrap().try_into().unwrap()],
-                capacity: capacity.unwrap(),
-            }
-        );
+                data: payload.as_bytes().to_vec(),
+                capacity: payload.as_bytes().len() as u64,
+            });
+        }
+
+        if capacity.is_none() {
+            return Err(PyValueError::new_err(
+                "mandatory capacity without data args",
+            ));
+        }
+
+        Ok(Buffer {
+            pos: 0,
+            data: vec![0; capacity.unwrap().try_into().unwrap()],
+            capacity: capacity.unwrap(),
+        })
     }
 
     #[getter]
     pub fn capacity(&self) -> u64 {
-        return self.capacity;
+        self.capacity
     }
 
     #[getter]
-    pub fn data<'a>(&self, py: Python<'a>) -> &'a PyBytes {
+    pub fn data<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         if self.pos == 0 {
-            return PyBytes::new(
-                py,
-                &[]
-            );
+            return PyBytes::new(py, &[]);
         }
-        return PyBytes::new(
-            py,
-            &self.data[0 as usize..self.pos as usize]
-        );
+        PyBytes::new(py, &self.data[0_usize..self.pos as usize])
     }
 
-    pub fn data_slice<'a>(&self, py: Python<'a>, start: u64, end: u64) -> PyResult<&'a PyBytes> {
+    pub fn data_slice<'a>(
+        &self,
+        py: Python<'a>,
+        start: u64,
+        end: u64,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         if self.capacity < start || self.capacity < end || end < start {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        return Ok(
-            PyBytes::new(
-                py,
-                &self.data[start as usize..end as usize]
-            )
-        );
+        Ok(PyBytes::new(py, &self.data[start as usize..end as usize]))
     }
 
     pub fn eof(&self) -> bool {
-        return self.pos == self.capacity;
+        self.pos == self.capacity
     }
 
     pub fn seek(&mut self, pos: u64) -> PyResult<()> {
@@ -88,26 +78,26 @@ impl Buffer {
 
         self.pos = pos;
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn tell(&self) -> u64 {
-        return self.pos;
+        self.pos
     }
 
-    pub fn pull_bytes<'a>(&mut self, py: Python<'a>, length: u64) -> PyResult<&'a PyBytes> {
+    pub fn pull_bytes<'a>(&mut self, py: Python<'a>, length: u64) -> PyResult<Bound<'a, PyBytes>> {
         if self.capacity < self.pos + length {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
         let extract = PyBytes::new(
             py,
-            &self.data[self.pos as usize..(self.pos+length) as usize]
+            &self.data[self.pos as usize..(self.pos + length) as usize],
         );
 
         self.pos += length;
 
-        return Ok(extract);
+        Ok(extract)
     }
 
     pub fn pull_uint8(&mut self) -> PyResult<u8> {
@@ -118,7 +108,7 @@ impl Buffer {
         let extract = self.data[self.pos as usize];
         self.pos += 1;
 
-        return Ok(extract);
+        Ok(extract)
     }
 
     pub fn pull_uint16(&mut self) -> PyResult<u16> {
@@ -130,10 +120,11 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u16::from_be_bytes(self.data[self.pos as usize..(self.pos + 2) as usize].try_into().expect("failure"));
+        let extract =
+            u16::from_be_bytes(self.data[self.pos as usize..(self.pos + 2) as usize].try_into()?);
         self.pos += 2;
 
-        return Ok(extract);
+        Ok(extract)
     }
 
     pub fn pull_uint32(&mut self) -> PyResult<u32> {
@@ -145,10 +136,11 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u32::from_be_bytes(self.data[self.pos as usize..(self.pos + 4) as usize].try_into().expect("failure"));
+        let extract =
+            u32::from_be_bytes(self.data[self.pos as usize..(self.pos + 4) as usize].try_into()?);
         self.pos += 4;
 
-        return Ok(extract);
+        Ok(extract)
     }
 
     pub fn pull_uint64(&mut self) -> PyResult<u64> {
@@ -160,10 +152,11 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u64::from_be_bytes(self.data[self.pos as usize..(self.pos + 8) as usize].try_into().expect("failure"));
+        let extract =
+            u64::from_be_bytes(self.data[self.pos as usize..(self.pos + 8) as usize].try_into()?);
         self.pos += 8;
 
-        return Ok(extract);
+        Ok(extract)
     }
 
     pub fn pull_uint_var(&mut self) -> PyResult<u64> {
@@ -183,8 +176,8 @@ impl Buffer {
             return match self.pull_uint16() {
                 Ok(val) => {
                     return Ok((val & 0x3FFF).into());
-                },
-                Err(exception) => Err(exception)
+                }
+                Err(exception) => Err(exception),
             };
         }
 
@@ -192,20 +185,18 @@ impl Buffer {
             return match self.pull_uint32() {
                 Ok(val) => {
                     return Ok((val & 0x3FFFFFFF).into());
-                },
-                Err(exception) => Err(exception)
+                }
+                Err(exception) => Err(exception),
             };
         }
 
-        return match self.pull_uint64() {
-            Ok(val) => {
-                return Ok(val & 0x3FFFFFFFFFFFFFFF);
-            },
-            Err(exception) => Err(exception)
-        };
+        match self.pull_uint64() {
+            Ok(val) => Ok(val & 0x3FFFFFFFFFFFFFFF),
+            Err(exception) => Err(exception),
+        }
     }
 
-    pub fn push_bytes(&mut self, data: &PyBytes) -> PyResult<()> {
+    pub fn push_bytes(&mut self, data: Bound<'_, PyBytes>) -> PyResult<()> {
         let data_to_be_pushed = data.as_bytes();
         let end_pos = self.pos + data_to_be_pushed.len() as u64;
 
@@ -213,10 +204,10 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos as usize..end_pos as usize].clone_from_slice(&data_to_be_pushed);
+        self.data[self.pos as usize..end_pos as usize].clone_from_slice(data_to_be_pushed);
         self.pos = end_pos;
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn push_uint8(&mut self, value: u8) -> PyResult<()> {
@@ -227,7 +218,7 @@ impl Buffer {
         self.data[self.pos as usize] = value;
         self.pos += 1;
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn push_uint16(&mut self, value: u16) -> PyResult<()> {
@@ -239,10 +230,11 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos as usize..(self.pos + 2) as usize].clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos as usize..(self.pos + 2) as usize]
+            .clone_from_slice(&value.to_be_bytes());
         self.pos += 2;
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn push_uint32(&mut self, value: u32) -> PyResult<()> {
@@ -254,10 +246,11 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos as usize..(self.pos + 4) as usize].clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos as usize..(self.pos + 4) as usize]
+            .clone_from_slice(&value.to_be_bytes());
         self.pos += 4;
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn push_uint64(&mut self, value: u64) -> PyResult<()> {
@@ -269,10 +262,11 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos as usize..(self.pos + 8) as usize].clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos as usize..(self.pos + 8) as usize]
+            .clone_from_slice(&value.to_be_bytes());
         self.pos += 8;
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn push_uint_var(&mut self, value: u64) -> PyResult<()> {
@@ -286,6 +280,8 @@ impl Buffer {
             return self.push_uint64(value | 0xC000000000000000);
         }
 
-        return Err(PyValueError::new_err("Integer is too big for a variable-length integer"));
+        Err(PyValueError::new_err(
+            "Integer is too big for a variable-length integer",
+        ))
     }
 }

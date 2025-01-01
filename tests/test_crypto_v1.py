@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import pytest
 import binascii
-from unittest import TestCase, skipIf
 
 from qh3.buffer import Buffer
 from qh3.quic.crypto import (
@@ -116,7 +116,7 @@ SHORT_SERVER_ENCRYPTED_PACKET = binascii.unhexlify(
 )
 
 
-class CryptoTest(TestCase):
+class TestCrypto:
     """
     Test vectors from:
 
@@ -159,9 +159,9 @@ class CryptoTest(TestCase):
             secret=secret,
             version=PROTOCOL_VERSION,
         )
-        self.assertEqual(key, binascii.unhexlify("1f369613dd76d5467730efcbe3b1a22d"))
-        self.assertEqual(iv, binascii.unhexlify("fa044b2f42a3fd3b46fb255c"))
-        self.assertEqual(hp, binascii.unhexlify("9f50449e04a0e810283a1e9933adedd2"))
+        assert key == binascii.unhexlify("1f369613dd76d5467730efcbe3b1a22d")
+        assert iv == binascii.unhexlify("fa044b2f42a3fd3b46fb255c")
+        assert hp == binascii.unhexlify("9f50449e04a0e810283a1e9933adedd2")
 
         # server
         secret = binascii.unhexlify(
@@ -172,11 +172,11 @@ class CryptoTest(TestCase):
             secret=secret,
             version=PROTOCOL_VERSION,
         )
-        self.assertEqual(key, binascii.unhexlify("cf3a5331653c364c88f0f379b6067e37"))
-        self.assertEqual(iv, binascii.unhexlify("0ac1493ca1905853b0bba03e"))
-        self.assertEqual(hp, binascii.unhexlify("c206b8d9b9f0f37644430b490eeaa314"))
+        assert key == binascii.unhexlify("cf3a5331653c364c88f0f379b6067e37")
+        assert iv == binascii.unhexlify("0ac1493ca1905853b0bba03e")
+        assert hp == binascii.unhexlify("c206b8d9b9f0f37644430b490eeaa314")
 
-    @skipIf("chacha20" in SKIP_TESTS, "Skipping chacha20 tests")
+    @pytest.mark.skipif("chacha20" in SKIP_TESTS, reason="Skipping chacha20 tests")
     def test_derive_key_iv_hp_chacha20(self):
         # https://datatracker.ietf.org/doc/html/rfc9001#appendix-A.5
 
@@ -189,21 +189,17 @@ class CryptoTest(TestCase):
             secret=secret,
             version=PROTOCOL_VERSION,
         )
-        self.assertEqual(
-            key,
+        assert key == \
             binascii.unhexlify(
-                "c6d98ff3441c3fe1b2182094f69caa2ed4b716b65488960a7a984979fb23e1c8"
-            ),
-        )
-        self.assertEqual(iv, binascii.unhexlify("e0459b3474bdd0e44a41c144"))
-        self.assertEqual(
-            hp,
+                "c6d98ff3441c3fe1b2182094f69caa2ed4b716b65488960a7a984979fb23e1c8" \
+            )
+        assert iv == binascii.unhexlify("e0459b3474bdd0e44a41c144")
+        assert hp == \
             binascii.unhexlify(
-                "25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4"
-            ),
-        )
+                "25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4" \
+            )
 
-    @skipIf("chacha20" in SKIP_TESTS, "Skipping chacha20 tests")
+    @pytest.mark.skipif("chacha20" in SKIP_TESTS, reason="Skipping chacha20 tests")
     def test_decrypt_chacha20(self):
         pair = CryptoPair()
         pair.recv.setup(
@@ -217,9 +213,9 @@ class CryptoTest(TestCase):
         plain_header, plain_payload, packet_number = pair.decrypt_packet(
             CHACHA20_CLIENT_ENCRYPTED_PACKET, 1, CHACHA20_CLIENT_PACKET_NUMBER
         )
-        self.assertEqual(plain_header, CHACHA20_CLIENT_PLAIN_HEADER)
-        self.assertEqual(plain_payload, CHACHA20_CLIENT_PLAIN_PAYLOAD)
-        self.assertEqual(packet_number, CHACHA20_CLIENT_PACKET_NUMBER)
+        assert plain_header == CHACHA20_CLIENT_PLAIN_HEADER
+        assert plain_payload == CHACHA20_CLIENT_PLAIN_PAYLOAD
+        assert packet_number == CHACHA20_CLIENT_PACKET_NUMBER
 
     def test_decrypt_long_client(self):
         pair = self.create_crypto(is_client=False)
@@ -227,9 +223,9 @@ class CryptoTest(TestCase):
         plain_header, plain_payload, packet_number = pair.decrypt_packet(
             LONG_CLIENT_ENCRYPTED_PACKET, 18, 0
         )
-        self.assertEqual(plain_header, LONG_CLIENT_PLAIN_HEADER)
-        self.assertEqual(plain_payload, LONG_CLIENT_PLAIN_PAYLOAD)
-        self.assertEqual(packet_number, LONG_CLIENT_PACKET_NUMBER)
+        assert plain_header == LONG_CLIENT_PLAIN_HEADER
+        assert plain_payload == LONG_CLIENT_PLAIN_PAYLOAD
+        assert packet_number == LONG_CLIENT_PACKET_NUMBER
 
     def test_decrypt_long_server(self):
         pair = self.create_crypto(is_client=True)
@@ -237,13 +233,13 @@ class CryptoTest(TestCase):
         plain_header, plain_payload, packet_number = pair.decrypt_packet(
             LONG_SERVER_ENCRYPTED_PACKET, 18, 0
         )
-        self.assertEqual(plain_header, LONG_SERVER_PLAIN_HEADER)
-        self.assertEqual(plain_payload, LONG_SERVER_PLAIN_PAYLOAD)
-        self.assertEqual(packet_number, LONG_SERVER_PACKET_NUMBER)
+        assert plain_header == LONG_SERVER_PLAIN_HEADER
+        assert plain_payload == LONG_SERVER_PLAIN_PAYLOAD
+        assert packet_number == LONG_SERVER_PACKET_NUMBER
 
     def test_decrypt_no_key(self):
         pair = CryptoPair()
-        with self.assertRaises(CryptoError):
+        with pytest.raises(CryptoError):
             pair.decrypt_packet(LONG_SERVER_ENCRYPTED_PACKET, 18, 0)
 
     def test_decrypt_short_server(self):
@@ -259,11 +255,11 @@ class CryptoTest(TestCase):
         plain_header, plain_payload, packet_number = pair.decrypt_packet(
             SHORT_SERVER_ENCRYPTED_PACKET, 9, 0
         )
-        self.assertEqual(plain_header, SHORT_SERVER_PLAIN_HEADER)
-        self.assertEqual(plain_payload, SHORT_SERVER_PLAIN_PAYLOAD)
-        self.assertEqual(packet_number, SHORT_SERVER_PACKET_NUMBER)
+        assert plain_header == SHORT_SERVER_PLAIN_HEADER
+        assert plain_payload == SHORT_SERVER_PLAIN_PAYLOAD
+        assert packet_number == SHORT_SERVER_PACKET_NUMBER
 
-    @skipIf("chacha20" in SKIP_TESTS, "Skipping chacha20 tests")
+    @pytest.mark.skipif("chacha20" in SKIP_TESTS, reason="Skipping chacha20 tests")
     def test_encrypt_chacha20(self):
         pair = CryptoPair()
         pair.send.setup(
@@ -279,7 +275,7 @@ class CryptoTest(TestCase):
             CHACHA20_CLIENT_PLAIN_PAYLOAD,
             CHACHA20_CLIENT_PACKET_NUMBER,
         )
-        self.assertEqual(packet, CHACHA20_CLIENT_ENCRYPTED_PACKET)
+        assert packet == CHACHA20_CLIENT_ENCRYPTED_PACKET
 
     def test_encrypt_long_client(self):
         pair = self.create_crypto(is_client=True)
@@ -289,7 +285,7 @@ class CryptoTest(TestCase):
             LONG_CLIENT_PLAIN_PAYLOAD,
             LONG_CLIENT_PACKET_NUMBER,
         )
-        self.assertEqual(packet, LONG_CLIENT_ENCRYPTED_PACKET)
+        assert packet == LONG_CLIENT_ENCRYPTED_PACKET
 
     def test_encrypt_long_server(self):
         pair = self.create_crypto(is_client=False)
@@ -299,7 +295,7 @@ class CryptoTest(TestCase):
             LONG_SERVER_PLAIN_PAYLOAD,
             LONG_SERVER_PACKET_NUMBER,
         )
-        self.assertEqual(packet, LONG_SERVER_ENCRYPTED_PACKET)
+        assert packet == LONG_SERVER_ENCRYPTED_PACKET
 
     def test_encrypt_short_server(self):
         pair = CryptoPair()
@@ -316,7 +312,7 @@ class CryptoTest(TestCase):
             SHORT_SERVER_PLAIN_PAYLOAD,
             SHORT_SERVER_PACKET_NUMBER,
         )
-        self.assertEqual(packet, SHORT_SERVER_ENCRYPTED_PACKET)
+        assert packet == SHORT_SERVER_ENCRYPTED_PACKET
 
     def test_key_update(self):
         pair1 = self.create_crypto(is_client=True)
@@ -339,15 +335,15 @@ class CryptoTest(TestCase):
             recov_header, recov_payload, recov_packet_number = receiver.decrypt_packet(
                 encrypted, len(plain_header) - 2, 0
             )
-            self.assertEqual(recov_header, plain_header)
-            self.assertEqual(recov_payload, plain_payload)
-            self.assertEqual(recov_packet_number, packet_number)
+            assert recov_header == plain_header
+            assert recov_payload == plain_payload
+            assert recov_packet_number == packet_number
 
         # roundtrip
         send(pair1, pair2, 0)
         send(pair2, pair1, 0)
-        self.assertEqual(pair1.key_phase, 0)
-        self.assertEqual(pair2.key_phase, 0)
+        assert pair1.key_phase == 0
+        assert pair2.key_phase == 0
 
         # pair 1 key update
         pair1.update_key()
@@ -355,8 +351,8 @@ class CryptoTest(TestCase):
         # roundtrip
         send(pair1, pair2, 1)
         send(pair2, pair1, 1)
-        self.assertEqual(pair1.key_phase, 1)
-        self.assertEqual(pair2.key_phase, 1)
+        assert pair1.key_phase == 1
+        assert pair2.key_phase == 1
 
         # pair 2 key update
         pair2.update_key()
@@ -364,8 +360,8 @@ class CryptoTest(TestCase):
         # roundtrip
         send(pair2, pair1, 2)
         send(pair1, pair2, 2)
-        self.assertEqual(pair1.key_phase, 0)
-        self.assertEqual(pair2.key_phase, 0)
+        assert pair1.key_phase == 0
+        assert pair2.key_phase == 0
 
         # pair 1 key - update, but not next to send
         pair1.update_key()
@@ -373,35 +369,35 @@ class CryptoTest(TestCase):
         # roundtrip
         send(pair2, pair1, 3)
         send(pair1, pair2, 3)
-        self.assertEqual(pair1.key_phase, 1)
-        self.assertEqual(pair2.key_phase, 1)
+        assert pair1.key_phase == 1
+        assert pair2.key_phase == 1
 
     def test_aead_init_args_validation(self):
         # invalid cipher
-        with self.assertRaises(CryptoError) as cm:
+        with pytest.raises(CryptoError) as cm:
             self.create_aead(cipher_name=b"tango9000")
-        self.assertEqual(str(cm.exception), "Invalid cipher name: tango9000")
+        assert str(cm.value) == "Invalid cipher name: tango9000"
 
         # invalid key length
-        with self.assertRaises(CryptoError) as cm:
+        with pytest.raises(CryptoError) as cm:
             self.create_aead(key=bytes(33))
-        self.assertEqual(str(cm.exception), "Invalid key length")
+        assert str(cm.value) == "Invalid key length"
 
         # invalid iv length
-        with self.assertRaises(CryptoError) as cm:
+        with pytest.raises(CryptoError) as cm:
             self.create_aead(iv=bytes(11))
-        self.assertEqual(str(cm.exception), "Invalid iv length")
-        with self.assertRaises(CryptoError) as cm:
+        assert str(cm.value) == "Invalid iv length"
+        with pytest.raises(CryptoError) as cm:
             self.create_aead(iv=bytes(13))
-        self.assertEqual(str(cm.exception), "Invalid iv length")
+        assert str(cm.value) == "Invalid iv length"
 
     def test_hp_init_args_validation(self):
         # invalid cipher
-        with self.assertRaises(CryptoError) as cm:
+        with pytest.raises(CryptoError) as cm:
             self.create_hp(cipher_name=b"tango9000")
-        self.assertEqual(str(cm.exception), "Invalid cipher name: tango9000")
+        assert str(cm.value) == "Invalid cipher name: tango9000"
 
         # invalid key length
-        with self.assertRaises(CryptoError) as cm:
+        with pytest.raises(CryptoError) as cm:
             self.create_hp(key=bytes(33))
-        self.assertEqual(str(cm.exception), "Invalid key length")
+        assert str(cm.value) == "Invalid key length"

@@ -1,0 +1,25 @@
+[run]
+source =
+    qh3
+# Needed for Python 3.11 and lower
+disable_warnings = no-sysmon
+
+[paths]
+source =
+    qh3
+    */qh3
+    *\qh3
+
+[report]
+exclude_lines =
+    except ModuleNotFoundError:
+    except ImportError:
+    pass
+    import
+    raise NotImplementedError
+    .* # Platform-specific.*
+    .*:.* # Python \d.*
+    .* # Abstract
+    .* # Defensive:
+    if (?:typing.)?TYPE_CHECKING:
+    ^\s*?\.\.\.\s*$

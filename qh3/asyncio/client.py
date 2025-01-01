@@ -29,7 +29,7 @@ async def connect(
     stream_handler: QuicStreamHandler | None = None,
     wait_connected: bool = True,
     local_port: int = 0,
-) -> AsyncGenerator[QuicConnectionProtocol, None]:
+) -> AsyncGenerator[QuicConnectionProtocol]:
     """
     Connect to a QUIC server at the given `host` and `port`.
 

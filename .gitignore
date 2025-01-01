@@ -20,3 +20,4 @@ ENV/
 env.bak/
 venv.bak/
 target/
+.nox

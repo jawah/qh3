@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import pytest
 import binascii
 import contextlib
 import copy
-from unittest import TestCase
 
 from qh3.buffer import Buffer, encode_uint_var
 from qh3.h3.connection import (
@@ -129,7 +129,7 @@ class FakeQuicConnection:
             )
 
 
-class H3ConnectionTest(TestCase):
+class TestH3Connection:
     maxDiff = None
 
     def _make_request(self, h3_client, h3_server):
@@ -152,8 +152,7 @@ class H3ConnectionTest(TestCase):
 
         # receive request
         events = h3_transfer(quic_client, h3_server)
-        self.assertEqual(
-            events,
+        assert events == \
             [
                 HeadersReceived(
                     headers=[
@@ -167,8 +166,7 @@ class H3ConnectionTest(TestCase):
                     stream_ended=False,
                 ),
                 DataReceived(data=b"", stream_id=stream_id, stream_ended=True),
-            ],
-        )
+            ]
 
         # send response
         h3_server.send_headers(
@@ -187,8 +185,7 @@ class H3ConnectionTest(TestCase):
 
         # receive response
         events = h3_transfer(quic_server, h3_client)
-        self.assertEqual(
-            events,
+        assert events == \
             [
                 HeadersReceived(
                     headers=[
@@ -204,8 +201,7 @@ class H3ConnectionTest(TestCase):
                     stream_id=stream_id,
                     stream_ended=True,
                 ),
-            ],
-        )
+            ]
 
     def test_handle_control_frame_headers(self):
         """
@@ -215,8 +211,8 @@ class H3ConnectionTest(TestCase):
             configuration=QuicConfiguration(is_client=False)
         )
         h3_server = H3Connection(quic_server)
-        self.assertIsNotNone(h3_server.sent_settings)
-        self.assertIsNone(h3_server.received_settings)
+        assert h3_server.sent_settings is not None
+        assert h3_server.received_settings is None
 
         # receive SETTINGS
         h3_server.handle_event(
@@ -227,9 +223,9 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertIsNone(quic_server.closed)
-        self.assertIsNotNone(h3_server.sent_settings)
-        self.assertEqual(h3_server.received_settings, DUMMY_SETTINGS)
+        assert quic_server.closed is None
+        assert h3_server.sent_settings is not None
+        assert h3_server.received_settings == DUMMY_SETTINGS
 
         # receive unexpected HEADERS
         h3_server.handle_event(
@@ -239,10 +235,8 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_server.closed,
-            (ErrorCode.H3_FRAME_UNEXPECTED, "Invalid frame type on control stream"),
-        )
+        assert quic_server.closed == \
+            (ErrorCode.H3_FRAME_UNEXPECTED, "Invalid frame type on control stream")
 
     def test_handle_control_frame_max_push_id_from_client_before_settings(self):
         """
@@ -262,10 +256,8 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_server.closed,
-            (ErrorCode.H3_MISSING_SETTINGS, ""),
-        )
+        assert quic_server.closed == \
+            (ErrorCode.H3_MISSING_SETTINGS, "")
 
     def test_handle_control_frame_max_push_id_from_server(self):
         """
@@ -285,7 +277,7 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertIsNone(quic_client.closed)
+        assert quic_client.closed is None
 
         # receive unexpected MAX_PUSH_ID
         h3_client.handle_event(
@@ -295,10 +287,8 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_client.closed,
-            (ErrorCode.H3_FRAME_UNEXPECTED, "Servers must not send MAX_PUSH_ID"),
-        )
+        assert quic_client.closed == \
+            (ErrorCode.H3_FRAME_UNEXPECTED, "Servers must not send MAX_PUSH_ID")
 
     def test_handle_control_settings_twice(self):
         """
@@ -318,7 +308,7 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertIsNone(quic_server.closed)
+        assert quic_server.closed is None
 
         # receive unexpected SETTINGS
         h3_server.handle_event(
@@ -328,10 +318,8 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_server.closed,
-            (ErrorCode.H3_FRAME_UNEXPECTED, "SETTINGS have already been received"),
-        )
+        assert quic_server.closed == \
+            (ErrorCode.H3_FRAME_UNEXPECTED, "SETTINGS have already been received")
 
     def test_handle_control_stream_close(self):
         """
@@ -351,7 +339,7 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertIsNone(quic_client.closed)
+        assert quic_client.closed is None
 
         # receive unexpected FIN
         h3_client.handle_event(
@@ -361,13 +349,11 @@ class H3ConnectionTest(TestCase):
                 end_stream=True,
             )
         )
-        self.assertEqual(
-            quic_client.closed,
+        assert quic_client.closed == \
             (
                 ErrorCode.H3_CLOSED_CRITICAL_STREAM,
                 "Closing control stream is not allowed",
-            ),
-        )
+            )
 
     def test_handle_control_stream_duplicate(self):
         """
@@ -391,13 +377,11 @@ class H3ConnectionTest(TestCase):
                 stream_id=6, data=encode_uint_var(StreamType.CONTROL), end_stream=False
             )
         )
-        self.assertEqual(
-            quic_server.closed,
+        assert quic_server.closed == \
             (
                 ErrorCode.H3_STREAM_CREATION_ERROR,
                 "Only one control stream is allowed",
-            ),
-        )
+            )
 
     def test_handle_push_frame_wrong_frame_type(self):
         """
@@ -417,10 +401,8 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_client.closed,
-            (ErrorCode.H3_FRAME_UNEXPECTED, "Invalid frame type on push stream"),
-        )
+        assert quic_client.closed == \
+            (ErrorCode.H3_FRAME_UNEXPECTED, "Invalid frame type on push stream")
 
     def test_handle_qpack_decoder_duplicate(self):
         """
@@ -448,13 +430,11 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_client.closed,
+        assert quic_client.closed == \
             (
                 ErrorCode.H3_STREAM_CREATION_ERROR,
                 "Only one QPACK decoder stream is allowed",
-            ),
-        )
+            )
 
     def test_handle_qpack_decoder_stream_error(self):
         """
@@ -472,7 +452,7 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(quic_client.closed, (ErrorCode.QPACK_DECODER_STREAM_ERROR, ""))
+        assert quic_client.closed == (ErrorCode.QPACK_DECODER_STREAM_ERROR, "")
 
     def test_handle_qpack_encoder_duplicate(self):
         """
@@ -500,13 +480,11 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_client.closed,
+        assert quic_client.closed == \
             (
                 ErrorCode.H3_STREAM_CREATION_ERROR,
                 "Only one QPACK encoder stream is allowed",
-            ),
-        )
+            )
 
     def test_handle_qpack_encoder_stream_error(self):
         """
@@ -524,7 +502,7 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(quic_client.closed, (ErrorCode.QPACK_ENCODER_STREAM_ERROR, ""))
+        assert quic_client.closed == (ErrorCode.QPACK_ENCODER_STREAM_ERROR, "")
 
     def test_handle_request_frame_bad_headers(self):
         """
@@ -540,7 +518,7 @@ class H3ConnectionTest(TestCase):
                 stream_id=0, data=encode_frame(FrameType.HEADERS, b""), end_stream=False
             )
         )
-        self.assertEqual(quic_server.closed, (ErrorCode.QPACK_DECOMPRESSION_FAILED, ""))
+        assert quic_server.closed == (ErrorCode.QPACK_DECOMPRESSION_FAILED, "")
 
     def test_handle_request_frame_data_before_headers(self):
         """
@@ -556,13 +534,11 @@ class H3ConnectionTest(TestCase):
                 stream_id=0, data=encode_frame(FrameType.DATA, b""), end_stream=False
             )
         )
-        self.assertEqual(
-            quic_server.closed,
+        assert quic_server.closed == \
             (
                 ErrorCode.H3_FRAME_UNEXPECTED,
                 "DATA frame is not allowed in this state",
-            ),
-        )
+            )
 
     def test_handle_request_frame_headers_after_trailers(self):
         """
@@ -596,13 +572,11 @@ class H3ConnectionTest(TestCase):
                     end_stream=False,
                 )
             )
-            self.assertEqual(
-                quic_server.closed,
+            assert quic_server.closed == \
                 (
                     ErrorCode.H3_FRAME_UNEXPECTED,
                     "HEADERS frame is not allowed in this state",
-                ),
-            )
+                )
 
     def test_handle_request_frame_push_promise_from_client(self):
         """
@@ -620,10 +594,8 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_server.closed,
-            (ErrorCode.H3_FRAME_UNEXPECTED, "Clients must not send PUSH_PROMISE"),
-        )
+        assert quic_server.closed == \
+            (ErrorCode.H3_FRAME_UNEXPECTED, "Clients must not send PUSH_PROMISE")
 
     def test_handle_request_frame_wrong_frame_type(self):
         quic_server = FakeQuicConnection(
@@ -638,10 +610,8 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_server.closed,
-            (ErrorCode.H3_FRAME_UNEXPECTED, "Invalid frame type on request stream"),
-        )
+        assert quic_server.closed == \
+            (ErrorCode.H3_FRAME_UNEXPECTED, "Invalid frame type on request stream")
 
     def test_request(self):
         with h3_client_and_server() as (quic_client, quic_server):
@@ -678,8 +648,7 @@ class H3ConnectionTest(TestCase):
 
             # receive request
             events = h3_transfer(quic_client, h3_server)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     HeadersReceived(
                         headers=[
@@ -691,9 +660,8 @@ class H3ConnectionTest(TestCase):
                         ],
                         stream_id=stream_id,
                         stream_ended=True,
-                    )
-                ],
-            )
+                    ) \
+                ]
 
             # send response
             h3_server.send_headers(
@@ -708,8 +676,7 @@ class H3ConnectionTest(TestCase):
 
             # receive response
             events = h3_transfer(quic_server, h3_client)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     HeadersReceived(
                         headers=[
@@ -719,9 +686,8 @@ class H3ConnectionTest(TestCase):
                         ],
                         stream_id=stream_id,
                         stream_ended=True,
-                    )
-                ],
-            )
+                    ) \
+                ]
 
     def test_request_fragmented_frame(self):
         with h3_fake_client_and_server() as (quic_client, quic_server):
@@ -744,8 +710,7 @@ class H3ConnectionTest(TestCase):
 
             # receive request
             events = h3_transfer(quic_client, h3_server)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     HeadersReceived(
                         headers=[
@@ -764,8 +729,7 @@ class H3ConnectionTest(TestCase):
                     DataReceived(data=b"l", stream_id=0, stream_ended=False),
                     DataReceived(data=b"o", stream_id=0, stream_ended=False),
                     DataReceived(data=b"", stream_id=0, stream_ended=True),
-                ],
-            )
+                ]
 
             # send push promise
             push_stream_id = h3_server.send_push_promise(
@@ -777,7 +741,7 @@ class H3ConnectionTest(TestCase):
                     (b":path", b"/app.txt"),
                 ],
             )
-            self.assertEqual(push_stream_id, 15)
+            assert push_stream_id == 15
 
             # send response
             h3_server.send_headers(
@@ -800,8 +764,7 @@ class H3ConnectionTest(TestCase):
 
             # receive push promise / response
             events = h3_transfer(quic_server, h3_client)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     PushPromiseReceived(
                         headers=[
@@ -836,20 +799,19 @@ class H3ConnectionTest(TestCase):
                         push_id=0,
                     ),
                     DataReceived(
-                        data=b"t", stream_id=15, stream_ended=False, push_id=0
+                        data=b"t", stream_id=15, stream_ended=False, push_id=0 \
                     ),
                     DataReceived(
-                        data=b"e", stream_id=15, stream_ended=False, push_id=0
+                        data=b"e", stream_id=15, stream_ended=False, push_id=0 \
                     ),
                     DataReceived(
-                        data=b"x", stream_id=15, stream_ended=False, push_id=0
+                        data=b"x", stream_id=15, stream_ended=False, push_id=0 \
                     ),
                     DataReceived(
-                        data=b"t", stream_id=15, stream_ended=False, push_id=0
+                        data=b"t", stream_id=15, stream_ended=False, push_id=0 \
                     ),
                     DataReceived(data=b"", stream_id=15, stream_ended=True, push_id=0),
-                ],
-            )
+                ]
 
     def test_request_with_server_push(self):
         with h3_client_and_server() as (quic_client, quic_server):
@@ -871,8 +833,7 @@ class H3ConnectionTest(TestCase):
 
             # receive request
             events = h3_transfer(quic_client, h3_server)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     HeadersReceived(
                         headers=[
@@ -883,9 +844,8 @@ class H3ConnectionTest(TestCase):
                         ],
                         stream_id=stream_id,
                         stream_ended=True,
-                    )
-                ],
-            )
+                    ) \
+                ]
 
             # send push promises
             push_stream_id_css = h3_server.send_push_promise(
@@ -897,7 +857,7 @@ class H3ConnectionTest(TestCase):
                     (b":path", b"/app.css"),
                 ],
             )
-            self.assertEqual(push_stream_id_css, 15)
+            assert push_stream_id_css == 15
 
             push_stream_id_js = h3_server.send_push_promise(
                 stream_id=stream_id,
@@ -908,7 +868,7 @@ class H3ConnectionTest(TestCase):
                     (b":path", b"/app.js"),
                 ],
             )
-            self.assertEqual(push_stream_id_js, 19)
+            assert push_stream_id_js == 19
 
             # send response
             h3_server.send_headers(
@@ -952,8 +912,7 @@ class H3ConnectionTest(TestCase):
             # receive push promises, response and push responses
 
             events = h3_transfer(quic_server, h3_client)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     PushPromiseReceived(
                         headers=[
@@ -1015,8 +974,7 @@ class H3ConnectionTest(TestCase):
                         stream_id=push_stream_id_js,
                         stream_ended=True,
                     ),
-                ],
-            )
+                ]
 
     def test_request_with_server_push_max_push_id(self):
         with h3_client_and_server() as (quic_client, quic_server):
@@ -1038,8 +996,7 @@ class H3ConnectionTest(TestCase):
 
             # receive request
             events = h3_transfer(quic_client, h3_server)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     HeadersReceived(
                         headers=[
@@ -1050,9 +1007,8 @@ class H3ConnectionTest(TestCase):
                         ],
                         stream_id=stream_id,
                         stream_ended=True,
-                    )
-                ],
-            )
+                    ) \
+                ]
 
             # send push promises
             for i in range(0, 8):
@@ -1067,7 +1023,7 @@ class H3ConnectionTest(TestCase):
                 )
 
             # send one too many
-            with self.assertRaises(NoAvailablePushIDError):
+            with pytest.raises(NoAvailablePushIDError):
                 h3_server.send_push_promise(
                     stream_id=stream_id,
                     headers=[
@@ -1100,7 +1056,7 @@ class H3ConnectionTest(TestCase):
         h3_client.send_headers(
             stream_id=stream_id, headers=[(b"x-some-trailer", b"foo")], end_stream=False
         )
-        with self.assertRaises(FrameUnexpected):
+        with pytest.raises(FrameUnexpected):
             h3_client.send_data(stream_id=stream_id, data=b"hello", end_stream=False)
 
     def test_send_data_before_headers(self):
@@ -1113,7 +1069,7 @@ class H3ConnectionTest(TestCase):
         h3_client = H3Connection(quic_client)
 
         stream_id = quic_client.get_next_available_stream_id()
-        with self.assertRaises(FrameUnexpected):
+        with pytest.raises(FrameUnexpected):
             h3_client.send_data(stream_id=stream_id, data=b"hello", end_stream=False)
 
     def test_send_headers_after_trailers(self):
@@ -1138,7 +1094,7 @@ class H3ConnectionTest(TestCase):
         h3_client.send_headers(
             stream_id=stream_id, headers=[(b"x-some-trailer", b"foo")], end_stream=False
         )
-        with self.assertRaises(FrameUnexpected):
+        with pytest.raises(FrameUnexpected):
             h3_client.send_headers(
                 stream_id=stream_id,
                 headers=[(b"x-other-trailer", b"foo")],
@@ -1184,16 +1140,15 @@ class H3ConnectionTest(TestCase):
                 end_stream=True,
             )
         )
-        self.assertEqual(
-            h3_client.handle_event(
+        assert h3_client.handle_event(
                 StreamDataReceived(
                     stream_id=7,
                     data=binascii.unhexlify(
-                        "3fe101c696d07abe941094cb6d0a08017d403971966e32ca98b46f"
+                        "3fe101c696d07abe941094cb6d0a08017d403971966e32ca98b46f" \
                     ),
                     end_stream=False,
-                )
-            ),
+                ) \
+            ) == \
             [
                 HeadersReceived(
                     headers=[
@@ -1205,15 +1160,14 @@ class H3ConnectionTest(TestCase):
                 ),
                 DataReceived(
                     data=(
-                        b"you reached mvfst.net, reach the /echo endpoint for an "
-                        b"echo response query /<number> endpoints for a variable "
-                        b"size response with random bytes"
+                        b"you reached mvfst.net, reach the /echo endpoint for an " \
+                        b"echo response query /<number> endpoints for a variable " \
+                        b"size response with random bytes" \
                     ),
                     stream_id=0,
                     stream_ended=True,
                 ),
-            ],
-        )
+            ]
 
     def test_blocked_stream_trailer(self):
         quic_client = FakeQuicConnection(
@@ -1237,16 +1191,15 @@ class H3ConnectionTest(TestCase):
             StreamDataReceived(stream_id=11, data=b"\x03", end_stream=False)
         )
 
-        self.assertEqual(
-            h3_client.handle_event(
+        assert h3_client.handle_event(
                 StreamDataReceived(
                     stream_id=0,
                     data=binascii.unhexlify(
-                        "011b0000d95696d07abe941094cb6d0a08017d403971966e32ca98b46f"
+                        "011b0000d95696d07abe941094cb6d0a08017d403971966e32ca98b46f" \
                     ),
                     end_stream=False,
-                )
-            ),
+                ) \
+            ) == \
             [
                 HeadersReceived(
                     headers=[
@@ -1255,63 +1208,56 @@ class H3ConnectionTest(TestCase):
                     ],
                     stream_id=0,
                     stream_ended=False,
-                )
-            ],
-        )
+                ) \
+            ]
 
-        self.assertEqual(
-            h3_client.handle_event(
+        assert h3_client.handle_event(
                 StreamDataReceived(
                     stream_id=0,
                     data=binascii.unhexlify(
-                        "00408d796f752072656163686564206d766673742e6e65742c20726561636820"
-                        "746865202f6563686f20656e64706f696e7420666f7220616e206563686f2072"
-                        "6573706f6e7365207175657279202f3c6e756d6265723e20656e64706f696e74"
-                        "7320666f722061207661726961626c652073697a6520726573706f6e73652077"
-                        "6974682072616e646f6d206279746573"
+                        "00408d796f752072656163686564206d766673742e6e65742c20726561636820" \
+                        "746865202f6563686f20656e64706f696e7420666f7220616e206563686f2072" \
+                        "6573706f6e7365207175657279202f3c6e756d6265723e20656e64706f696e74" \
+                        "7320666f722061207661726961626c652073697a6520726573706f6e73652077" \
+                        "6974682072616e646f6d206279746573" \
                     ),
                     end_stream=False,
-                )
-            ),
+                ) \
+            ) == \
             [
                 DataReceived(
                     data=(
-                        b"you reached mvfst.net, reach the /echo endpoint for an "
-                        b"echo response query /<number> endpoints for a variable "
-                        b"size response with random bytes"
+                        b"you reached mvfst.net, reach the /echo endpoint for an " \
+                        b"echo response query /<number> endpoints for a variable " \
+                        b"size response with random bytes" \
                     ),
                     stream_id=0,
                     stream_ended=False,
-                )
-            ],
-        )
+                ) \
+            ]
 
-        self.assertEqual(
-            h3_client.handle_event(
+        assert h3_client.handle_event(
                 StreamDataReceived(
-                    stream_id=0, data=binascii.unhexlify("0103028010"), end_stream=True
-                )
-            ),
-            [],
-        )
+                    stream_id=0, data=binascii.unhexlify("0103028010"), end_stream=True \
+                ) \
+            ) == \
+            []
 
-        self.assertEqual(
-            h3_client.handle_event(
+        assert h3_client.handle_event(
                 StreamDataReceived(
                     stream_id=7,
                     data=binascii.unhexlify("6af2b20f49564d833505b38294e7"),
                     end_stream=False,
-                )
-            ),
+                ) \
+            ) == \
             [
                 HeadersReceived(
                     headers=[(b"x-some-trailer", b"foo")],
                     stream_id=0,
                     stream_ended=True,
                     push_id=None,
-                )
-            ],
-        )
+                ) \
+            ]
 
     def test_uni_stream_grease(self):
         with h3_client_and_server() as (quic_client, quic_server):
@@ -1320,7 +1266,7 @@ class H3ConnectionTest(TestCase):
             quic_client.send_stream_data(
                 14, b"\xff\xff\xff\xff\xff\xff\xff\xfeGREASE is the word"
             )
-            self.assertEqual(h3_transfer(quic_client, h3_server), [])
+            assert h3_transfer(quic_client, h3_server) == []
 
     def test_request_with_trailers(self):
         with h3_client_and_server() as (quic_client, quic_server):
@@ -1347,8 +1293,7 @@ class H3ConnectionTest(TestCase):
 
             # receive request
             events = h3_transfer(quic_client, h3_server)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     HeadersReceived(
                         headers=[
@@ -1365,8 +1310,7 @@ class H3ConnectionTest(TestCase):
                         stream_id=stream_id,
                         stream_ended=True,
                     ),
-                ],
-            )
+                ]
 
             # send response
             h3_server.send_headers(
@@ -1390,8 +1334,7 @@ class H3ConnectionTest(TestCase):
 
             # receive response
             events = h3_transfer(quic_server, h3_client)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     HeadersReceived(
                         headers=[
@@ -1411,8 +1354,7 @@ class H3ConnectionTest(TestCase):
                         stream_id=stream_id,
                         stream_ended=True,
                     ),
-                ],
-            )
+                ]
 
 
     def test_request_with_informational(self):
@@ -1435,8 +1377,7 @@ class H3ConnectionTest(TestCase):
 
             # receive request
             events = h3_transfer(quic_client, h3_server)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     HeadersReceived(
                         headers=[
@@ -1448,8 +1389,7 @@ class H3ConnectionTest(TestCase):
                         stream_id=stream_id,
                         stream_ended=True,
                     ),
-                ],
-            )
+                ]
 
             # send response
             h3_server.send_headers(
@@ -1476,15 +1416,14 @@ class H3ConnectionTest(TestCase):
 
             # receive response
             events = h3_transfer(quic_server, h3_client)
-            self.assertEqual(
-                events,
+            assert events == \
                 [
                     InformationalHeadersReceived(
                         headers=[
                             (b":status", b"103"),
                             (b"link", b"</style.css>; rel=preload; as=style"),
                         ],
-                        stream_id=stream_id
+                        stream_id=stream_id \
                     ),
                     HeadersReceived(
                         headers=[
@@ -1499,8 +1438,7 @@ class H3ConnectionTest(TestCase):
                         stream_id=stream_id,
                         stream_ended=True,
                     ),
-                ],
-            )
+                ]
 
     def test_uni_stream_type(self):
         with h3_client_and_server() as (quic_client, quic_server):
@@ -1508,32 +1446,32 @@ class H3ConnectionTest(TestCase):
 
             # unknown stream type 9
             stream_id = quic_client.get_next_available_stream_id(is_unidirectional=True)
-            self.assertEqual(stream_id, 2)
+            assert stream_id == 2
             quic_client.send_stream_data(stream_id, b"\x09")
-            self.assertEqual(h3_transfer(quic_client, h3_server), [])
-            self.assertEqual(list(h3_server._stream.keys()), [2])
-            self.assertEqual(h3_server._stream[2].buffer, b"")
-            self.assertEqual(h3_server._stream[2].stream_type, 9)
+            assert h3_transfer(quic_client, h3_server) == []
+            assert list(h3_server._stream.keys()) == [2]
+            assert h3_server._stream[2].buffer == b""
+            assert h3_server._stream[2].stream_type == 9
 
             # unknown stream type 64, one byte at a time
             stream_id = quic_client.get_next_available_stream_id(is_unidirectional=True)
-            self.assertEqual(stream_id, 6)
+            assert stream_id == 6
 
             quic_client.send_stream_data(stream_id, b"\x40")
-            self.assertEqual(h3_transfer(quic_client, h3_server), [])
-            self.assertEqual(list(h3_server._stream.keys()), [2, 6])
-            self.assertEqual(h3_server._stream[2].buffer, b"")
-            self.assertEqual(h3_server._stream[2].stream_type, 9)
-            self.assertEqual(h3_server._stream[6].buffer, b"\x40")
-            self.assertEqual(h3_server._stream[6].stream_type, None)
+            assert h3_transfer(quic_client, h3_server) == []
+            assert list(h3_server._stream.keys()) == [2, 6]
+            assert h3_server._stream[2].buffer == b""
+            assert h3_server._stream[2].stream_type == 9
+            assert h3_server._stream[6].buffer == b"\x40"
+            assert h3_server._stream[6].stream_type == None
 
             quic_client.send_stream_data(stream_id, b"\x40")
-            self.assertEqual(h3_transfer(quic_client, h3_server), [])
-            self.assertEqual(list(h3_server._stream.keys()), [2, 6])
-            self.assertEqual(h3_server._stream[2].buffer, b"")
-            self.assertEqual(h3_server._stream[2].stream_type, 9)
-            self.assertEqual(h3_server._stream[6].buffer, b"")
-            self.assertEqual(h3_server._stream[6].stream_type, 64)
+            assert h3_transfer(quic_client, h3_server) == []
+            assert list(h3_server._stream.keys()) == [2, 6]
+            assert h3_server._stream[2].buffer == b""
+            assert h3_server._stream[2].stream_type == 9
+            assert h3_server._stream[6].buffer == b""
+            assert h3_server._stream[6].stream_type == 64
 
     def test_validate_settings_h3_datagram_invalid_value(self):
         quic_server = FakeQuicConnection(
@@ -1552,13 +1490,11 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_server.closed,
+        assert quic_server.closed == \
             (
                 ErrorCode.H3_SETTINGS_ERROR,
                 "H3_DATAGRAM setting must be 0 or 1",
-            ),
-        )
+            )
 
     def test_validate_settings_h3_datagram_without_transport_parameter(self):
         quic_server = FakeQuicConnection(
@@ -1577,13 +1513,11 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_server.closed,
+        assert quic_server.closed == \
             (
                 ErrorCode.H3_SETTINGS_ERROR,
                 "H3_DATAGRAM requires max_datagram_frame_size transport parameter",
-            ),
-        )
+            )
 
     def test_validate_settings_enable_connect_protocol_invalid_value(self):
         quic_server = FakeQuicConnection(
@@ -1602,13 +1536,11 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_server.closed,
+        assert quic_server.closed == \
             (
                 ErrorCode.H3_SETTINGS_ERROR,
                 "ENABLE_CONNECT_PROTOCOL setting must be 0 or 1",
-            ),
-        )
+            )
 
     def test_validate_settings_enable_webtransport_invalid_value(self):
         quic_server = FakeQuicConnection(
@@ -1627,13 +1559,11 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_server.closed,
+        assert quic_server.closed == \
             (
                 ErrorCode.H3_SETTINGS_ERROR,
                 "ENABLE_WEBTRANSPORT setting must be 0 or 1",
-            ),
-        )
+            )
 
     def test_validate_settings_enable_webtransport_without_h3_datagram(self):
         quic_server = FakeQuicConnection(
@@ -1652,16 +1582,14 @@ class H3ConnectionTest(TestCase):
                 end_stream=False,
             )
         )
-        self.assertEqual(
-            quic_server.closed,
+        assert quic_server.closed == \
             (
                 ErrorCode.H3_SETTINGS_ERROR,
                 "ENABLE_WEBTRANSPORT requires H3_DATAGRAM",
-            ),
-        )
+            )
 
 
-class H3ParserTest(TestCase):
+class TestH3Parser:
     def test_parse_settings_duplicate_identifier(self):
         buf = Buffer(capacity=1024)
         buf.push_uint_var(1)
@@ -1669,22 +1597,18 @@ class H3ParserTest(TestCase):
         buf.push_uint_var(1)
         buf.push_uint_var(456)
 
-        with self.assertRaises(SettingsError) as cm:
+        with pytest.raises(SettingsError) as cm:
             parse_settings(buf.data)
-        self.assertEqual(
-            cm.exception.reason_phrase, "Setting identifier 0x1 is included twice"
-        )
+        assert cm.value.reason_phrase == "Setting identifier 0x1 is included twice"
 
     def test_parse_settings_reserved_identifier(self):
         buf = Buffer(capacity=1024)
         buf.push_uint_var(0)
         buf.push_uint_var(123)
 
-        with self.assertRaises(SettingsError) as cm:
+        with pytest.raises(SettingsError) as cm:
             parse_settings(buf.data)
-        self.assertEqual(
-            cm.exception.reason_phrase, "Setting identifier 0x0 is reserved"
-        )
+        assert cm.value.reason_phrase == "Setting identifier 0x0 is reserved"
 
     def test_validate_push_promise_headers(self):
         # OK
@@ -1707,26 +1631,22 @@ class H3ParserTest(TestCase):
         )
 
         # invalid pseudo-header
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_push_promise_headers([(b":status", b"foo")])
-        self.assertEqual(
-            cm.exception.reason_phrase, "Pseudo-header b':status' is not valid"
-        )
+        assert cm.value.reason_phrase == "Pseudo-header b':status' is not valid"
 
         # duplicate pseudo-header
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_push_promise_headers(
                 [
                     (b":method", b"GET"),
                     (b":method", b"POST"),
                 ]
             )
-        self.assertEqual(
-            cm.exception.reason_phrase, "Pseudo-header b':method' is included twice"
-        )
+        assert cm.value.reason_phrase == "Pseudo-header b':method' is included twice"
 
         # pseudo-header after regular headers
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_push_promise_headers(
                 [
                     (b":method", b"GET"),
@@ -1736,13 +1656,11 @@ class H3ParserTest(TestCase):
                     (b":authority", b"foo"),
                 ]
             )
-        self.assertEqual(
-            cm.exception.reason_phrase,
-            "Pseudo-header b':authority' is not allowed after regular headers",
-        )
+        assert cm.value.reason_phrase == \
+            "Pseudo-header b':authority' is not allowed after regular headers"
 
         # missing pseudo-headers
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_push_promise_headers(
                 [
                     (b":method", b"GET"),
@@ -1750,10 +1668,8 @@ class H3ParserTest(TestCase):
                     (b":path", b"/"),
                 ]
             )
-        self.assertEqual(
-            cm.exception.reason_phrase,
-            "Pseudo-headers [b':authority'] are missing",
-        )
+        assert cm.value.reason_phrase == \
+            "Pseudo-headers [b':authority'] are missing"
 
     def test_validate_request_headers(self):
         # OK
@@ -1776,33 +1692,27 @@ class H3ParserTest(TestCase):
         )
 
         # uppercase header
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_request_headers([(b"X-Foo", b"foo")])
-        self.assertEqual(
-            cm.exception.reason_phrase, "Header b'X-Foo' contains uppercase letters"
-        )
+        assert cm.value.reason_phrase == "Header b'X-Foo' contains uppercase letters"
 
         # invalid pseudo-header
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_request_headers([(b":status", b"foo")])
-        self.assertEqual(
-            cm.exception.reason_phrase, "Pseudo-header b':status' is not valid"
-        )
+        assert cm.value.reason_phrase == "Pseudo-header b':status' is not valid"
 
         # duplicate pseudo-header
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_request_headers(
                 [
                     (b":method", b"GET"),
                     (b":method", b"POST"),
                 ]
             )
-        self.assertEqual(
-            cm.exception.reason_phrase, "Pseudo-header b':method' is included twice"
-        )
+        assert cm.value.reason_phrase == "Pseudo-header b':method' is included twice"
 
         # pseudo-header after regular headers
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_request_headers(
                 [
                     (b":method", b"GET"),
@@ -1812,22 +1722,18 @@ class H3ParserTest(TestCase):
                     (b":authority", b"foo"),
                 ]
             )
-        self.assertEqual(
-            cm.exception.reason_phrase,
-            "Pseudo-header b':authority' is not allowed after regular headers",
-        )
+        assert cm.value.reason_phrase == \
+            "Pseudo-header b':authority' is not allowed after regular headers"
 
         # missing pseudo-headers
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_request_headers([(b":method", b"GET")])
-        self.assertEqual(
-            cm.exception.reason_phrase,
-            "Pseudo-headers [b':authority'] are missing",
-        )
+        assert cm.value.reason_phrase == \
+            "Pseudo-headers [b':authority'] are missing"
 
         # empty :authority pseudo-header for http/https
         for scheme in [b"http", b"https"]:
-            with self.assertRaises(MessageError) as cm:
+            with pytest.raises(MessageError) as cm:
                 validate_request_headers(
                     [
                         (b":method", b"GET"),
@@ -1836,14 +1742,12 @@ class H3ParserTest(TestCase):
                         (b":path", b"/"),
                     ]
                 )
-            self.assertEqual(
-                cm.exception.reason_phrase,
-                "Pseudo-header b':authority' cannot be empty",
-            )
+            assert cm.value.reason_phrase == \
+                "Pseudo-header b':authority' cannot be empty"
 
         # empty :path pseudo-header for http/https
         for scheme in [b"http", b"https"]:
-            with self.assertRaises(MessageError) as cm:
+            with pytest.raises(MessageError) as cm:
                 validate_request_headers(
                     [
                         (b":method", b"GET"),
@@ -1852,9 +1756,7 @@ class H3ParserTest(TestCase):
                         (b":path", b""),
                     ]
                 )
-            self.assertEqual(
-                cm.exception.reason_phrase, "Pseudo-header b':path' cannot be empty"
-            )
+            assert cm.value.reason_phrase == "Pseudo-header b':path' cannot be empty"
 
     def test_validate_response_headers(self):
         # OK
@@ -1867,44 +1769,36 @@ class H3ParserTest(TestCase):
         )
 
         # invalid pseudo-header
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_response_headers([(b":method", b"GET")])
-        self.assertEqual(
-            cm.exception.reason_phrase, "Pseudo-header b':method' is not valid"
-        )
+        assert cm.value.reason_phrase == "Pseudo-header b':method' is not valid"
 
         # duplicate pseudo-header
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_response_headers(
                 [
                     (b":status", b"200"),
                     (b":status", b"501"),
                 ]
             )
-        self.assertEqual(
-            cm.exception.reason_phrase, "Pseudo-header b':status' is included twice"
-        )
+        assert cm.value.reason_phrase == "Pseudo-header b':status' is included twice"
 
     def test_validate_trailers(self):
         # OK
         validate_trailers([(b"x-foo", b"bar")])
 
         # invalid pseudo-header
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_trailers([(b":status", b"foo")])
-        self.assertEqual(
-            cm.exception.reason_phrase, "Pseudo-header b':status' is not valid"
-        )
+        assert cm.value.reason_phrase == "Pseudo-header b':status' is not valid"
 
         # pseudo-header after regular headers
-        with self.assertRaises(MessageError) as cm:
+        with pytest.raises(MessageError) as cm:
             validate_trailers(
                 [
                     (b"x-foo", b"bar"),
                     (b":authority", b"foo"),
                 ]
             )
-        self.assertEqual(
-            cm.exception.reason_phrase,
-            "Pseudo-header b':authority' is not allowed after regular headers",
-        )
+        assert cm.value.reason_phrase == \
+            "Pseudo-header b':authority' is not allowed after regular headers"

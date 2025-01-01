@@ -1,32 +1,44 @@
-use pyo3::{prelude::*};
 use pyo3::exceptions::PyException;
+use pyo3::prelude::*;
 
-mod headers;
 mod aead;
-mod certificate;
-mod rsa;
 mod agreement;
-mod private_key;
-mod pkcs8;
+mod buffer;
+mod certificate;
+mod headers;
 mod hpk;
 mod ocsp;
-mod buffer;
+mod pkcs8;
+mod private_key;
+mod rsa;
 
-pub use self::headers::{QpackDecoder, QpackEncoder, StreamBlocked, EncoderStreamError, DecoderStreamError, DecompressionFailed};
-pub use self::aead::{AeadChaCha20Poly1305, AeadAes128Gcm, AeadAes256Gcm};
-pub use self::certificate::{ServerVerifier, Certificate, SelfSignedCertificateError, InvalidNameCertificateError, ExpiredCertificateError, UnacceptableCertificateError};
-pub use self::rsa::{Rsa};
-pub use self::private_key::{RsaPrivateKey, DsaPrivateKey, Ed25519PrivateKey, EcPrivateKey, verify_with_public_key, SignatureError};
-pub use self::agreement::{X25519KeyExchange, ECDHP256KeyExchange, ECDHP384KeyExchange, ECDHP521KeyExchange, X25519Kyber768Draft00KeyExchange};
-pub use self::pkcs8::{PrivateKeyInfo, KeyType};
-pub use self::hpk::{QUICHeaderProtection};
-pub use self::ocsp::{OCSPResponse, OCSPCertStatus, OCSPResponseStatus, ReasonFlags, OCSPRequest};
+pub use self::aead::{AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305};
+pub use self::agreement::{
+    ECDHP256KeyExchange, ECDHP384KeyExchange, ECDHP521KeyExchange, X25519KeyExchange,
+    X25519ML768KeyExchange,
+};
 pub use self::buffer::{Buffer, BufferReadError, BufferWriteError};
+pub use self::certificate::{
+    Certificate, ExpiredCertificateError, InvalidNameCertificateError, SelfSignedCertificateError,
+    ServerVerifier, UnacceptableCertificateError,
+};
+pub use self::headers::{
+    DecoderStreamError, DecompressionFailed, EncoderStreamError, QpackDecoder, QpackEncoder,
+    StreamBlocked,
+};
+pub use self::hpk::QUICHeaderProtection;
+pub use self::ocsp::{OCSPCertStatus, OCSPRequest, OCSPResponse, OCSPResponseStatus, ReasonFlags};
+pub use self::pkcs8::{KeyType, PrivateKeyInfo};
+pub use self::private_key::{
+    verify_with_public_key, DsaPrivateKey, EcPrivateKey, Ed25519PrivateKey, RsaPrivateKey,
+    SignatureError,
+};
+pub use self::rsa::Rsa;
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
 
-#[pymodule]
-fn _hazmat(py: Python, m: &PyModule) -> PyResult<()> {
+#[pymodule(gil_used = false)]
+fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ls-qpack bridge
     m.add_class::<QpackDecoder>()?;
     m.add_class::<QpackEncoder>()?;
@@ -41,10 +53,22 @@ fn _hazmat(py: Python, m: &PyModule) -> PyResult<()> {
     // Certificate Store X509 Verification + Certificate Representation
     m.add_class::<ServerVerifier>()?;
     m.add_class::<Certificate>()?;
-    m.add("SelfSignedCertificateError", py.get_type::<SelfSignedCertificateError>())?;
-    m.add("InvalidNameCertificateError", py.get_type::<InvalidNameCertificateError>())?;
-    m.add("ExpiredCertificateError", py.get_type::<ExpiredCertificateError>())?;
-    m.add("UnacceptableCertificateError", py.get_type::<UnacceptableCertificateError>())?;
+    m.add(
+        "SelfSignedCertificateError",
+        py.get_type::<SelfSignedCertificateError>(),
+    )?;
+    m.add(
+        "InvalidNameCertificateError",
+        py.get_type::<InvalidNameCertificateError>(),
+    )?;
+    m.add(
+        "ExpiredCertificateError",
+        py.get_type::<ExpiredCertificateError>(),
+    )?;
+    m.add(
+        "UnacceptableCertificateError",
+        py.get_type::<UnacceptableCertificateError>(),
+    )?;
     // RSA specialized for the Retry Token
     m.add_class::<Rsa>()?;
     // Header protection mask
@@ -63,7 +87,7 @@ fn _hazmat(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<ECDHP256KeyExchange>()?;
     m.add_class::<ECDHP384KeyExchange>()?;
     m.add_class::<ECDHP521KeyExchange>()?;
-    m.add_class::<X25519Kyber768Draft00KeyExchange>()?;
+    m.add_class::<X25519ML768KeyExchange>()?;
     // General Crypto Error
     m.add("CryptoError", py.get_type::<CryptoError>())?;
     // Niquests OCSP helper

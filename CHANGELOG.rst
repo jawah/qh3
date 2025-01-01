@@ -1,3 +1,23 @@
+1.3.0 (2025-01-01)
+====================
+
+**Changed**
+- Post-Quantum key-exchange Kyber 768 Draft upgraded to standard Module-Lattice 768.
+- Version negotiation no longer logged as ``INFO``. Every logs generated will always be ``DEBUG`` level.
+- Converted our test suite to run on Pytest instead of unittest.
+- Migrated pyo3 from 0.20.3 to 0.23.3
+
+**Fixed**
+- Clippy warnings in our Rust code.
+- Rust code may panic due to lack of proper result unpacking on the cryptographic calls. Now any error will
+  raise exception ``CryptoError`` instead.
+- Negotiating post-quantum key exchange (server side).
+
+**Added**
+- noxfile.
+- miscellaneous serialize/deserialize for Certificate, and OCSPResponse.
+- Initial support for Python 3.13 freethreaded experimental build.
+
 1.2.1 (2024-10-15)
 ====================
 

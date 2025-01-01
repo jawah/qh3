@@ -1003,7 +1003,7 @@ class QuicConnection:
                     context, plain_payload, crypto_frame_required
                 )
             except QuicConnectionError as exc:
-                self._logger.warning(exc)
+                self._logger.debug(exc)
                 self.close(
                     error_code=exc.error_code,
                     frame_type=exc.frame_type,
@@ -1404,7 +1404,7 @@ class QuicConnection:
         if self._configuration.certificate is not None and not isinstance(
             self._configuration.certificate, X509Certificate
         ):
-            raise RuntimeError(
+            raise RuntimeError(  # Defensive: migration from cryptography
                 "qh3 v1.0+ no longer support passing cryptography "
                 "certificate objects within a QuicConfiguration object. "
                 "Use configuration.load_cert_chain(...) instead using "
@@ -1414,7 +1414,7 @@ class QuicConnection:
         if self._configuration.certificate_chain and not isinstance(
             self._configuration.certificate_chain[0], X509Certificate
         ):
-            raise RuntimeError(
+            raise RuntimeError(  # Defensive: migration from cryptography
                 "qh3 v1.0+ no longer support passing cryptography "
                 "certificate objects within a QuicConfiguration object. "
                 "Use configuration.load_cert_chain(...) instead using "
@@ -1424,7 +1424,7 @@ class QuicConnection:
         if self._configuration.private_key and "cryptography" in str(
             type(self._configuration.private_key)
         ):
-            raise RuntimeError(
+            raise RuntimeError(  # Defensive: migration from cryptography
                 "qh3 v1.0+ no longer support passing cryptography "
                 "private key object within a QuicConfiguration object. "
                 "Use configuration.load_cert_chain(...) instead using "
@@ -2508,7 +2508,7 @@ class QuicConnection:
             self._peer_token = header.token
             self._retry_count += 1
             self._retry_source_connection_id = header.source_cid
-            self._logger.info("Retrying with token (%d bytes)" % len(header.token))
+            self._logger.debug("Retrying with token (%d bytes)" % len(header.token))
             self._connect(now=now)
         else:
             # Unexpected or invalid retry packet.
@@ -2563,7 +2563,7 @@ class QuicConnection:
             #
             # https://datatracker.ietf.org/doc/html/rfc9368#section-4
             if self._version in header.supported_versions:
-                self._logger.warning(
+                self._logger.debug(
                     "Version negotiation packet contains protocol version %s",
                     pretty_protocol_version(self._version),
                 )
@@ -2589,7 +2589,7 @@ class QuicConnection:
                     },
                 )
             if chosen_version is None:
-                self._logger.error("Could not find a common protocol version")
+                self._logger.debug("Could not find a common protocol version")
                 self._close_event = events.ConnectionTerminated(
                     error_code=QuicErrorCode.INTERNAL_ERROR,
                     frame_type=QuicFrameType.PADDING,
@@ -2600,7 +2600,7 @@ class QuicConnection:
             self._packet_number = 0
             self._version = chosen_version
             self._version_negotiated_incompatible = True
-            self._logger.info(
+            self._logger.debug(
                 "Retrying with protocol version %s",
                 pretty_protocol_version(self._version),
             )
@@ -2936,7 +2936,7 @@ class QuicConnection:
         ):
             self._version = self._crypto_packet_version
             self._version_negotiated_compatible = True
-            self._logger.info(
+            self._logger.debug(
                 "Negotiated protocol version %s", pretty_protocol_version(self._version)
             )
 
