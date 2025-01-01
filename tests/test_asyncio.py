@@ -318,9 +318,9 @@ class TestHighLevel:
             with pytest.raises(ConnectionError):
                 await self.run_client(port=server_port)
 
-    @patch("qh3.quic.retry.QuicRetryTokenHandler.validate_token")
     @pytest.mark.asyncio
-    async def test_connect_and_serve_with_retry_bad_token(self, mock_validate):
+    async def test_connect_and_serve_with_retry_bad_token(self, mocker):
+        mock_validate = mocker.patch("qh3.quic.retry.QuicRetryTokenHandler.validate_token")
         mock_validate.side_effect = ValueError("Decryption failed.")
 
         async with self.run_server(retry=True) as server_port:
