@@ -64,8 +64,8 @@ jobs:
         if: matrix.python_version != 'pypy-3.9' && matrix.python_version != 'pypy-3.10'
         run: nox -s test-${{ matrix.python_version }}
       - name: Run test PyPy
-        if: matrix.python_version == 'pypy-3.9' || matrix.python_version != 'pypy-3.10'
-        run: nox -s test-${{ matrix.python_version }}
+        if: matrix.python_version == 'pypy-3.9' || matrix.python_version == 'pypy-3.10'
+        run: nox -s pypy
 
   integration:
     timeout-minutes: 20
