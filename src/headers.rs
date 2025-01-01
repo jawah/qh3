@@ -7,7 +7,7 @@ use pyo3::types::PyBytesMethods;
 use pyo3::types::PyListMethods;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use pyo3::{pyclass, Bound};
-use pyo3::{PyResult, Python, ToPyObject};
+use pyo3::{PyResult, Python, IntoPyObject};
 
 pyo3::create_exception!(_hazmat, StreamBlocked, PyException);
 pyo3::create_exception!(_hazmat, EncoderStreamError, PyException);
@@ -153,8 +153,8 @@ impl QpackDecoder {
                 Ok(PyTuple::new(
                     py,
                     [
-                        PyBytes::new(py, buffer.stream()).to_object(py),
-                        decoded_headers.to_object(py),
+                        PyBytes::new(py, buffer.stream()).into_pyobject(py)?.into_any(),
+                        decoded_headers.into_pyobject(py)?.into_any(),
                     ],
                 )
                 .unwrap())
@@ -201,8 +201,8 @@ impl QpackDecoder {
                 Ok(PyTuple::new(
                     py,
                     [
-                        PyBytes::new(py, buffer.stream()).to_object(py),
-                        decoded_headers.to_object(py),
+                        PyBytes::new(py, buffer.stream()).into_pyobject(py)?.into_any(),
+                        decoded_headers.into_pyobject(py)?.into_any(),
                     ],
                 )
                 .unwrap())
