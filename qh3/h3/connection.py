@@ -183,9 +183,9 @@ def parse_settings(data: bytes) -> dict[int, int]:
         setting = buf.pull_uint_var()
         value = buf.pull_uint_var()
         if setting in RESERVED_SETTINGS:
-            raise SettingsError("Setting identifier 0x%x is reserved" % setting)
+            raise SettingsError(f"Setting identifier 0x{setting:x} is reserved")
         if setting in settings:
-            raise SettingsError("Setting identifier 0x%x is included twice" % setting)
+            raise SettingsError(f"Setting identifier 0x{setting:x} is included twice")
         settings[setting] = value
     return dict(settings)
 
@@ -206,7 +206,7 @@ def validate_headers(
 
     for key, value in headers:
         if UPPERCASE.search(key):
-            raise MessageError("Header %r contains uppercase letters" % key)
+            raise MessageError(f"Header {key!r} contains uppercase letters")
 
         if extract_header is not None and extracted_header_value is None:
             extracted_header_value = value
@@ -215,12 +215,12 @@ def validate_headers(
             # pseudo-headers
             if after_pseudo_headers:
                 raise MessageError(
-                    "Pseudo-header %r is not allowed after regular headers" % key
+                    f"Pseudo-header {key!r} is not allowed after regular headers"
                 )
             if key not in allowed_pseudo_headers:
-                raise MessageError("Pseudo-header %r is not valid" % key)
+                raise MessageError(f"Pseudo-header {key!r} is not valid")
             if key in seen_pseudo_headers:
-                raise MessageError("Pseudo-header %r is included twice" % key)
+                raise MessageError(f"Pseudo-header {key!r} is included twice")
             seen_pseudo_headers.add(key)
 
             # store value
@@ -237,7 +237,7 @@ def validate_headers(
     # check required pseudo-headers are present
     missing = required_pseudo_headers.difference(seen_pseudo_headers)
     if missing:
-        raise MessageError("Pseudo-headers %s are missing" % sorted(missing))
+        raise MessageError(f"Pseudo-headers {sorted(missing)} are missing")
 
     if scheme in (b"http", b"https"):
         if not authority:
@@ -285,7 +285,7 @@ def validate_response_headers(headers: Headers) -> int | None:
 
     try:
         return int(status_code)
-    except ValueError:
+    except ValueError:  # Defensive:
         return None
 
 

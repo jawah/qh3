@@ -73,6 +73,7 @@ select = [
     "F",  # Pyflakes
     "W",  # pycodestyle
     "I",  # isort
+    "U",  # pyupgrade
 ]
 
 [tool.ruff.lint.isort]
