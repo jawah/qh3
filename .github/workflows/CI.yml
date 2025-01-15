@@ -372,8 +372,6 @@ jobs:
             python_version: pypy-3.9
           - target: aarch64
             python_version: pypy-3.10
-          - target: aarch64
-            python_version: 3.13t
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v5
@@ -382,9 +380,9 @@ jobs:
           python-version: ${{ matrix.python_version }}
           architecture: x64
       - uses: Quansight-Labs/setup-python@v5
-        if: matrix.python_version == '3.13t'
+        if: matrix.python_version == '3.13t' && matrix.target == 'x64'
         with:
-          python-version: 3.13t
+          python-version: '3.13t'
           architecture: x64
       - uses: ilammy/setup-nasm@v1
       - name: Set up Clang (Cygwin)
@@ -392,8 +390,8 @@ jobs:
       - name: Add Ninja (aarch64 build requirement)
         if: matrix.target == 'aarch64'
         run: choco install ninja -y
-      - name: Build wheels (w/ PYO3_CROSS)
-        if: matrix.target == 'aarch64'
+      - name: Build wheels (workaround 3.13t arm64)
+        if: matrix.python_version == '3.13t' && matrix.target == 'aarch64'
         uses: PyO3/maturin-action@v1
         env:
           XWIN_VERSION: 16  # fix for "no cab file specified by MSI" ...?
@@ -403,8 +401,8 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           sccache: 'true'
-      - name: Build wheels (wo/ PYO3_CROSS)
-        if: matrix.target != 'aarch64'
+      - name: Build wheels (normal)
+        if: matrix.python_version != '3.13t' || matrix.target == 'x64'
         uses: PyO3/maturin-action@v1
         env:
           XWIN_VERSION: 16  # fix for "no cab file specified by MSI" ...?
