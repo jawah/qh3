@@ -8,7 +8,7 @@ import pickle
 import ssl
 import time
 from collections import deque
-from typing import BinaryIO, Callable, Deque, cast
+from typing import BinaryIO, Callable, cast
 from urllib.parse import urlparse
 
 import wsproto
@@ -114,14 +114,14 @@ class HttpClient(QuicConnectionProtocol):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
-        self.pushes: dict[int, Deque[H3Event]] = {}
+        self.pushes: dict[int, deque[H3Event]] = {}
         self._http: H3Connection | None = None
-        self._request_events: dict[int, Deque[H3Event]] = {}
-        self._request_waiter: dict[int, asyncio.Future[Deque[H3Event]]] = {}
+        self._request_events: dict[int, deque[H3Event]] = {}
+        self._request_waiter: dict[int, asyncio.Future[deque[H3Event]]] = {}
         self._websockets: dict[int, WebSocket] = {}
         self._http = H3Connection(self._quic)
 
-    async def get(self, url: str, headers: dict | None = None) -> Deque[H3Event]:
+    async def get(self, url: str, headers: dict | None = None) -> deque[H3Event]:
         """
         Perform a GET request.
         """
@@ -131,7 +131,7 @@ class HttpClient(QuicConnectionProtocol):
 
     async def post(
         self, url: str, data: bytes, headers: dict | None = None
-    ) -> Deque[H3Event]:
+    ) -> deque[H3Event]:
         """
         Perform a POST request.
         """
@@ -201,7 +201,7 @@ class HttpClient(QuicConnectionProtocol):
             for http_event in self._http.handle_event(event):
                 self.http_event_received(http_event)
 
-    async def _request(self, request: HttpRequest) -> Deque[H3Event]:
+    async def _request(self, request: HttpRequest) -> deque[H3Event]:
         stream_id = self._quic.get_next_available_stream_id()
         self._http.send_headers(
             stream_id=stream_id,
@@ -261,9 +261,10 @@ async def perform_http_request(
         if isinstance(http_event, DataReceived):
             octets += len(http_event.data)
             logger.info(str(http_event.data))
+
     logger.info(
-        "Response received for %s %s : %d bytes in %.1f s (%.3f Mbps)"
-        % (method, urlparse(url).path, octets, elapsed, octets * 8 / elapsed / 1000000)
+        f"Response received for {method} {urlparse(url).path} : "
+        f"{octets} bytes in {elapsed} s ({octets * 8 / elapsed / 1000000} Mbps)"
     )
 
     # output response
@@ -309,7 +310,7 @@ def process_http_pushes(
 
 
 def write_response(
-    http_events: Deque[H3Event], output_file: BinaryIO, include: bool
+    http_events: deque[H3Event], output_file: BinaryIO, include: bool
 ) -> None:
     for http_event in http_events:
         if isinstance(http_event, HeadersReceived) and include:
@@ -446,12 +447,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max-data",
         type=int,
-        help="connection-wide flow control limit (default: %d)" % defaults.max_data,
+        help=f"connection-wide flow control limit (default: {defaults.max_data})",
     )
     parser.add_argument(
         "--max-stream-data",
         type=int,
-        help="per-stream flow control limit (default: %d)" % defaults.max_stream_data,
+        help=f"per-stream flow control limit (default: {defaults.max_stream_data})",
     )
     parser.add_argument(
         "-k",
@@ -504,7 +505,7 @@ if __name__ == "__main__":
     )
 
     if args.output_dir is not None and not os.path.isdir(args.output_dir):
-        raise Exception("%s is not a directory" % args.output_dir)
+        raise Exception(f"{args.output_dir} is not a directory")
 
     # prepare configuration
     configuration = QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN)

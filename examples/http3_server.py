@@ -7,7 +7,7 @@ import logging
 import time
 from collections import deque
 from email.utils import formatdate
-from typing import Callable, Deque, Union, cast
+from typing import Callable, Union, cast
 
 import wsproto
 import wsproto.events
@@ -136,7 +136,7 @@ class WebSocketHandler:
     ) -> None:
         self.closed = False
         self.connection = connection
-        self.http_event_queue: Deque[DataReceived] = deque()
+        self.http_event_queue: deque[DataReceived] = deque()
         self.queue: asyncio.Queue[dict] = asyncio.Queue()
         self.scope = scope
         self.stream_id = stream_id
@@ -237,7 +237,7 @@ class WebTransportHandler:
         self.accepted = False
         self.closed = False
         self.connection = connection
-        self.http_event_queue: Deque[DataReceived] = deque()
+        self.http_event_queue: deque[DataReceived] = deque()
         self.queue: asyncio.Queue[dict] = asyncio.Queue()
         self.scope = scope
         self.stream_id = stream_id

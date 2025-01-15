@@ -5,7 +5,7 @@ import json
 import os
 import time
 from collections import deque
-from typing import Any, Deque
+from typing import Any
 
 from ..h3.events import Headers
 from .packet import (
@@ -45,7 +45,7 @@ class QuicLoggerTrace:
 
     def __init__(self, *, is_client: bool, odcid: bytes) -> None:
         self._odcid = odcid
-        self._events: Deque[dict[str, Any]] = deque()
+        self._events: deque[dict[str, Any]] = deque()
         self._vantage_point = {
             "name": "qh3",
             "type": "client" if is_client else "server",
@@ -312,7 +312,7 @@ class QuicFileLogger(QuicLogger):
 
     def __init__(self, path: str) -> None:
         if not os.path.isdir(path):
-            raise ValueError("QUIC log output directory '%s' does not exist" % path)
+            raise ValueError(f"QUIC log output directory '{path}' does not exist")
         self.path = path
         super().__init__()
 

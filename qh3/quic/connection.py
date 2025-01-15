@@ -7,7 +7,7 @@ from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from functools import partial
-from typing import TYPE_CHECKING, Any, Deque, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
     from .configuration import QuicConfiguration
@@ -171,9 +171,9 @@ class QuicConnectionError(Exception):
         self.reason_phrase = reason_phrase
 
     def __str__(self) -> str:
-        s = "Error: %d, reason: %s" % (self.error_code, self.reason_phrase)
+        s = f"Error: {self.error_code}, reason: {self.reason_phrase}"
         if self.frame_type is not None:
-            s += ", frame_type: %s" % self.frame_type
+            s += f", frame_type: {self.frame_type}"
         return s
 
 
@@ -205,7 +205,7 @@ class QuicNetworkPath:
         self.bytes_sent: int = 0
         self.is_validated: bool = is_validated
         self.local_challenge_sent: bool = False
-        self.remote_challenges: Deque[bytes] = deque()
+        self.remote_challenges: deque[bytes] = deque()
 
     def can_send(self, size: int) -> bool:
         return self.is_validated or (self.bytes_sent + size) <= 3 * self.bytes_received
@@ -255,22 +255,22 @@ class QuicConnection:
         session_ticket_handler: tls.SessionTicketHandler | None = None,
     ) -> None:
         if configuration.is_client:
-            assert (
-                original_destination_connection_id is None
-            ), "Cannot set original_destination_connection_id for a client"
-            assert (
-                retry_source_connection_id is None
-            ), "Cannot set retry_source_connection_id for a client"
+            assert original_destination_connection_id is None, (
+                "Cannot set original_destination_connection_id for a client"
+            )
+            assert retry_source_connection_id is None, (
+                "Cannot set retry_source_connection_id for a client"
+            )
         else:
-            assert (
-                configuration.certificate is not None
-            ), "SSL certificate is required for a server"
-            assert (
-                configuration.private_key is not None
-            ), "SSL private key is required for a server"
-            assert (
-                original_destination_connection_id is not None
-            ), "original_destination_connection_id is required for a server"
+            assert configuration.certificate is not None, (
+                "SSL certificate is required for a server"
+            )
+            assert configuration.private_key is not None, (
+                "SSL private key is required for a server"
+            )
+            assert original_destination_connection_id is not None, (
+                "original_destination_connection_id is required for a server"
+            )
 
         # configuration
         self._configuration = configuration
@@ -287,7 +287,7 @@ class QuicConnection:
         self._crypto_packet_version: int | None = None
         self._crypto_retransmitted = False
         self._crypto_streams: dict[tls.Epoch, QuicStream] = {}
-        self._events: Deque[events.QuicEvent] = deque()
+        self._events: deque[events.QuicEvent] = deque()
         self._handshake_complete = False
         self._handshake_confirmed = False
         self._host_cids = [
@@ -390,7 +390,7 @@ class QuicConnection:
 
         # things to send
         self._close_pending = False
-        self._datagrams_pending: Deque[bytes] = deque()
+        self._datagrams_pending: deque[bytes] = deque()
         self._handshake_done_pending = False
         self._ping_pending: list[int] = []
         self._probe_pending = False
@@ -516,9 +516,9 @@ class QuicConnection:
         :param addr: The network address of the remote peer.
         :param now: The current time.
         """
-        assert (
-            self._is_client and not self._connect_called
-        ), "connect() can only be called for clients and a single time"
+        assert self._is_client and not self._connect_called, (
+            "connect() can only be called for clients and a single time"
+        )
         self._connect_called = True
 
         self._network_paths = [QuicNetworkPath(addr, is_validated=True)]
@@ -856,9 +856,9 @@ class QuicConnection:
 
             # server initialization
             if not self._is_client and self._state == QuicConnectionState.FIRSTFLIGHT:
-                assert (
-                    header.packet_type == QuicPacketType.INITIAL
-                ), "first packet must be INITIAL"
+                assert header.packet_type == QuicPacketType.INITIAL, (
+                    "first packet must be INITIAL"
+                )
                 crypto_frame_required = True
                 self._network_paths = [network_path]
                 self._version = header.version
@@ -1311,7 +1311,7 @@ class QuicConnection:
                 max_streams.used = stream_count
 
             # create stream
-            self._logger.debug("Stream %d created by peer" % stream_id)
+            self._logger.debug(f"Stream {stream_id} created by peer")
             stream = self._streams[stream_id] = QuicStream(
                 stream_id=stream_id,
                 max_stream_data_local=max_stream_data_local,
@@ -1379,8 +1379,8 @@ class QuicConnection:
             raise QuicConnectionError(
                 error_code=QuicErrorCode.PROTOCOL_VIOLATION,
                 frame_type=QuicFrameType.CRYPTO,
-                reason_phrase="Invalid max_early_data value %s"
-                % session_ticket.max_early_data_size,
+                reason_phrase="Invalid max_early_data value "
+                f"{session_ticket.max_early_data_size}",
             )
         self._session_ticket_handler(session_ticket)
 
@@ -1469,8 +1469,8 @@ class QuicConnection:
         def create_crypto_pair(epoch: tls.Epoch) -> CryptoPair:
             epoch_name = ["initial", "0rtt", "handshake", "1rtt"][epoch.value]
             secret_names = [
-                "server_%s_secret" % epoch_name,
-                "client_%s_secret" % epoch_name,
+                f"server_{epoch_name}_secret",
+                f"client_{epoch_name}_secret",
             ]
             recv_secret_name = secret_names[not self._is_client]
             send_secret_name = secret_names[self._is_client]
@@ -2508,7 +2508,7 @@ class QuicConnection:
             self._peer_token = header.token
             self._retry_count += 1
             self._retry_source_connection_id = header.source_cid
-            self._logger.debug("Retrying with token (%d bytes)" % len(header.token))
+            self._logger.debug(f"Retrying with token ({len(header.token)} bytes)")
             self._connect(now=now)
         else:
             # Unexpected or invalid retry packet.
@@ -2694,7 +2694,7 @@ class QuicConnection:
                     raise QuicConnectionError(
                         error_code=QuicErrorCode.TRANSPORT_PARAMETER_ERROR,
                         frame_type=QuicFrameType.CRYPTO,
-                        reason_phrase="%s is not allowed for clients" % attr,
+                        reason_phrase=f"{attr} is not allowed for clients",
                     )
 
         if not from_session_ticket:
@@ -3417,7 +3417,7 @@ class QuicConnection:
         )
         self._logger.debug(
             "Sending PING%s in packet %d",
-            " (%s)" % comment if comment else "",
+            f" ({comment})" if comment else "",
             builder.packet_number,
         )
 

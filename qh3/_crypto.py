@@ -79,7 +79,7 @@ class HeaderProtection:
             elif len(key) == 32:
                 self._qhp = QUICHeaderProtection(key, 256)
             else:
-                raise CryptoError(
+                raise CryptoError(  # Defensive: hopefully, this can't happen, ever.
                     f"No AES algorithm available for given key length "
                     f"(given {len(key)}, expected one of 16 or 32)"
                 )
