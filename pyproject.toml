@@ -57,7 +57,6 @@ filterwarnings = [
     '''ignore:Exception ignored in:pytest.PytestUnraisableExceptionWarning''',
     '''ignore:Exception in thread:pytest.PytestUnhandledThreadExceptionWarning''',
     '''ignore:loop is closed:ResourceWarning''',
-    '''ignore:no longer supported:cryptography.utils.CryptographyDeprecationWarning''',
 ]
 
 [tool.mypy]
