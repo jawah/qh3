@@ -372,6 +372,16 @@ jobs:
             python_version: pypy-3.9
           - target: aarch64
             python_version: pypy-3.10
+          - target: x86
+            python_version: pypy-3.7
+          - target: x86
+            python_version: pypy-3.8
+          - target: x86
+            python_version: pypy-3.9
+          - target: x86
+            python_version: pypy-3.10
+          - target: x86
+            python_version: 3.13t
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v5
