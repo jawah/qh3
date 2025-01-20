@@ -185,7 +185,6 @@ jobs:
             sudo apt-get install -y linux-headers-generic || echo "no apt support"
             sudo apt-get install -y gcc-multilib wget || echo "no apt support"
             sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/bin/../x86_64-unknown-linux-musl/include/sys/queue.h || echo "compat x64 fail"
-            sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/bin/../x86-unknown-linux-musl/include/sys/queue.h || echo "compat x86 fail"
             yum install -y llvm-toolset-7-clang || echo "not yum based"
             source /opt/rh/llvm-toolset-7/enable || echo "not yum based"
 
@@ -270,14 +269,8 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
-            sudo apt-get update || echo "no apt support"
-            sudo apt-get install -y libclang || echo "no apt support"
-            sudo apt-get install -y libc6 || echo "no apt support"
-            sudo apt-get install -y libc6-dev || echo "no apt support"
-            sudo apt-get install -y libclang-dev || echo "no apt support"
-            sudo apt-get install -y clang || echo "no apt support"
-            sudo apt-get install -y linux-headers-generic || echo "no apt support"
-            sudo apt-get install -y gcc-multilib || echo "no apt support"
+            yum install -y llvm-toolset-7-clang || echo "not yum based"
+            source /opt/rh/llvm-toolset-7/enable || echo "not yum based"
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/i686-unknown-linux-gnu/i686-unknown-linux-gnu/sysroot"
 
       - name: Build wheels (ppc64le+manylinux2014 workaround)
