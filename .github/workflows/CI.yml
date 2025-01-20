@@ -143,7 +143,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ x86_64, s390x, aarch64, armv7l, ppc64le, ppc64 ]
+        target: [ x86_64, s390x, aarch64, armv7l, ppc64le, ppc64, i686 ]
         python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', '3.13t' ]
         manylinux: [ 'manylinux2014', 'musllinux_1_1' ]
         exclude:
@@ -165,7 +165,7 @@ jobs:
         with:
           python-version: 3.13t
       - name: Build wheels (no workarounds)
-        if: matrix.target == 'x86_64' || matrix.target == 'x86'
+        if: matrix.target == 'x86_64'
         uses: PyO3/maturin-action@v1
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
@@ -258,6 +258,28 @@ jobs:
             sudo apt-get install -y gcc-multilib || echo "no apt support"
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/s390x-ibm-linux-gnu/s390x-ibm-linux-gnu/sysroot"
 
+      - name: Build wheels (i686+manylinux2014 workaround)
+        if: matrix.target == 'i686' && matrix.manylinux == 'manylinux2014'
+        uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter ${{ matrix.python_version }}
+          sccache: 'true'
+          manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
+          before-script-linux: |
+            sudo apt-get update || echo "no apt support"
+            sudo apt-get install -y libclang || echo "no apt support"
+            sudo apt-get install -y libc6 || echo "no apt support"
+            sudo apt-get install -y libc6-dev || echo "no apt support"
+            sudo apt-get install -y libclang-dev || echo "no apt support"
+            sudo apt-get install -y clang || echo "no apt support"
+            sudo apt-get install -y linux-headers-generic || echo "no apt support"
+            sudo apt-get install -y gcc-multilib || echo "no apt support"
+            export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/i686-unknown-linux-gnu/i686-unknown-linux-gnu/sysroot"
+
       - name: Build wheels (ppc64le+manylinux2014 workaround)
         if: matrix.target == 'ppc64le' && matrix.manylinux == 'manylinux2014'
         uses: PyO3/maturin-action@v1
@@ -347,6 +369,29 @@ jobs:
             sudo apt-get install -y gcc-multilib wget || echo "no apt support"
             sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/armv7-unknown-linux-musleabihf/include/sys/queue.h || echo "compat fail"
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/local/musl/armv7-unknown-linux-musleabihf"
+
+      - name: Build wheels (i686+musl workaround)
+        if: matrix.target == 'i686' && matrix.manylinux == 'musllinux_1_1'
+        uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter ${{ matrix.python_version }}
+          sccache: 'true'
+          manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
+          before-script-linux: |
+            sudo apt-get update || echo "no apt support"
+            sudo apt-get install -y libclang || echo "no apt support"
+            sudo apt-get install -y libc6 || echo "no apt support"
+            sudo apt-get install -y libc6-dev || echo "no apt support"
+            sudo apt-get install -y libclang-dev || echo "no apt support"
+            sudo apt-get install -y clang || echo "no apt support"
+            sudo apt-get install -y linux-headers-generic || echo "no apt support"
+            sudo apt-get install -y gcc-multilib wget || echo "no apt support"
+            sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/i686-unknown-linux-musleabihf/include/sys/queue.h || echo "compat fail"
+            export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/local/musl/i686-unknown-linux-musleabihf"
 
       - name: Upload wheels
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
