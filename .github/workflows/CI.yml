@@ -67,9 +67,9 @@ jobs:
         if: startsWith(matrix.python_version, 'pypy')
         run: nox -s test-pypy
       - name: "Upload artifact"
-        uses: "actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce"
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
-          name: coverage-data
+          name: coverage-data-${{ matrix.os }}-${{ matrix.python_version }}
           path: ".coverage.*"
           if-no-files-found: error
 
@@ -90,9 +90,10 @@ jobs:
         run: "python -m pip install --upgrade coverage"
 
       - name: "Download artifact"
-        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
         with:
-          name: coverage-data
+          pattern: coverage-data-*
+          merge-multiple: true
 
       - name: "Combine & check coverage"
         run: |
@@ -142,7 +143,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ x86_64, s390x, aarch64, armv7l, ppc64le, ppc64, x86 ]
+        target: [ x86_64, s390x, aarch64, armv7l, ppc64le, ppc64 ]
         python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', '3.13t' ]
         manylinux: [ 'manylinux2014', 'musllinux_1_1' ]
         exclude:
@@ -152,12 +153,6 @@ jobs:
             target: ppc64
           - manylinux: musllinux_1_1
             target: ppc64le
-          - manylinux: musllinux_1_1
-            target: x86
-          - manylinux: musllinux_1_1
-            target: x86
-          - manylinux: musllinux_1_1
-            target: x86
 
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
@@ -191,9 +186,6 @@ jobs:
             sudo apt-get install -y gcc-multilib wget || echo "no apt support"
             sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/bin/../x86_64-unknown-linux-musl/include/sys/queue.h || echo "compat x64 fail"
             sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/bin/../x86-unknown-linux-musl/include/sys/queue.h || echo "compat x86 fail"
-            sudo yum -y install http://mirror.centos.org/centos/7/extras/x86_64/Packages/centos-release-scl-rh-2-3.el7.centos.noarch.rpm
-            sudo yum -y install http://mirror.centos.org/centos/7/extras/x86_64/Packages/centos-release-scl-2-3.el7.centos.noarch.rpm
-            sudo yum -y install http://mirror.centos.org/centos/7/sclo/x86_64/rh/Packages/l/llvm-toolset-7-clang-4.0.1-1.el7.x86_64.rpm
             yum install -y llvm-toolset-7-clang || echo "not yum based"
             source /opt/rh/llvm-toolset-7/enable || echo "not yum based"
 
