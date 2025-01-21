@@ -269,8 +269,7 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
-            yum install -y llvm-toolset-7-clang || echo "not yum based"
-            source /opt/rh/llvm-toolset-7/enable || echo "not yum based"
+            yum install -y clang || echo "not yum based"
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/i686-unknown-linux-gnu/i686-unknown-linux-gnu/sysroot"
 
       - name: Build wheels (ppc64le+manylinux2014 workaround)
