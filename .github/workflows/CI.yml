@@ -67,9 +67,9 @@ jobs:
         if: startsWith(matrix.python_version, 'pypy')
         run: nox -s test-pypy
       - name: "Upload artifact"
-        uses: "actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce"
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
-          name: coverage-data
+          name: coverage-data-${{ matrix.os }}-${{ matrix.python_version }}
           path: ".coverage.*"
           if-no-files-found: error
 
@@ -90,9 +90,10 @@ jobs:
         run: "python -m pip install --upgrade coverage"
 
       - name: "Download artifact"
-        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
         with:
-          name: coverage-data
+          pattern: coverage-data-*
+          merge-multiple: true
 
       - name: "Combine & check coverage"
         run: |
@@ -142,7 +143,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ x86_64, s390x, aarch64, armv7l, ppc64le, ppc64 ]
+        target: [ x86_64, s390x, aarch64, armv7l, ppc64le, ppc64, i686 ]
         python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', '3.13t' ]
         manylinux: [ 'manylinux2014', 'musllinux_1_1' ]
         exclude:
@@ -183,7 +184,7 @@ jobs:
             sudo apt-get install -y clang || echo "no apt support"
             sudo apt-get install -y linux-headers-generic || echo "no apt support"
             sudo apt-get install -y gcc-multilib wget || echo "no apt support"
-            sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/bin/../x86_64-unknown-linux-musl/include/sys/queue.h || echo "compat fail"
+            sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/bin/../x86_64-unknown-linux-musl/include/sys/queue.h || echo "compat x64 fail"
             yum install -y llvm-toolset-7-clang || echo "not yum based"
             source /opt/rh/llvm-toolset-7/enable || echo "not yum based"
 
@@ -255,6 +256,29 @@ jobs:
             sudo apt-get install -y linux-headers-generic || echo "no apt support"
             sudo apt-get install -y gcc-multilib || echo "no apt support"
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/s390x-ibm-linux-gnu/s390x-ibm-linux-gnu/sysroot"
+
+      - name: Build wheels (i686+manylinux2014 workaround)
+        if: matrix.target == 'i686' && matrix.manylinux == 'manylinux2014'
+        uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter ${{ matrix.python_version }}
+          sccache: 'true'
+          manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
+          container: messense/manylinux2014-cross:i686
+          before-script-linux: |
+            sudo apt-get update || echo "no apt support"
+            sudo apt-get install -y libclang || echo "no apt support"
+            sudo apt-get install -y libc6 || echo "no apt support"
+            sudo apt-get install -y libc6-dev || echo "no apt support"
+            sudo apt-get install -y libclang-dev || echo "no apt support"
+            sudo apt-get install -y clang || echo "no apt support"
+            sudo apt-get install -y linux-headers-generic || echo "no apt support"
+            sudo apt-get install -y gcc-multilib || echo "no apt support"
+            export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/i686-unknown-linux-gnu/i686-unknown-linux-gnu/sysroot"
 
       - name: Build wheels (ppc64le+manylinux2014 workaround)
         if: matrix.target == 'ppc64le' && matrix.manylinux == 'manylinux2014'
@@ -346,11 +370,34 @@ jobs:
             sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/armv7-unknown-linux-musleabihf/include/sys/queue.h || echo "compat fail"
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/local/musl/armv7-unknown-linux-musleabihf"
 
-      - name: Upload wheels
-        uses: actions/upload-artifact@v3
+      - name: Build wheels (i686+musl workaround)
+        if: matrix.target == 'i686' && matrix.manylinux == 'musllinux_1_1'
+        uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
-          name: wheels
-          path: dist
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter ${{ matrix.python_version }}
+          sccache: 'true'
+          manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
+          before-script-linux: |
+            sudo apt-get update || echo "no apt support"
+            sudo apt-get install -y libclang || echo "no apt support"
+            sudo apt-get install -y libc6 || echo "no apt support"
+            sudo apt-get install -y libc6-dev || echo "no apt support"
+            sudo apt-get install -y libclang-dev || echo "no apt support"
+            sudo apt-get install -y clang || echo "no apt support"
+            sudo apt-get install -y linux-headers-generic || echo "no apt support"
+            sudo apt-get install -y gcc-multilib wget || echo "no apt support"
+            sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/i686-unknown-linux-musl/include/sys/queue.h || echo "compat fail"
+            export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/local/musl/i686-unknown-linux-musl"
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: wheels-linux-${{ matrix.target }}-${{ matrix.manylinux }}-${{ matrix.python_version }}
+          path: dist/*.whl
 
   windows:
     needs:
@@ -422,10 +469,10 @@ jobs:
           args: --release --out dist
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
-          name: wheels
-          path: dist
+          name: wheels-windows-${{ matrix.target }}-${{ matrix.python_version }}
+          path: dist/*.whl
 
   macos:
     needs:
@@ -457,10 +504,10 @@ jobs:
           args: --release --out dist --interpreter ${{ matrix.python_version }}
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
-          name: wheels
-          path: dist
+          name: wheels-macos-${{ matrix.target }}-${{ matrix.python_version }}
+          path: dist/*.whl
 
   sdist:
     needs:
@@ -476,25 +523,25 @@ jobs:
           command: sdist
           args: --out dist
       - name: Upload sdist
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
-          name: wheels
-          path: dist
+          name: wheels-sdist
+          path: dist/*.tar.gz
 
   checksum:
     name: compute hashes
     runs-on: ubuntu-22.04
     needs: [windows, macos, linux, sdist]
-    if: "startsWith(github.ref, 'refs/tags/')"
     outputs:
       hashes: ${{ steps.compute.outputs.hashes }}
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v4.0.0
       - name: Download distributions
-        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
         with:
-          name: wheels
+          pattern: wheels-*
           path: dist
+          merge-multiple: true
       - name: Collected dists
         run: |
           tree dist
@@ -524,12 +571,20 @@ jobs:
     environment: pypi
     permissions:
       id-token: write
+      contents: write
     steps:
-      - uses: actions/download-artifact@v3
+      - name: Download distributions
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
         with:
-          name: wheels
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: "Upload dists to GitHub Release"
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          gh release upload ${{ github.ref_name }} dist/* --repo ${{ github.repository }}
       - name: Publish to PyPI
-        uses: PyO3/maturin-action@v1
+        uses: "pypa/gh-action-pypi-publish@67339c736fd9354cd4f8cb0b744f2b82a74b5c70" # v1.12.3
         with:
-          command: upload
-          args: --non-interactive --skip-existing *
+          attestations: true
