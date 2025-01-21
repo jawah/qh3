@@ -278,6 +278,7 @@ jobs:
             sudo apt-get install -y clang || echo "no apt support"
             sudo apt-get install -y linux-headers-generic || echo "no apt support"
             sudo apt-get install -y gcc-multilib || echo "no apt support"
+            export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/i686-unknown-linux-gnu/i686-unknown-linux-gnu/sysroot"
 
       - name: Build wheels (ppc64le+manylinux2014 workaround)
         if: matrix.target == 'ppc64le' && matrix.manylinux == 'manylinux2014'
