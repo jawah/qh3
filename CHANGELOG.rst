@@ -1,3 +1,12 @@
+1.3.2 (2025-01-20)
+====================
+
+**Changed**
+- Upgraded aws-lc-rs to 1.12.1
+
+**Misc**
+- x86 (32-bits) wheels are now automatically published to PyPI for both Linux (i686) and Windows (win32). (#45)
+
 1.3.1 (2025-01-15)
 ====================
 
