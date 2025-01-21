@@ -269,6 +269,15 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           container: messense/manylinux2014-cross:i686
+          before-script-linux: |
+            sudo apt-get update || echo "no apt support"
+            sudo apt-get install -y libclang || echo "no apt support"
+            sudo apt-get install -y libc6 || echo "no apt support"
+            sudo apt-get install -y libc6-dev || echo "no apt support"
+            sudo apt-get install -y libclang-dev || echo "no apt support"
+            sudo apt-get install -y clang || echo "no apt support"
+            sudo apt-get install -y linux-headers-generic || echo "no apt support"
+            sudo apt-get install -y gcc-multilib || echo "no apt support"
 
       - name: Build wheels (ppc64le+manylinux2014 workaround)
         if: matrix.target == 'ppc64le' && matrix.manylinux == 'manylinux2014'
