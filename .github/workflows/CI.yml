@@ -268,8 +268,7 @@ jobs:
           sccache: 'true'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
-          before-script-linux: |
-            yum install -y clang clang-devel || echo "not yum based"
+          container: messense/manylinux2014-cross:i686
 
       - name: Build wheels (ppc64le+manylinux2014 workaround)
         if: matrix.target == 'ppc64le' && matrix.manylinux == 'manylinux2014'
