@@ -16,7 +16,9 @@ from functools import partial
 from hmac import HMAC
 from typing import Any, Callable, Generator, Optional, Sequence, Tuple, TypeVar
 
-from ._hazmat import Certificate as X509Certificate
+from ._hazmat import (
+    Certificate as X509Certificate,
+)
 from ._hazmat import (
     CryptoError,
     DsaPrivateKey,
@@ -36,6 +38,7 @@ from ._hazmat import (
     UnacceptableCertificateError,
     X25519KeyExchange,
     X25519ML768KeyExchange,
+    idna_encode,
     verify_with_public_key,
 )
 from .buffer import Buffer
@@ -1314,6 +1317,11 @@ class Context:
         self.handshake_extensions: list[Extension] = []
         self._max_early_data = max_early_data
         self.session_ticket: SessionTicket | None = None
+
+        # ensure pure ascii server name
+        if server_name is not None and not server_name.isascii():
+            server_name = idna_encode(server_name).decode()
+
         self._server_name = server_name
 
         if verify_mode is not None:

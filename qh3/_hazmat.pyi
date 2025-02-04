@@ -250,3 +250,9 @@ class Buffer:
     def push_uint32(self, value: int) -> None: ...
     def push_uint64(self, value: int) -> None: ...
     def push_uint_var(self, value: int) -> None: ...
+
+def idna_encode(text: str) -> bytes:
+    """using UTS46"""
+
+def idna_decode(src: bytes) -> str:
+    """using UTS46"""

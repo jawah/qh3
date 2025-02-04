@@ -1,3 +1,12 @@
+1.4.0 (2025-02-04)
+====================
+
+**Added**
+- Support for IDNA domain name using UTS 46 for both server and client
+
+**Changed**
+- Upgraded aws-lc-rs to 1.12.2
+
 1.3.2 (2025-01-20)
 ====================
 
