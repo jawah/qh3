@@ -7,6 +7,7 @@ mod buffer;
 mod certificate;
 mod headers;
 mod hpk;
+mod intldomain;
 mod ocsp;
 mod pkcs8;
 mod private_key;
@@ -27,6 +28,7 @@ pub use self::headers::{
     StreamBlocked,
 };
 pub use self::hpk::QUICHeaderProtection;
+pub use self::intldomain::{idna_decode, idna_encode};
 pub use self::ocsp::{OCSPCertStatus, OCSPRequest, OCSPResponse, OCSPResponseStatus, ReasonFlags};
 pub use self::pkcs8::{KeyType, PrivateKeyInfo};
 pub use self::private_key::{
@@ -39,6 +41,9 @@ pyo3::create_exception!(_hazmat, CryptoError, PyException);
 
 #[pymodule(gil_used = false)]
 fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // idna UTS 46
+    m.add_function(wrap_pyfunction!(idna_encode, m)?)?;
+    m.add_function(wrap_pyfunction!(idna_decode, m)?)?;
     // ls-qpack bridge
     m.add_class::<QpackDecoder>()?;
     m.add_class::<QpackEncoder>()?;

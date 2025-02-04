@@ -221,6 +221,25 @@ class TestHighLevel:
                 response = await reader.read()
                 assert response == b"5432109876543210"
 
+    @pytest.mark.asyncio
+    async def test_idna_sni(self):
+        async with self.run_server() as server_port:
+            configuration = QuicConfiguration(is_client=True, server_name="ドメイン.テスト", verify_hostname=False)
+            configuration.load_verify_locations(cafile=SERVER_CACERTFILE)
+            async with connect(
+                    self.server_host, server_port, configuration=configuration
+            ) as client:
+                reader, writer = await client.create_stream()
+                assert writer.can_write_eof() is True
+
+                writer.writelines([b"01234567", b"89012345"])
+                writer.write_eof()
+
+                response = await reader.read()
+                assert response == b"5432109876543210"
+
+                assert client._quic.tls._server_name == "xn--eckwd4c7c.xn--zckzah"
+
     @pytest.mark.skipif("loss" in SKIP_TESTS, reason="Skipping loss tests")
     @patch("socket.socket.sendto", new_callable=lambda: sendto_with_loss)
     @pytest.mark.asyncio
