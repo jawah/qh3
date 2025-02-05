@@ -1,3 +1,9 @@
+1.4.1 (2025-02-05)
+====================
+
+**Fixed**
+- Bad IDNA label raise inappropriate exception.
+
 1.4.0 (2025-02-05)
 ====================
 
