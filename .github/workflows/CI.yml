@@ -67,10 +67,11 @@ jobs:
         if: startsWith(matrix.python_version, 'pypy')
         run: nox -s test-pypy
       - name: "Upload artifact"
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
         with:
           name: coverage-data-${{ matrix.os }}-${{ matrix.python_version }}
           path: ".coverage.*"
+          include-hidden-files: true
           if-no-files-found: error
 
   coverage:
@@ -102,7 +103,7 @@ jobs:
           python -m coverage report --ignore-errors --show-missing --fail-under=98
 
       - name: "Upload report"
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
         with:
           name: coverage-report
           path: htmlcov
@@ -394,7 +395,7 @@ jobs:
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/local/musl/i686-unknown-linux-musl"
 
       - name: Upload wheels
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
         with:
           name: wheels-linux-${{ matrix.target }}-${{ matrix.manylinux }}-${{ matrix.python_version }}
           path: dist/*.whl
@@ -469,7 +470,7 @@ jobs:
           args: --release --out dist
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
         with:
           name: wheels-windows-${{ matrix.target }}-${{ matrix.python_version }}
           path: dist/*.whl
@@ -504,7 +505,7 @@ jobs:
           args: --release --out dist --interpreter ${{ matrix.python_version }}
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
         with:
           name: wheels-macos-${{ matrix.target }}-${{ matrix.python_version }}
           path: dist/*.whl
@@ -523,7 +524,7 @@ jobs:
           command: sdist
           args: --out dist
       - name: Upload sdist
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
         with:
           name: wheels-sdist
           path: dist/*.tar.gz
