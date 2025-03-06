@@ -36,12 +36,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, macos-13, windows-latest]
-        python_version: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13', 'pypy-3.9', 'pypy-3.10']
+        python_version: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11']
         exclude:
           # circumvent wierd issue with qh3.asyncio+windows+proactor loop...
           - python_version: pypy-3.9
             os: windows-latest
           - python_version: pypy-3.10
+            os: windows-latest
+          - python_version: pypy-3.11
             os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
@@ -145,7 +147,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [ x86_64, s390x, aarch64, armv7l, ppc64le, ppc64, i686 ]
-        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', '3.13t' ]
+        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t' ]
         manylinux: [ 'manylinux2014', 'musllinux_1_1' ]
         exclude:
           - manylinux: musllinux_1_1
@@ -185,7 +187,7 @@ jobs:
             sudo apt-get install -y clang || echo "no apt support"
             sudo apt-get install -y linux-headers-generic || echo "no apt support"
             sudo apt-get install -y gcc-multilib wget || echo "no apt support"
-            sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/bin/../x86_64-unknown-linux-musl/include/sys/queue.h || echo "compat x64 fail"
+            sudo wget https://gist.githubusercontent.com/Ousret/ae53d8c725a2ad48c133afce313ffdcc/raw/3671b2081742f3d5152cd67f1d813ea3cbd84d50/queue.h -O /usr/local/musl/bin/../x86_64-unknown-linux-musl/include/sys/queue.h || echo "compat x64 fail"
             yum install -y llvm-toolset-7-clang || echo "not yum based"
             source /opt/rh/llvm-toolset-7/enable || echo "not yum based"
 
@@ -210,7 +212,7 @@ jobs:
             sudo apt-get install -y clang || echo "no apt support"
             sudo apt-get install -y linux-headers-generic || echo "no apt support"
             sudo apt-get install -y gcc-multilib wget || echo "no apt support"
-            sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/bin/../aarch64-unknown-linux-musl/include/sys/queue.h || echo "compat fail"
+            sudo wget https://gist.githubusercontent.com/Ousret/ae53d8c725a2ad48c133afce313ffdcc/raw/3671b2081742f3d5152cd67f1d813ea3cbd84d50/queue.h -O /usr/local/musl/bin/../aarch64-unknown-linux-musl/include/sys/queue.h || echo "compat fail"
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/local/musl/bin/../aarch64-unknown-linux-musl/"
 
       - name: Build wheels (aarch64+manylinux2014 workaround)
@@ -368,7 +370,7 @@ jobs:
             sudo apt-get install -y clang || echo "no apt support"
             sudo apt-get install -y linux-headers-generic || echo "no apt support"
             sudo apt-get install -y gcc-multilib wget || echo "no apt support"
-            sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/armv7-unknown-linux-musleabihf/include/sys/queue.h || echo "compat fail"
+            sudo wget https://gist.githubusercontent.com/Ousret/ae53d8c725a2ad48c133afce313ffdcc/raw/3671b2081742f3d5152cd67f1d813ea3cbd84d50/queue.h -O /usr/local/musl/armv7-unknown-linux-musleabihf/include/sys/queue.h || echo "compat fail"
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/local/musl/armv7-unknown-linux-musleabihf"
 
       - name: Build wheels (i686+musl workaround)
@@ -391,7 +393,7 @@ jobs:
             sudo apt-get install -y clang || echo "no apt support"
             sudo apt-get install -y linux-headers-generic || echo "no apt support"
             sudo apt-get install -y gcc-multilib wget || echo "no apt support"
-            sudo wget https://git.alpinelinux.org/aports/plain/main/bsd-compat-headers/queue.h -O /usr/local/musl/i686-unknown-linux-musl/include/sys/queue.h || echo "compat fail"
+            sudo wget https://gist.githubusercontent.com/Ousret/ae53d8c725a2ad48c133afce313ffdcc/raw/3671b2081742f3d5152cd67f1d813ea3cbd84d50/queue.h -O /usr/local/musl/i686-unknown-linux-musl/include/sys/queue.h || echo "compat fail"
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/local/musl/i686-unknown-linux-musl"
 
       - name: Upload wheels
@@ -410,7 +412,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [ x64, aarch64, x86 ]
-        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', '3.13t' ]
+        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t' ]
         exclude:
           - target: aarch64
             python_version: pypy-3.7
@@ -420,6 +422,8 @@ jobs:
             python_version: pypy-3.9
           - target: aarch64
             python_version: pypy-3.10
+          - target: aarch64
+            python_version: pypy-3.11
           - target: x86
             python_version: pypy-3.7
           - target: x86
@@ -428,6 +432,8 @@ jobs:
             python_version: pypy-3.9
           - target: x86
             python_version: pypy-3.10
+          - target: x86
+            python_version: pypy-3.11
           - target: x86
             python_version: 3.13t
     steps:
@@ -485,7 +491,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [ universal2 ]
-        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', '3.13t' ]
+        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t' ]
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v5
