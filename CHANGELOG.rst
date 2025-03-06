@@ -1,3 +1,13 @@
+1.4.2 (2025-03-06)
+====================
+
+**Changed**
+- Upgraded aws-lc-rs from 1.12.2 to 1.12.5
+- Upgraded pyo3 from 0.23.4 to 0.23.5
+
+**Misc**
+- Support for PyPy 3.11
+
 1.4.1 (2025-02-05)
 ====================
 
