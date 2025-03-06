@@ -254,4 +254,7 @@ class QuicStreamAdapter(asyncio.Transport):
             return  # Defensive:
         if self.stream_id in self.protocol._quic._streams_finished:
             return  # Defensive:
-        self.protocol._quic.send_stream_data(self.stream_id, b"", True)
+        try:
+            self.protocol._quic.send_stream_data(self.stream_id, b"", True)
+        except AssertionError:
+            pass  # Defensive: avoid duplicate call (FIN bit may already be set!)

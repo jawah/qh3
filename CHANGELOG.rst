@@ -8,6 +8,9 @@
 **Misc**
 - Support for PyPy 3.11
 
+**Fixed**
+- Asyncio Protocol may raise AssertionError upon closing if the FIN bit was already sent in a given stream.s
+
 1.4.1 (2025-02-05)
 ====================
 
