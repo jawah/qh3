@@ -1,3 +1,12 @@
+1.4.3 (2025-04-04)
+====================
+
+**Changed**
+- ls-qpack updated to v2.6.1
+- no longer using git fork to build qh3 with ls-qpack
+- Upgraded aws-lc-rs to 1.13.0
+- Upgraded pyo3 to 0.24.1
+
 1.4.2 (2025-03-06)
 ====================
 
