@@ -160,13 +160,8 @@ jobs:
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v5
-        if: matrix.python_version != '3.13t'
         with:
           python-version: ${{ matrix.python_version }}
-      - uses: Quansight-Labs/setup-python@v5
-        if: matrix.python_version == '3.13t'
-        with:
-          python-version: 3.13t
       - name: Build wheels (no workarounds)
         if: matrix.target == 'x86_64'
         uses: PyO3/maturin-action@v1
@@ -439,15 +434,9 @@ jobs:
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v5
-        if: matrix.python_version != '3.13t'
         with:
           python-version: ${{ matrix.python_version }}
           architecture: ${{ matrix.target == 'x86' && 'x86' || 'x64' }}
-      - uses: Quansight-Labs/setup-python@v5
-        if: matrix.python_version == '3.13t' && matrix.target == 'x64'
-        with:
-          python-version: '3.13t'
-          architecture: x64
       - uses: ilammy/setup-nasm@v1
       - name: Set up Clang (Cygwin)
         run: choco install llvm -y
@@ -495,13 +484,8 @@ jobs:
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v5
-        if: matrix.python_version != '3.13t'
         with:
           python-version: ${{ matrix.python_version }}
-      - uses: Quansight-Labs/setup-python@v5
-        if: matrix.python_version == '3.13t'
-        with:
-          python-version: 3.13t
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         env:
