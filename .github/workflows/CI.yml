@@ -160,13 +160,8 @@ jobs:
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v5
-        if: matrix.python_version != '3.13t'
         with:
           python-version: ${{ matrix.python_version }}
-      - uses: Quansight-Labs/setup-python@v5
-        if: matrix.python_version == '3.13t'
-        with:
-          python-version: 3.13t
       - name: Build wheels (no workarounds)
         if: matrix.target == 'x86_64'
         uses: PyO3/maturin-action@v1
@@ -434,46 +429,38 @@ jobs:
             python_version: pypy-3.10
           - target: x86
             python_version: pypy-3.11
-          - target: x86
-            python_version: 3.13t
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v5
-        if: matrix.python_version != '3.13t'
+        if: matrix.target != 'aarch64'
         with:
           python-version: ${{ matrix.python_version }}
           architecture: ${{ matrix.target == 'x86' && 'x86' || 'x64' }}
-      - uses: Quansight-Labs/setup-python@v5
-        if: matrix.python_version == '3.13t' && matrix.target == 'x64'
-        with:
-          python-version: '3.13t'
-          architecture: x64
       - uses: ilammy/setup-nasm@v1
       - name: Set up Clang (Cygwin)
         run: choco install llvm -y
       - name: Add Ninja (aarch64 build requirement)
         if: matrix.target == 'aarch64'
         run: choco install ninja -y
-      - name: Build wheels (workaround 3.13t arm64)
-        if: matrix.python_version == '3.13t' && matrix.target == 'aarch64'
+      - name: Build wheels
         uses: PyO3/maturin-action@v1
+        if: matrix.target != 'aarch64'
         env:
           XWIN_VERSION: 16  # fix for "no cab file specified by MSI" ...?
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist -i ${{ matrix.python_version }}
+          sccache: 'true'
+      - name: Build wheels (force CROSS aarch64)
+        uses: PyO3/maturin-action@v1
+        if: matrix.target == 'aarch64'
+        env:
+          XWIN_VERSION: 16  # fix for "no cab file specified by MSI" ...?
           PYO3_CROSS: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist -i 3.13t
-          sccache: 'true'
-      - name: Build wheels (normal)
-        if: matrix.python_version != '3.13t' || matrix.target == 'x64'
-        uses: PyO3/maturin-action@v1
-        env:
-          XWIN_VERSION: 16  # fix for "no cab file specified by MSI" ...?
-          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
-        with:
-          target: ${{ matrix.target }}
-          args: --release --out dist
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
@@ -495,13 +482,8 @@ jobs:
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v5
-        if: matrix.python_version != '3.13t'
         with:
           python-version: ${{ matrix.python_version }}
-      - uses: Quansight-Labs/setup-python@v5
-        if: matrix.python_version == '3.13t'
-        with:
-          python-version: 3.13t
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         env:

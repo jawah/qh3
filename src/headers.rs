@@ -1,6 +1,6 @@
-use ls_qpack::decoder::{Decoder, DecoderOutput};
-use ls_qpack::encoder::Encoder;
-use ls_qpack::StreamId;
+use ls_qpack_rs::decoder::{Decoder, DecoderOutput};
+use ls_qpack_rs::encoder::Encoder;
+use ls_qpack_rs::StreamId;
 use pyo3::exceptions::PyException;
 use pyo3::pymethods;
 use pyo3::types::PyBytesMethods;
