@@ -328,6 +328,8 @@ class QuicConnection:
         "_session_ticket_handler",
         "__frame_handlers",
         "tls",
+        "_local_max_data_used",
+        "_initial_source_connection_id",
     )
 
     def __init__(
