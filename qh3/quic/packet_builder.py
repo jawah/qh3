@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import IntEnum
 from typing import Any, Callable, Sequence
 
 from ..buffer import Buffer, size_uint_var
@@ -26,7 +26,7 @@ PACKET_NUMBER_SEND_SIZE = 2
 QuicDeliveryHandler = Callable[..., None]
 
 
-class QuicDeliveryState(Enum):
+class QuicDeliveryState(IntEnum):
     ACKED = 0
     LOST = 1
 

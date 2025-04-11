@@ -4,7 +4,7 @@ import binascii
 import ipaddress
 import os
 from dataclasses import dataclass
-from enum import Enum, IntEnum
+from enum import IntEnum
 
 from .._hazmat import AeadAes128Gcm
 from ..buffer import Buffer
@@ -45,7 +45,7 @@ class QuicErrorCode(IntEnum):
     CRYPTO_ERROR = 0x100
 
 
-class QuicPacketType(Enum):
+class QuicPacketType(IntEnum):
     INITIAL = 0
     ZERO_RTT = 1
     HANDSHAKE = 2

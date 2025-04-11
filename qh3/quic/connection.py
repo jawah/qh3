@@ -5,7 +5,7 @@ import logging
 import os
 from collections import deque
 from dataclasses import dataclass
-from enum import Enum
+from enum import IntEnum
 from functools import partial
 from typing import TYPE_CHECKING, Any, Sequence
 
@@ -190,7 +190,7 @@ class QuicConnectionId:
     was_sent: bool = False
 
 
-class QuicConnectionState(Enum):
+class QuicConnectionState(IntEnum):
     FIRSTFLIGHT = 0
     CONNECTED = 1
     CLOSING = 2

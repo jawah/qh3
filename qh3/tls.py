@@ -11,7 +11,7 @@ import struct
 from binascii import unhexlify
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from enum import Enum, IntEnum
+from enum import IntEnum
 from functools import partial
 from hmac import HMAC
 from typing import Any, Callable, Generator, Optional, Sequence, Tuple, TypeVar
@@ -145,19 +145,19 @@ class AlertUnexpectedMessage(Alert):
     description = AlertDescription.unexpected_message
 
 
-class Direction(Enum):
+class Direction(IntEnum):
     DECRYPT = 0
     ENCRYPT = 1
 
 
-class Epoch(Enum):
+class Epoch(IntEnum):
     INITIAL = 0
     ZERO_RTT = 1
     HANDSHAKE = 2
     ONE_RTT = 3
 
 
-class State(Enum):
+class State(IntEnum):
     CLIENT_HANDSHAKE_START = 0
     CLIENT_EXPECT_SERVER_HELLO = 1
     CLIENT_EXPECT_ENCRYPTED_EXTENSIONS = 2
