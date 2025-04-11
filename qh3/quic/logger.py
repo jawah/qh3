@@ -7,6 +7,7 @@ import time
 from collections import deque
 from typing import Any
 
+from .._hazmat import RangeSet
 from ..h3.events import Headers
 from .packet import (
     QuicFrameType,
@@ -14,7 +15,6 @@ from .packet import (
     QuicStreamFrame,
     QuicTransportParameters,
 )
-from .rangeset import RangeSet
 
 PACKET_TYPE_NAMES = {
     QuicPacketType.INITIAL: "initial",
@@ -56,7 +56,7 @@ class QuicLoggerTrace:
     def encode_ack_frame(self, ranges: RangeSet, delay: float) -> dict:
         return {
             "ack_delay": self.encode_time(delay),
-            "acked_ranges": [[x.start, x.stop - 1] for x in ranges],
+            "acked_ranges": [[x[0], x[1] - 1] for x in ranges],
             "frame_type": "ack",
         }
 

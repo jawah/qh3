@@ -6,9 +6,8 @@ import os
 from dataclasses import dataclass
 from enum import IntEnum
 
-from .._hazmat import AeadAes128Gcm
+from .._hazmat import AeadAes128Gcm, RangeSet
 from ..buffer import Buffer
-from .rangeset import RangeSet
 
 PACKET_LONG_HEADER = 0x80
 PACKET_FIXED_BIT = 0x40
@@ -627,15 +626,15 @@ def push_ack_frame(buf: Buffer, rangeset: RangeSet, delay: int) -> int:
     ranges = len(rangeset)
     index = ranges - 1
     r = rangeset[index]
-    buf.push_uint_var(r.stop - 1)
+    buf.push_uint_var(r[1] - 1)
     buf.push_uint_var(delay)
     buf.push_uint_var(index)
-    buf.push_uint_var(r.stop - 1 - r.start)
-    start = r.start
+    buf.push_uint_var(r[1] - 1 - r[0])
+    start = r[0]
     while index > 0:
         index -= 1
         r = rangeset[index]
-        buf.push_uint_var(start - r.stop - 1)
-        buf.push_uint_var(r.stop - r.start - 1)
-        start = r.start
+        buf.push_uint_var(start - r[1] - 1)
+        buf.push_uint_var(r[1] - r[0] - 1)
+        start = r[0]
     return ranges

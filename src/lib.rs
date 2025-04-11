@@ -11,6 +11,7 @@ mod intldomain;
 mod ocsp;
 mod pkcs8;
 mod private_key;
+mod rangeset;
 mod rsa;
 
 pub use self::aead::{AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305};
@@ -35,6 +36,7 @@ pub use self::private_key::{
     verify_with_public_key, DsaPrivateKey, EcPrivateKey, Ed25519PrivateKey, RsaPrivateKey,
     SignatureError,
 };
+pub use self::rangeset::RangeSet;
 pub use self::rsa::Rsa;
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
@@ -44,6 +46,8 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // idna UTS 46
     m.add_function(wrap_pyfunction!(idna_encode, m)?)?;
     m.add_function(wrap_pyfunction!(idna_decode, m)?)?;
+    // rangeset
+    m.add_class::<RangeSet>()?;
     // ls-qpack bridge
     m.add_class::<QpackDecoder>()?;
     m.add_class::<QpackEncoder>()?;
