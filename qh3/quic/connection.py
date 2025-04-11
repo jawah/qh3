@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from .logger import QuicLoggerTrace
 
 from .. import tls
+from .._compat import DATACLASS_KWARGS
 from .._hazmat import Certificate as X509Certificate
 from ..buffer import (
     UINT_VAR_MAX,
@@ -182,7 +183,7 @@ class QuicConnectionAdapter(logging.LoggerAdapter):
         return "[{}] {}".format(self.extra["id"], msg), kwargs
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_KWARGS)
 class QuicConnectionId:
     cid: bytes
     sequence_number: int
@@ -211,7 +212,7 @@ class QuicNetworkPath:
         return self.is_validated or (self.bytes_sent + size) <= 3 * self.bytes_received
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_KWARGS)
 class QuicReceiveContext:
     epoch: tls.Epoch
     host_cid: bytes

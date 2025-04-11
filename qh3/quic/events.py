@@ -11,17 +11,17 @@ class QuicEvent:
     pass
 
 
-@dataclass(slots=True)
+@dataclass
 class ConnectionIdIssued(QuicEvent):
     connection_id: bytes
 
 
-@dataclass(slots=True)
+@dataclass
 class ConnectionIdRetired(QuicEvent):
     connection_id: bytes
 
 
-@dataclass(slots=True)
+@dataclass
 class ConnectionTerminated(QuicEvent):
     """
     The ConnectionTerminated event is fired when the QUIC connection is terminated.
@@ -37,7 +37,7 @@ class ConnectionTerminated(QuicEvent):
     "The human-readable reason for which the connection was closed."
 
 
-@dataclass(slots=True)
+@dataclass
 class DatagramFrameReceived(QuicEvent):
     """
     The DatagramFrameReceived event is fired when a DATAGRAM frame is received.
@@ -47,7 +47,7 @@ class DatagramFrameReceived(QuicEvent):
     "The data which was received."
 
 
-@dataclass(slots=True)
+@dataclass
 class HandshakeCompleted(QuicEvent):
     """
     The HandshakeCompleted event is fired when the TLS handshake completes.
@@ -63,7 +63,7 @@ class HandshakeCompleted(QuicEvent):
     "Whether a TLS session was resumed."
 
 
-@dataclass(slots=True)
+@dataclass
 class PingAcknowledged(QuicEvent):
     """
     The PingAcknowledged event is fired when a PING frame is acknowledged.
@@ -73,7 +73,7 @@ class PingAcknowledged(QuicEvent):
     "The unique ID of the PING."
 
 
-@dataclass(slots=True)
+@dataclass
 class ProtocolNegotiated(QuicEvent):
     """
     The ProtocolNegotiated event is fired when ALPN negotiation completes.
@@ -83,7 +83,7 @@ class ProtocolNegotiated(QuicEvent):
     "The protocol which was negotiated using ALPN, or `None`."
 
 
-@dataclass(slots=True)
+@dataclass
 class StreamDataReceived(QuicEvent):
     """
     The StreamDataReceived event is fired whenever data is received on a
@@ -100,7 +100,7 @@ class StreamDataReceived(QuicEvent):
     "The ID of the stream the data was received for."
 
 
-@dataclass(slots=True)
+@dataclass
 class StopSendingReceived(QuicEvent):
     """
     The StopSendingReceived event is fired when the remote peer requests
@@ -114,7 +114,7 @@ class StopSendingReceived(QuicEvent):
     "The ID of the stream that the peer requested stopping data transmission."
 
 
-@dataclass(slots=True)
+@dataclass
 class StreamReset(QuicEvent):
     """
     The StreamReset event is fired when the remote peer resets a stream.

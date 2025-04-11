@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from enum import IntEnum
 
+from .._compat import DATACLASS_KWARGS
 from .._hazmat import AeadAes128Gcm, RangeSet
 from ..buffer import Buffer
 
@@ -87,7 +88,7 @@ class QuicProtocolVersion(IntEnum):
     VERSION_2 = 0x6B3343CF
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_KWARGS)
 class QuicHeader:
     version: int | None
     "The protocol version. Only present in long header packets."
@@ -337,7 +338,7 @@ def encode_quic_version_negotiation(
 # TLS EXTENSION
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_KWARGS)
 class QuicPreferredAddress:
     ipv4_address: tuple[str, int] | None
     ipv6_address: tuple[str, int] | None
@@ -345,7 +346,7 @@ class QuicPreferredAddress:
     stateless_reset_token: bytes
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_KWARGS)
 class QuicVersionInformation:
     chosen_version: int
     available_versions: list[int]
@@ -586,20 +587,20 @@ PROBING_FRAME_TYPES = frozenset(
 )
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_KWARGS)
 class QuicResetStreamFrame:
     error_code: int
     final_size: int
     stream_id: int
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_KWARGS)
 class QuicStopSendingFrame:
     error_code: int
     stream_id: int
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_KWARGS)
 class QuicStreamFrame:
     data: bytes = b""
     fin: bool = False

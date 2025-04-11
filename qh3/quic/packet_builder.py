@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Callable, Sequence
 
+from .._compat import DATACLASS_KWARGS
 from ..buffer import Buffer, size_uint_var
 from ..tls import Epoch
 from .crypto import CryptoPair
@@ -31,7 +32,7 @@ class QuicDeliveryState(IntEnum):
     LOST = 1
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_KWARGS)
 class QuicSentPacket:
     epoch: Epoch
     in_flight: bool
