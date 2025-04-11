@@ -10,6 +10,7 @@ pub struct RangeSet {
 #[pymethods]
 impl RangeSet {
     #[new]
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         RangeSet { ranges: Vec::new() }
     }

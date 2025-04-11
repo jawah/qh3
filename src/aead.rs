@@ -58,7 +58,7 @@ pub struct AeadAes128Gcm {
 impl AeadAes256Gcm {
     #[new]
     pub fn py_new(key: Bound<'_, PyBytes>, iv: Bound<'_, PyBytes>) -> PyResult<Self> {
-        let unbound = match UnboundKey::new(&AES_256_GCM, &key.as_bytes()) {
+        let unbound = match UnboundKey::new(&AES_256_GCM, key.as_bytes()) {
             Ok(k) => k,
             Err(_) => return Err(CryptoError::new_err("Invalid AEAD key")),
         };
@@ -121,7 +121,7 @@ impl AeadAes256Gcm {
 impl AeadAes128Gcm {
     #[new]
     pub fn py_new(key: Bound<'_, PyBytes>, iv: Bound<'_, PyBytes>) -> PyResult<Self> {
-        let unbound = match UnboundKey::new(&AES_128_GCM, &key.as_bytes()) {
+        let unbound = match UnboundKey::new(&AES_128_GCM, key.as_bytes()) {
             Ok(k) => k,
             Err(_) => return Err(CryptoError::new_err("Invalid AEAD key")),
         };
@@ -185,9 +185,7 @@ impl AeadChaCha20Poly1305 {
     #[new]
     pub fn py_new(key: Bound<'_, PyBytes>, iv: Bound<'_, PyBytes>) -> Self {
         AeadChaCha20Poly1305 {
-            key: LessSafeKey::new(
-                UnboundKey::new(&CHACHA20_POLY1305, &key.as_bytes()).unwrap(),
-            ),
+            key: LessSafeKey::new(UnboundKey::new(&CHACHA20_POLY1305, key.as_bytes()).unwrap()),
             iv: iv.as_bytes().to_vec(),
         }
     }
