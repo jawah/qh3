@@ -60,7 +60,7 @@ class TestQuicStream:
         assert stream.receiver.handle_frame(QuicStreamFrame(offset=8, data=b"89012345")) == \
             None
         assert bytes(stream.receiver._buffer) == b"\x00\x00\x00\x00\x00\x00\x00\x0089012345"
-        assert list(stream.receiver._ranges) == [range(8, 16)]
+        assert list(stream.receiver._ranges) == [(8, 16)]
         assert stream.receiver._buffer_start == 0
         assert stream.receiver.highest_offset == 16
 
@@ -284,7 +284,7 @@ class TestQuicStream:
 
         # write data
         stream.sender.write(b"0123456789012345")
-        assert list(stream.sender._pending) == [range(0, 16)]
+        assert list(stream.sender._pending) == [(0, 16)]
         assert stream.sender.next_offset == 0
 
         # send a chunk
@@ -292,7 +292,7 @@ class TestQuicStream:
         assert frame.data == b"01234567"
         assert not frame.fin
         assert frame.offset == 0
-        assert list(stream.sender._pending) == [range(8, 16)]
+        assert list(stream.sender._pending) == [(8, 16)]
         assert stream.sender.next_offset == 8
 
         # send another chunk
@@ -326,7 +326,7 @@ class TestQuicStream:
 
         # write data and EOF
         stream.sender.write(b"0123456789012345", end_stream=True)
-        assert list(stream.sender._pending) == [range(0, 16)]
+        assert list(stream.sender._pending) == [(0, 16)]
         assert stream.sender.next_offset == 0
 
         # send a chunk
@@ -365,7 +365,7 @@ class TestQuicStream:
 
         # write data and EOF
         stream.sender.write(b"0123456789012345", end_stream=True)
-        assert list(stream.sender._pending) == [range(0, 16)]
+        assert list(stream.sender._pending) == [(0, 16)]
         assert stream.sender.next_offset == 0
 
         # send a chunk
@@ -404,13 +404,13 @@ class TestQuicStream:
 
         # write data and EOF
         stream.sender.write(b"0123456789012345", end_stream=True)
-        assert list(stream.sender._pending) == [range(0, 16)]
+        assert list(stream.sender._pending) == [(0, 16)]
         assert stream.sender.next_offset == 0
 
         # send a chunk
         assert stream.sender.get_frame(8) == \
             QuicStreamFrame(data=b"01234567", fin=False, offset=0)
-        assert list(stream.sender._pending) == [range(8, 16)]
+        assert list(stream.sender._pending) == [(8, 16)]
         assert stream.sender.next_offset == 8
 
         # send another chunk
@@ -426,7 +426,7 @@ class TestQuicStream:
 
         # a chunk gets lost
         stream.sender.on_data_delivery(QuicDeliveryState.LOST, 0, 8)
-        assert list(stream.sender._pending) == [range(0, 8)]
+        assert list(stream.sender._pending) == [(0, 8)]
         assert stream.sender.next_offset == 0
 
         # send chunk again
@@ -444,13 +444,13 @@ class TestQuicStream:
 
         # write data and EOF
         stream.sender.write(b"0123456789012345", end_stream=True)
-        assert list(stream.sender._pending) == [range(0, 16)]
+        assert list(stream.sender._pending) == [(0, 16)]
         assert stream.sender.next_offset == 0
 
         # send a chunk
         assert stream.sender.get_frame(8) == \
             QuicStreamFrame(data=b"01234567", fin=False, offset=0)
-        assert list(stream.sender._pending) == [range(8, 16)]
+        assert list(stream.sender._pending) == [(8, 16)]
         assert stream.sender.next_offset == 8
 
         # send another chunk
@@ -466,7 +466,7 @@ class TestQuicStream:
 
         # a chunk gets lost
         stream.sender.on_data_delivery(QuicDeliveryState.LOST, 8, 16)
-        assert list(stream.sender._pending) == [range(8, 16)]
+        assert list(stream.sender._pending) == [(8, 16)]
         assert stream.sender.next_offset == 8
 
         # send chunk again
@@ -495,7 +495,7 @@ class TestQuicStream:
         assert frame.data == b"01234567"
         assert not frame.fin
         assert frame.offset == 0
-        assert list(stream.sender._pending) == [range(8, 16)]
+        assert list(stream.sender._pending) == [(8, 16)]
         assert stream.sender.next_offset == 8
 
         # send is limited by peer
@@ -503,20 +503,20 @@ class TestQuicStream:
         assert frame.data == b"8901"
         assert not frame.fin
         assert frame.offset == 8
-        assert list(stream.sender._pending) == [range(12, 16)]
+        assert list(stream.sender._pending) == [(12, 16)]
         assert stream.sender.next_offset == 12
 
         # unable to send, blocked
         frame = stream.sender.get_frame(8, max_offset)
         assert frame is None
-        assert list(stream.sender._pending) == [range(12, 16)]
+        assert list(stream.sender._pending) == [(12, 16)]
         assert stream.sender.next_offset == 12
 
         # write more data, still blocked
         stream.sender.write(b"abcdefgh")
         frame = stream.sender.get_frame(8, max_offset)
         assert frame is None
-        assert list(stream.sender._pending) == [range(12, 24)]
+        assert list(stream.sender._pending) == [(12, 24)]
         assert stream.sender.next_offset == 12
 
         # peer raises limit, send some data
@@ -525,7 +525,7 @@ class TestQuicStream:
         assert frame.data == b"2345abcd"
         assert not frame.fin
         assert frame.offset == 12
-        assert list(stream.sender._pending) == [range(20, 24)]
+        assert list(stream.sender._pending) == [(20, 24)]
         assert stream.sender.next_offset == 20
 
         # peer raises limit again, send remaining data

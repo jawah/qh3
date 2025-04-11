@@ -6,7 +6,7 @@ import math
 from qh3 import tls
 from qh3.quic.packet import QuicPacketType
 from qh3.quic.packet_builder import QuicSentPacket
-from qh3.quic.rangeset import RangeSet
+from qh3._hazmat import RangeSet
 from qh3.quic.recovery import (
     QuicPacketPacer,
     QuicPacketRecovery,
@@ -103,8 +103,10 @@ class TestQuicPacketRecovery:
         assert len(space.sent_packets) == 1
 
         # packet ack'd
+        rs = RangeSet()
+        rs.add(0, 1)
         self.recovery.on_ack_received(
-            space, ack_rangeset=RangeSet([range(0, 1)]), ack_delay=0.0, now=10.0
+            space, ack_rangeset=rs, ack_delay=0.0, now=10.0
         )
         assert self.recovery.bytes_in_flight == 0
         assert space.ack_eliciting_in_flight == 0
@@ -136,8 +138,10 @@ class TestQuicPacketRecovery:
         assert len(space.sent_packets) == 1
 
         # packet ack'd
+        rs = RangeSet()
+        rs.add(0, 1)
         self.recovery.on_ack_received(
-            space, ack_rangeset=RangeSet([range(0, 1)]), ack_delay=0.0, now=10.0
+            space, ack_rangeset=rs, ack_delay=0.0, now=10.0
         )
         assert self.recovery.bytes_in_flight == 0
         assert space.ack_eliciting_in_flight == 0

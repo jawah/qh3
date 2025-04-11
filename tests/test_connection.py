@@ -867,13 +867,13 @@ class TestQuicConnection:
             """
             Patch client's TLS initialization to clear TLS extensions.
             """
-            real_initialize = client._initialize
+            real_initialize = QuicConnection._initialize
 
-            def patched_initialize(peer_cid: bytes):
-                real_initialize(peer_cid)
-                client.tls.handshake_extensions = []
+            def patched_initialize(self, peer_cid: bytes):
+                real_initialize(self, peer_cid)
+                self.tls.handshake_extensions = []
 
-            client._initialize = patched_initialize
+            QuicConnection._initialize = patched_initialize
 
         with client_and_server(client_patch=patch) as (client, server):
             assert server._close_event.reason_phrase == \
@@ -1012,13 +1012,13 @@ class TestQuicConnection:
             Patch server's TLS initialization to set an invalid
             max_early_data value.
             """
-            real_initialize = server._initialize
+            real_initialize = QuicConnection._initialize
 
-            def patched_initialize(peer_cid: bytes):
-                real_initialize(peer_cid)
-                server.tls._max_early_data = 12345
+            def patched_initialize(self, peer_cid: bytes):
+                real_initialize(self, peer_cid)
+                self.tls._max_early_data = 12345
 
-            server._initialize = patched_initialize
+            QuicConnection._initialize = patched_initialize
 
         def save_session_ticket(ticket):
             nonlocal client_ticket
@@ -1182,20 +1182,17 @@ class TestQuicConnection:
                 client.receive_datagram(data, SERVER_ADDR, now=time.time())
 
     def test_tls_error(self):
-        def patch(client):
-            """
-            Patch the client's TLS initialization to send invalid TLS version.
-            """
-            real_initialize = client._initialize
+        real_initialize = QuicConnection._initialize
 
-            def patched_initialize(peer_cid: bytes):
-                real_initialize(peer_cid)
-                client.tls._supported_versions = [0x0308]
+        def patched_initialize(self, peer_cid: bytes):
+            real_initialize(self, peer_cid)
+            if self._is_client:
+                self.tls._supported_versions = [0x0308]
 
-            client._initialize = patched_initialize
+        QuicConnection._initialize = patched_initialize
 
         # handshake fails
-        with client_and_server(client_patch=patch) as (client, server):
+        with client_and_server() as (client, server):
             timer_at = server.get_timer()
             server.handle_timer(timer_at)
 
