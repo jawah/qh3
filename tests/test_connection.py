@@ -863,21 +863,21 @@ class TestQuicConnection:
             self.assertEvents(server, [])
 
     def test_connect_with_no_transport_parameters(self):
-        def patch(client):
-            """
-            Patch client's TLS initialization to clear TLS extensions.
-            """
-            real_initialize = QuicConnection._initialize
+        real_initialize = QuicConnection._initialize
 
-            def patched_initialize(self, peer_cid: bytes):
-                real_initialize(self, peer_cid)
+        def patched_initialize(self, peer_cid: bytes):
+            real_initialize(self, peer_cid)
+            if self._is_client:
                 self.tls.handshake_extensions = []
 
-            QuicConnection._initialize = patched_initialize
+        QuicConnection._initialize = patched_initialize
 
-        with client_and_server(client_patch=patch) as (client, server):
-            assert server._close_event.reason_phrase == \
-                "No QUIC transport parameters received"
+        try:
+            with client_and_server() as (client, server):
+                assert server._close_event.reason_phrase == \
+                       "No QUIC transport parameters received"
+        finally:
+            QuicConnection._initialize = real_initialize
 
     def test_connect_with_compatible_version_negotiation_1(self):
         """
@@ -1007,31 +1007,29 @@ class TestQuicConnection:
         client_ticket = None
         ticket_store = SessionTicketStore()
 
-        def patch(server):
-            """
-            Patch server's TLS initialization to set an invalid
-            max_early_data value.
-            """
-            real_initialize = QuicConnection._initialize
+        real_initialize = QuicConnection._initialize
 
-            def patched_initialize(self, peer_cid: bytes):
-                real_initialize(self, peer_cid)
+        def patched_initialize(self, peer_cid: bytes):
+            real_initialize(self, peer_cid)
+            if not self._is_client:
                 self.tls._max_early_data = 12345
 
-            QuicConnection._initialize = patched_initialize
+        QuicConnection._initialize = patched_initialize
 
         def save_session_ticket(ticket):
             nonlocal client_ticket
             client_ticket = ticket
 
-        with client_and_server(
-            client_kwargs={"session_ticket_handler": save_session_ticket},
-            server_kwargs={"session_ticket_handler": ticket_store.add},
-            server_patch=patch,
-        ) as (client, server):
-            # check handshake failed
-            event = client.next_event()
-            assert event is None
+        try:
+            with client_and_server(
+                    client_kwargs={"session_ticket_handler": save_session_ticket},
+                    server_kwargs={"session_ticket_handler": ticket_store.add},
+            ) as (client, server):
+                # check handshake failed
+                event = client.next_event()
+                assert event is None
+        finally:
+            QuicConnection._initialize = real_initialize
 
     def test_change_connection_id(self):
         with client_and_server() as (client, server):
@@ -1192,15 +1190,18 @@ class TestQuicConnection:
         QuicConnection._initialize = patched_initialize
 
         # handshake fails
-        with client_and_server() as (client, server):
-            timer_at = server.get_timer()
-            server.handle_timer(timer_at)
+        try:
+            with client_and_server() as (client, server):
+                timer_at = server.get_timer()
+                server.handle_timer(timer_at)
 
-            event = server.next_event()
-            assert type(event) == events.ConnectionTerminated
-            assert event.error_code == 326
-            assert event.frame_type == QuicFrameType.CRYPTO
-            assert event.reason_phrase == "No supported protocol version"
+                event = server.next_event()
+                assert type(event) == events.ConnectionTerminated
+                assert event.error_code == 326
+                assert event.frame_type == QuicFrameType.CRYPTO
+                assert event.reason_phrase == "No supported protocol version"
+        finally:
+            QuicConnection._initialize = real_initialize
 
     def test_receive_datagram_garbage(self):
         client = create_standalone_client(self)
