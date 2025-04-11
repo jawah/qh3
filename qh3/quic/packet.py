@@ -351,7 +351,7 @@ class QuicVersionInformation:
     available_versions: list[int]
 
 
-@dataclass(slots=True)
+@dataclass()
 class QuicTransportParameters:
     original_destination_connection_id: bytes | None = None
     max_idle_timeout: int | None = None
