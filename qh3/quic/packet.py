@@ -88,7 +88,7 @@ class QuicProtocolVersion(IntEnum):
     VERSION_2 = 0x6B3343CF
 
 
-@dataclass
+@dataclass(slots=True)
 class QuicHeader:
     version: int | None
     "The protocol version. Only present in long header packets."
@@ -338,7 +338,7 @@ def encode_quic_version_negotiation(
 # TLS EXTENSION
 
 
-@dataclass
+@dataclass(slots=True)
 class QuicPreferredAddress:
     ipv4_address: tuple[str, int] | None
     ipv6_address: tuple[str, int] | None
@@ -346,13 +346,13 @@ class QuicPreferredAddress:
     stateless_reset_token: bytes
 
 
-@dataclass
+@dataclass(slots=True)
 class QuicVersionInformation:
     chosen_version: int
     available_versions: list[int]
 
 
-@dataclass
+@dataclass(slots=True)
 class QuicTransportParameters:
     original_destination_connection_id: bytes | None = None
     max_idle_timeout: int | None = None
@@ -587,20 +587,20 @@ PROBING_FRAME_TYPES = frozenset(
 )
 
 
-@dataclass
+@dataclass(slots=True)
 class QuicResetStreamFrame:
     error_code: int
     final_size: int
     stream_id: int
 
 
-@dataclass
+@dataclass(slots=True)
 class QuicStopSendingFrame:
     error_code: int
     stream_id: int
 
 
-@dataclass
+@dataclass(slots=True)
 class QuicStreamFrame:
     data: bytes = b""
     fin: bool = False

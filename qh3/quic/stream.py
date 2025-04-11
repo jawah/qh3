@@ -29,6 +29,18 @@ class QuicStreamReceiver:
     - upon reception of a data frame with the FIN bit set
     """
 
+    __slots__ = (
+        "highest_offset",
+        "is_finished",
+        "stop_pending",
+        "_buffer",
+        "_buffer_start",
+        "_final_size",
+        "_ranges",
+        "_stream_id",
+        "_stop_error_code",
+    )
+
     def __init__(self, stream_id: int | None, readable: bool) -> None:
         self.highest_offset = 0  # the highest offset ever seen
         self.is_finished = False
@@ -166,6 +178,23 @@ class QuicStreamSender:
     - upon acknowledgement of a STREAM_RESET frame
     - upon acknowledgement of a data frame with the FIN bit set
     """
+
+    __slots__ = (
+        "buffer_is_empty",
+        "highest_offset",
+        "is_finished",
+        "reset_pending",
+        "_acked",
+        "_buffer",
+        "_buffer_fin",
+        "_buffer_start",
+        "_buffer_stop",
+        "_pending",
+        "_pending_eof",
+        "_reset_error_code",
+        "_stream_id",
+        "send_buffer_empty",
+    )
 
     def __init__(self, stream_id: int | None, writable: bool) -> None:
         self.buffer_is_empty = True
@@ -314,6 +343,16 @@ class QuicStreamSender:
 
 
 class QuicStream:
+    __slots__ = (
+        "is_blocked",
+        "max_stream_data_local",
+        "max_stream_data_local_sent",
+        "max_stream_data_remote",
+        "receiver",
+        "sender",
+        "stream_id",
+    )
+
     def __init__(
         self,
         stream_id: int | None = None,

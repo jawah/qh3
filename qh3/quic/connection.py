@@ -182,7 +182,7 @@ class QuicConnectionAdapter(logging.LoggerAdapter):
         return "[{}] {}".format(self.extra["id"], msg), kwargs
 
 
-@dataclass
+@dataclass(slots=True)
 class QuicConnectionId:
     cid: bytes
     sequence_number: int
@@ -211,7 +211,7 @@ class QuicNetworkPath:
         return self.is_validated or (self.bytes_sent + size) <= 3 * self.bytes_received
 
 
-@dataclass
+@dataclass(slots=True)
 class QuicReceiveContext:
     epoch: tls.Epoch
     host_cid: bytes
@@ -244,6 +244,91 @@ class QuicConnection:
 
     :param configuration: The QUIC configuration to use.
     """
+
+    __slots__ = (
+        "_configuration",
+        "_is_client",
+        "_ack_delay",
+        "_close_at",
+        "_close_event",
+        "_connect_called",
+        "_cryptos",
+        "_cryptos_initial",
+        "_crypto_buffers",
+        "_crypto_frame_type",
+        "_crypto_packet_version",
+        "_crypto_retransmitted",
+        "_crypto_streams",
+        "_events",
+        "_handshake_complete",
+        "_handshake_confirmed",
+        "_host_cids",
+        "host_cid",
+        "_host_cid_seq",
+        "_local_ack_delay_exponent",
+        "_local_active_connection_id_limit",
+        "_local_challenges",
+        "_local_initial_source_connection_id",
+        "_local_max_data",
+        "_local_max_stream_data_bidi_local",
+        "_local_max_stream_data_bidi_remote",
+        "_local_max_stream_data_uni",
+        "_local_max_streams_bidi",
+        "_local_max_streams_uni",
+        "_local_next_stream_id_bidi",
+        "_local_next_stream_id_uni",
+        "_loss_at",
+        "_network_paths",
+        "_pacing_at",
+        "_packet_number",
+        "_peer_cid",
+        "_peer_cid_available",
+        "_peer_cid_sequence_numbers",
+        "_peer_retire_prior_to",
+        "_peer_token",
+        "_quic_logger",
+        "_remote_ack_delay_exponent",
+        "_remote_active_connection_id_limit",
+        "_remote_initial_source_connection_id",
+        "_remote_max_idle_timeout",
+        "_remote_max_data",
+        "_remote_max_data_used",
+        "_remote_max_datagram_frame_size",
+        "_remote_max_stream_data_bidi_local",
+        "_remote_max_stream_data_bidi_remote",
+        "_remote_max_stream_data_uni",
+        "_remote_max_streams_bidi",
+        "_remote_max_streams_uni",
+        "_remote_version_information",
+        "_retry_count",
+        "_retry_source_connection_id",
+        "_spaces",
+        "_spin_bit",
+        "_spin_highest_pn",
+        "_state",
+        "_streams",
+        "_streams_queue",
+        "_streams_blocked_bidi",
+        "_streams_blocked_uni",
+        "_streams_finished",
+        "_version",
+        "_version_negotiated_compatible",
+        "_version_negotiated_incompatible",
+        "_original_destination_connection_id",
+        "_logger",
+        "_loss",
+        "_close_pending",
+        "_datagrams_pending",
+        "_handshake_done_pending",
+        "_ping_pending",
+        "_probe_pending",
+        "_retire_connection_ids",
+        "_streams_blocked_pending",
+        "_session_ticket_fetcher",
+        "_session_ticket_handler",
+        "__frame_handlers",
+        "tls",
+    )
 
     def __init__(
         self,

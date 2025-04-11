@@ -31,7 +31,7 @@ class QuicDeliveryState(IntEnum):
     LOST = 1
 
 
-@dataclass
+@dataclass(slots=True)
 class QuicSentPacket:
     epoch: Epoch
     in_flight: bool
