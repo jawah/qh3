@@ -58,6 +58,9 @@ class AeadAes128Gcm:
     def encrypt(
         self, packet_number: int, data: bytes, associated_data: bytes
     ) -> bytes: ...
+    def encrypt_with_nonce(
+        self, nonce: bytes, data: bytes, associated_data: bytes
+    ) -> bytes: ...
     def decrypt(
         self, packet_number: int, data: bytes, associated_data: bytes
     ) -> bytes: ...

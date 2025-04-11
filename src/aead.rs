@@ -178,6 +178,29 @@ impl AeadAes128Gcm {
             Err(_) => Err(CryptoError::new_err("encryption failed")),
         }
     }
+
+    pub fn encrypt_with_nonce<'a>(
+        &mut self,
+        py: Python<'a>,
+        nonce: Bound<'_, PyBytes>,
+        data: Bound<'_, PyBytes>,
+        associated_data: Bound<'_, PyBytes>,
+    ) -> PyResult<Bound<'a, PyBytes>> {
+        let mut in_out_buffer = Vec::from(data.as_bytes());
+
+        let aad = Aad::from(associated_data.as_bytes());
+
+        let res = self.key.seal_in_place_append_tag(
+            Nonce::try_assume_unique_for_key(nonce.as_bytes()).unwrap(),
+            aad,
+            &mut in_out_buffer,
+        );
+
+        match res {
+            Ok(_) => Ok(PyBytes::new(py, &in_out_buffer)),
+            Err(_) => Err(CryptoError::new_err("encryption failed")),
+        }
+    }
 }
 
 #[pymethods]
