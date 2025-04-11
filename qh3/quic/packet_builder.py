@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import IntEnum
 from typing import Any, Callable, Sequence
 
+from .._compat import DATACLASS_KWARGS
 from ..buffer import Buffer, size_uint_var
 from ..tls import Epoch
 from .crypto import CryptoPair
@@ -26,12 +27,12 @@ PACKET_NUMBER_SEND_SIZE = 2
 QuicDeliveryHandler = Callable[..., None]
 
 
-class QuicDeliveryState(Enum):
+class QuicDeliveryState(IntEnum):
     ACKED = 0
     LOST = 1
 
 
-@dataclass
+@dataclass(**DATACLASS_KWARGS)
 class QuicSentPacket:
     epoch: Epoch
     in_flight: bool

@@ -1,6 +1,6 @@
 [package]
 name = "qh3"
-version = "1.4.3"
+version = "1.4.4"
 edition = "2021"
 rust-version = "1.75"
 license = "BSD-3"
@@ -21,7 +21,6 @@ rsa = { version = "0.9.8", features = ["sha2", "pem", "getrandom"] }
 dsa = "0.6.3"
 ed25519-dalek = { version = "2.1.1", features = ["pkcs8"] }
 rand = "0.8.5"
-chacha20poly1305 = "0.10.1"
 pkcs8 = { version = "0.10.2", features = ["encryption", "pem"] }
 pkcs1 = { version = "0.7.5", features = ["pem"] }
 rustls-pemfile = "2.2.0"

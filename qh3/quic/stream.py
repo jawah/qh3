@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .._hazmat import RangeSet
 from . import events
 from .packet import (
     QuicErrorCode,
@@ -8,7 +9,6 @@ from .packet import (
     QuicStreamFrame,
 )
 from .packet_builder import QuicDeliveryState
-from .rangeset import RangeSet
 
 
 class FinalSizeError(Exception):
@@ -28,6 +28,18 @@ class QuicStreamReceiver:
     - upon reception of a STREAM_RESET frame
     - upon reception of a data frame with the FIN bit set
     """
+
+    __slots__ = (
+        "highest_offset",
+        "is_finished",
+        "stop_pending",
+        "_buffer",
+        "_buffer_start",
+        "_final_size",
+        "_ranges",
+        "_stream_id",
+        "_stop_error_code",
+    )
 
     def __init__(self, stream_id: int | None, readable: bool) -> None:
         self.highest_offset = 0  # the highest offset ever seen
@@ -143,17 +155,17 @@ class QuicStreamReceiver:
         Remove data from the front of the buffer.
         """
         try:
-            has_data_to_read = self._ranges[0].start == self._buffer_start
+            has_data_to_read = self._ranges[0][0] == self._buffer_start
         except IndexError:
             has_data_to_read = False
         if not has_data_to_read:
             return b""
 
         r = self._ranges.shift()
-        pos = r.stop - r.start
+        pos = r[1] - r[0]
         data = bytes(self._buffer[:pos])
         del self._buffer[:pos]
-        self._buffer_start = r.stop
+        self._buffer_start = r[1]
         return data
 
 
@@ -166,6 +178,23 @@ class QuicStreamSender:
     - upon acknowledgement of a STREAM_RESET frame
     - upon acknowledgement of a data frame with the FIN bit set
     """
+
+    __slots__ = (
+        "buffer_is_empty",
+        "highest_offset",
+        "is_finished",
+        "reset_pending",
+        "_acked",
+        "_buffer",
+        "_buffer_fin",
+        "_buffer_start",
+        "_buffer_stop",
+        "_pending",
+        "_pending_eof",
+        "_reset_error_code",
+        "_stream_id",
+        "send_buffer_empty",
+    )
 
     def __init__(self, stream_id: int | None, writable: bool) -> None:
         self.buffer_is_empty = True
@@ -191,7 +220,7 @@ class QuicStreamSender:
         This is used to determine the space needed for the frame's `offset` field.
         """
         try:
-            return self._pending[0].start
+            return self._pending[0][0]
         except IndexError:
             return self._buffer_stop
 
@@ -214,8 +243,8 @@ class QuicStreamSender:
             return None
 
         # apply flow control
-        start = r.start
-        stop = min(r.stop, start + max_size)
+        start = r[0]
+        stop = min(r[1], start + max_size)
         if max_offset is not None and stop > max_offset:
             stop = max_offset
         if stop <= start:
@@ -260,8 +289,8 @@ class QuicStreamSender:
             if stop > start:
                 self._acked.add(start, stop)
                 first_range = self._acked[0]
-                if first_range.start == self._buffer_start:
-                    size = first_range.stop - first_range.start
+                if first_range[0] == self._buffer_start:
+                    size = first_range[1] - first_range[0]
                     self._acked.shift()
                     self._buffer_start += size
                     del self._buffer[:size]
@@ -314,6 +343,16 @@ class QuicStreamSender:
 
 
 class QuicStream:
+    __slots__ = (
+        "is_blocked",
+        "max_stream_data_local",
+        "max_stream_data_local_sent",
+        "max_stream_data_remote",
+        "receiver",
+        "sender",
+        "stream_id",
+    )
+
     def __init__(
         self,
         stream_id: int | None = None,

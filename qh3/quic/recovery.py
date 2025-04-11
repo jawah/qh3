@@ -4,9 +4,9 @@ import logging
 import math
 from typing import Any, Callable, Iterable
 
+from .._hazmat import RangeSet
 from .logger import QuicLoggerTrace
 from .packet_builder import QuicDeliveryState, QuicSentPacket
-from .rangeset import RangeSet
 
 # loss detection
 K_PACKET_THRESHOLD = 3
@@ -245,7 +245,7 @@ class QuicPacketRecovery:
         Update metrics as the result of an ACK being received.
         """
         is_ack_eliciting = False
-        largest_acked = ack_rangeset.bounds().stop - 1
+        largest_acked = ack_rangeset.bounds()[1] - 1
         largest_newly_acked = None
         largest_sent_time = None
 

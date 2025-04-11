@@ -1,3 +1,9 @@
+1.4.4 (2025-04-11)
+====================
+
+**Misc**
+- General performance improvements in various parts of the code. Up to 25% faster.
+
 1.4.3 (2025-04-07)
 ====================
 

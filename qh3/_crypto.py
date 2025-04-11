@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import struct
-
 from ._hazmat import (
     AeadAes128Gcm,
     AeadAes256Gcm,
@@ -34,32 +32,25 @@ class AEAD:
         self._aead: AeadAes256Gcm | AeadAes128Gcm | AeadChaCha20Poly1305
 
         if cipher_name == b"chacha20-poly1305":
-            self._aead = AeadChaCha20Poly1305(key)
+            self._aead = AeadChaCha20Poly1305(key, iv)
         else:
             if cipher_name == b"aes-256-gcm":
-                self._aead = AeadAes256Gcm(key)
+                self._aead = AeadAes256Gcm(key, iv)
             else:
-                self._aead = AeadAes128Gcm(key)
-
-        self._iv = iv
+                self._aead = AeadAes128Gcm(key, iv)
 
     def decrypt(self, data: bytes, associated_data: bytes, packet_number: int) -> bytes:
         return self._aead.decrypt(
-            self._nonce(packet_number),
+            packet_number,
             data,
             associated_data,
         )
 
     def encrypt(self, data: bytes, associated_data: bytes, packet_number: int) -> bytes:
         return self._aead.encrypt(
-            self._nonce(packet_number),
+            packet_number,
             data,
             associated_data,
-        )
-
-    def _nonce(self, packet_number: int) -> bytes:
-        return self._iv[0:4] + struct.pack(
-            ">Q", struct.unpack(">Q", self._iv[4:12])[0] ^ packet_number
         )
 
 

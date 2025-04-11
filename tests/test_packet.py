@@ -393,7 +393,7 @@ class TestFrame:
         # parse
         buf = Buffer(data=data)
         rangeset, delay = packet.pull_ack_frame(buf)
-        assert list(rangeset) == [range(0, 1)]
+        assert list(rangeset) == [(0, 1)]
         assert delay == 2
 
         # serialize
@@ -407,7 +407,7 @@ class TestFrame:
         # parse
         buf = Buffer(data=data)
         rangeset, delay = packet.pull_ack_frame(buf)
-        assert list(rangeset) == [range(0, 1), range(2, 3)]
+        assert list(rangeset) == [(0, 1), (2, 3)]
         assert delay == 2
 
         # serialize
@@ -421,7 +421,7 @@ class TestFrame:
         # parse
         buf = Buffer(data=data)
         rangeset, delay = packet.pull_ack_frame(buf)
-        assert list(rangeset) == [range(0, 4), range(5, 6)]
+        assert list(rangeset) == [(0, 4), (5, 6)]
         assert delay == 2
 
         # serialize
@@ -435,7 +435,7 @@ class TestFrame:
         # parse
         buf = Buffer(data=data)
         rangeset, delay = packet.pull_ack_frame(buf)
-        assert list(rangeset) == [range(0, 3), range(5, 6)]
+        assert list(rangeset) == [(0, 3), (5, 6)]
         assert delay == 2
 
         # serialize
@@ -449,7 +449,7 @@ class TestFrame:
         # parse
         buf = Buffer(data=data)
         rangeset, delay = packet.pull_ack_frame(buf)
-        assert list(rangeset) == [range(0, 1), range(2, 3), range(4, 5)]
+        assert list(rangeset) == [(0, 1), (2, 3), (4, 5)]
         assert delay == 2
 
         # serialize

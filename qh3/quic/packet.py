@@ -4,11 +4,11 @@ import binascii
 import ipaddress
 import os
 from dataclasses import dataclass
-from enum import Enum, IntEnum
+from enum import IntEnum
 
-from .._hazmat import AeadAes128Gcm
+from .._compat import DATACLASS_KWARGS
+from .._hazmat import AeadAes128Gcm, RangeSet
 from ..buffer import Buffer
-from .rangeset import RangeSet
 
 PACKET_LONG_HEADER = 0x80
 PACKET_FIXED_BIT = 0x40
@@ -45,7 +45,7 @@ class QuicErrorCode(IntEnum):
     CRYPTO_ERROR = 0x100
 
 
-class QuicPacketType(Enum):
+class QuicPacketType(IntEnum):
     INITIAL = 0
     ZERO_RTT = 1
     HANDSHAKE = 2
@@ -88,7 +88,7 @@ class QuicProtocolVersion(IntEnum):
     VERSION_2 = 0x6B3343CF
 
 
-@dataclass
+@dataclass(**DATACLASS_KWARGS)
 class QuicHeader:
     version: int | None
     "The protocol version. Only present in long header packets."
@@ -153,8 +153,8 @@ def get_retry_integrity_tag(
         aead_nonce = RETRY_AEAD_NONCE_VERSION_1
 
     # run AES-128-GCM
-    aead = AeadAes128Gcm(aead_key)
-    integrity_tag = aead.encrypt(aead_nonce, b"", buf.data)
+    aead = AeadAes128Gcm(aead_key, b"")
+    integrity_tag = aead.encrypt_with_nonce(aead_nonce, b"", buf.data)
     assert len(integrity_tag) == RETRY_INTEGRITY_TAG_SIZE
     return integrity_tag
 
@@ -338,7 +338,7 @@ def encode_quic_version_negotiation(
 # TLS EXTENSION
 
 
-@dataclass
+@dataclass(**DATACLASS_KWARGS)
 class QuicPreferredAddress:
     ipv4_address: tuple[str, int] | None
     ipv6_address: tuple[str, int] | None
@@ -346,13 +346,13 @@ class QuicPreferredAddress:
     stateless_reset_token: bytes
 
 
-@dataclass
+@dataclass(**DATACLASS_KWARGS)
 class QuicVersionInformation:
     chosen_version: int
     available_versions: list[int]
 
 
-@dataclass
+@dataclass()
 class QuicTransportParameters:
     original_destination_connection_id: bytes | None = None
     max_idle_timeout: int | None = None
@@ -587,20 +587,20 @@ PROBING_FRAME_TYPES = frozenset(
 )
 
 
-@dataclass
+@dataclass(**DATACLASS_KWARGS)
 class QuicResetStreamFrame:
     error_code: int
     final_size: int
     stream_id: int
 
 
-@dataclass
+@dataclass(**DATACLASS_KWARGS)
 class QuicStopSendingFrame:
     error_code: int
     stream_id: int
 
 
-@dataclass
+@dataclass(**DATACLASS_KWARGS)
 class QuicStreamFrame:
     data: bytes = b""
     fin: bool = False
@@ -627,15 +627,15 @@ def push_ack_frame(buf: Buffer, rangeset: RangeSet, delay: int) -> int:
     ranges = len(rangeset)
     index = ranges - 1
     r = rangeset[index]
-    buf.push_uint_var(r.stop - 1)
+    buf.push_uint_var(r[1] - 1)
     buf.push_uint_var(delay)
     buf.push_uint_var(index)
-    buf.push_uint_var(r.stop - 1 - r.start)
-    start = r.start
+    buf.push_uint_var(r[1] - 1 - r[0])
+    start = r[0]
     while index > 0:
         index -= 1
         r = rangeset[index]
-        buf.push_uint_var(start - r.stop - 1)
-        buf.push_uint_var(r.stop - r.start - 1)
-        start = r.start
+        buf.push_uint_var(start - r[1] - 1)
+        buf.push_uint_var(r[1] - r[0] - 1)
+        start = r[0]
     return ranges
