@@ -12,16 +12,16 @@ mod ocsp;
 mod pkcs8;
 mod private_key;
 mod rangeset;
+mod recovery;
 mod rsa;
 mod utils;
-mod recovery;
 
 pub use self::aead::{AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305};
 pub use self::agreement::{
     ECDHP256KeyExchange, ECDHP384KeyExchange, ECDHP521KeyExchange, X25519KeyExchange,
     X25519ML768KeyExchange,
 };
-pub use self::buffer::{Buffer, BufferReadError, BufferWriteError, encode_uint_var, size_uint_var};
+pub use self::buffer::{encode_uint_var, size_uint_var, Buffer, BufferReadError, BufferWriteError};
 pub use self::certificate::{
     Certificate, ExpiredCertificateError, InvalidNameCertificateError, SelfSignedCertificateError,
     ServerVerifier, UnacceptableCertificateError,
@@ -39,9 +39,9 @@ pub use self::private_key::{
     SignatureError,
 };
 pub use self::rangeset::RangeSet;
+pub use self::recovery::{QuicPacketPacer, QuicRttMonitor};
 pub use self::rsa::Rsa;
 pub use self::utils::decode_packet_number;
-pub use self::recovery::{QuicPacketPacer, QuicRttMonitor};
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
 

@@ -110,20 +110,19 @@ impl QuicPacketPacer {
     }
 }
 
-
 /// Roundtrip time monitor for HyStart (adapted from Python).
 #[pyclass]
 pub struct QuicRttMonitor {
     _increases: usize,
     // _last_time is not used in the Python version, so we omit it.
     _ready: bool,
-    _size: usize,             // fixed sample buffer size (5)
+    _size: usize,               // fixed sample buffer size (5)
     _filtered_min: Option<f64>, // filtered minimum RTT so far
     _sample_idx: usize,
     _sample_max: Option<f64>,
     _sample_min: Option<f64>,
-    _sample_time: f64,          // last time the sample buffer was updated
-    _samples: Vec<f64>,         // fixed-size buffer storing the RTT samples
+    _sample_time: f64,  // last time the sample buffer was updated
+    _samples: Vec<f64>, // fixed-size buffer storing the RTT samples
 }
 
 #[pymethods]
@@ -211,7 +210,9 @@ impl QuicRttMonitor {
 
             if self._ready {
                 // Update _filtered_min if it is not set, or if the current sample max is lower.
-                if self._filtered_min.is_none() || self._filtered_min.unwrap() > self._sample_max.unwrap() {
+                if self._filtered_min.is_none()
+                    || self._filtered_min.unwrap() > self._sample_max.unwrap()
+                {
                     self._filtered_min = self._sample_max;
                 }
                 // Compute the delta between the current sample minimum and the filtered minimum.

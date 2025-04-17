@@ -20,10 +20,13 @@ from .packet import (
 )
 
 # MinPacketSize and MaxPacketSize control the packet sizes for UDP datagrams.
-# If MinPacketSize is unset, a default value of 1280 bytes will be used during the handshake.
+# If MinPacketSize is unset, a default value of 1280 bytes
+# will be used during the handshake.
 # If MaxPacketSize is unset, a default value of 1452 bytes will be used.
-# DPLPMTUD will automatically determine the MTU supported by the link-up to the MaxPacketSize,
-# except for in the case where MinPacketSize and MaxPacketSize are configured to the same value,
+# DPLPMTUD will automatically determine the MTU supported
+# by the link-up to the MaxPacketSize,
+# except for in the case where MinPacketSize and MaxPacketSize
+# are configured to the same value,
 # in which case path MTU discovery will be disabled.
 # Values above 65355 are invalid.
 # 20-bytes for IPv6 overhead.
@@ -205,7 +208,7 @@ class QuicPacketBuilder:
         """
         assert packet_type not in {
             QuicPacketType.RETRY,
-            QuicPacketType.VERSION_NEGOTIATION
+            QuicPacketType.VERSION_NEGOTIATION,
         }, "Invalid packet type"
 
         buf = self._buffer

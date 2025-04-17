@@ -17,9 +17,7 @@ from hmac import HMAC
 from typing import Any, Callable, Generator, Optional, Sequence, Tuple, TypeVar
 
 from ._hazmat import (
-    Certificate as X509Certificate,
-)
-from ._hazmat import (
+    Buffer,
     CryptoError,
     DsaPrivateKey,
     ECDHP256KeyExchange,
@@ -40,7 +38,9 @@ from ._hazmat import (
     X25519ML768KeyExchange,
     idna_encode,
     verify_with_public_key,
-    Buffer,
+)
+from ._hazmat import (
+    Certificate as X509Certificate,
 )
 
 # candidates based on https://github.com/tiran/certifi-system-store by Christian Heimes

@@ -39,18 +39,26 @@ impl QUICHeaderProtection {
         Ok(QUICHeaderProtection { hpk: inner_hpk })
     }
 
-    pub fn apply<'a>(&self, py: Python<'a>, plain_header: &[u8], protected_payload: &[u8]) -> PyResult<Bound<'a, PyBytes>>
-    {
+    pub fn apply<'a>(
+        &self,
+        py: Python<'a>,
+        plain_header: &[u8],
+        protected_payload: &[u8],
+    ) -> PyResult<Bound<'a, PyBytes>> {
         let pn_length = (plain_header[0] & 0x03) as usize + 1;
         let pn_offset = plain_header.len() - pn_length;
         let sample_offset = PACKET_NUMBER_LENGTH_MAX - pn_length;
 
-        let mask_res = self.hpk.new_mask(&protected_payload[sample_offset..sample_offset+SAMPLE_LENGTH]);
+        let mask_res = self
+            .hpk
+            .new_mask(&protected_payload[sample_offset..sample_offset + SAMPLE_LENGTH]);
 
         let mask = match mask_res {
-            Err(_) => return Err(CryptoError::new_err(
-                "unable to issue mask protection header",
-            )),
+            Err(_) => {
+                return Err(CryptoError::new_err(
+                    "unable to issue mask protection header",
+                ))
+            }
             Ok(data) => data,
         };
 
@@ -72,16 +80,24 @@ impl QUICHeaderProtection {
         Ok(PyBytes::new(py, &buffer))
     }
 
-    pub fn remove<'a>(&self, py: Python<'a>, packet: &[u8], pn_offset: usize) -> PyResult<(Bound<'a, PyBytes>, u32)>
-    {
+    pub fn remove<'a>(
+        &self,
+        py: Python<'a>,
+        packet: &[u8],
+        pn_offset: usize,
+    ) -> PyResult<(Bound<'a, PyBytes>, u32)> {
         let sample_offset = pn_offset + PACKET_NUMBER_LENGTH_MAX;
 
-        let mask_res = self.hpk.new_mask(&packet[sample_offset..sample_offset+SAMPLE_LENGTH]);
+        let mask_res = self
+            .hpk
+            .new_mask(&packet[sample_offset..sample_offset + SAMPLE_LENGTH]);
 
         let mask = match mask_res {
-            Err(_) => return Err(CryptoError::new_err(
-                "unable to issue mask protection header",
-            )),
+            Err(_) => {
+                return Err(CryptoError::new_err(
+                    "unable to issue mask protection header",
+                ))
+            }
             Ok(data) => data,
         };
 

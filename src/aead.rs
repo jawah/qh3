@@ -66,7 +66,7 @@ impl AeadAes256Gcm {
         let iv_as_vec = iv.as_bytes().to_vec();
 
         if iv_as_vec.len() != NONCE_LEN {
-            return Err(CryptoError::new_err("Invalid iv length"))
+            return Err(CryptoError::new_err("Invalid iv length"));
         }
 
         Ok(AeadAes256Gcm {
@@ -135,7 +135,7 @@ impl AeadAes128Gcm {
         let iv_as_vec = iv.as_bytes().to_vec();
 
         if iv_as_vec.len() != NONCE_LEN {
-            return Err(CryptoError::new_err("Invalid iv length"))
+            return Err(CryptoError::new_err("Invalid iv length"));
         }
 
         Ok(AeadAes128Gcm {
@@ -222,15 +222,13 @@ impl AeadChaCha20Poly1305 {
         let iv_as_vec = iv.as_bytes().to_vec();
 
         if iv_as_vec.len() != NONCE_LEN {
-            return Err(CryptoError::new_err("Invalid iv length"))
+            return Err(CryptoError::new_err("Invalid iv length"));
         }
 
-        Ok(
-            AeadChaCha20Poly1305 {
-                key: LessSafeKey::new(UnboundKey::new(&CHACHA20_POLY1305, key.as_bytes()).unwrap()),
-                iv: iv_as_vec,
-            }
-        )
+        Ok(AeadChaCha20Poly1305 {
+            key: LessSafeKey::new(UnboundKey::new(&CHACHA20_POLY1305, key.as_bytes()).unwrap()),
+            iv: iv_as_vec,
+        })
     }
 
     pub fn decrypt<'a>(

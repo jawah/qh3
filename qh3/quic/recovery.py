@@ -4,7 +4,7 @@ import logging
 import math
 from typing import Any, Callable, Iterable
 
-from .._hazmat import RangeSet, QuicPacketPacer, QuicRttMonitor
+from .._hazmat import QuicPacketPacer, QuicRttMonitor, RangeSet
 from .logger import QuicLoggerTrace
 from .packet_builder import QuicDeliveryState, QuicSentPacket
 

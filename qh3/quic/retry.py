@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 
-from .._hazmat import Rsa, Buffer
+from .._hazmat import Buffer, Rsa
 from ..tls import pull_opaque, push_opaque
 from .connection import NetworkAddress
 

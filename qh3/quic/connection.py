@@ -15,7 +15,8 @@ if TYPE_CHECKING:
 
 from .. import tls
 from .._compat import DATACLASS_KWARGS, UINT_VAR_MAX, UINT_VAR_MAX_SIZE
-from .._hazmat import Certificate as X509Certificate, size_uint_var, Buffer, BufferReadError
+from .._hazmat import Buffer, BufferReadError, size_uint_var
+from .._hazmat import Certificate as X509Certificate
 from . import events
 from .crypto import CryptoError, CryptoPair, KeyUnavailableError, NoCallback
 from .packet import (

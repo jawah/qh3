@@ -39,7 +39,7 @@ impl Buffer {
 
         Ok(Buffer {
             pos: 0,
-            data: vec![0; capacity.unwrap().try_into().unwrap()],
+            data: vec![0; capacity.unwrap()],
             capacity: capacity.unwrap(),
         })
     }
@@ -91,15 +91,16 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn pull_bytes<'a>(&mut self, py: Python<'a>, length: usize) -> PyResult<Bound<'a, PyBytes>> {
+    pub fn pull_bytes<'a>(
+        &mut self,
+        py: Python<'a>,
+        length: usize,
+    ) -> PyResult<Bound<'a, PyBytes>> {
         if self.capacity < self.pos + length {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = PyBytes::new(
-            py,
-            &self.data[self.pos..(self.pos + length)],
-        );
+        let extract = PyBytes::new(py, &self.data[self.pos..(self.pos + length)]);
 
         self.pos += length;
 
@@ -128,8 +129,7 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract =
-            u16::from_be_bytes(self.data[self.pos..(self.pos + 2)].try_into()?);
+        let extract = u16::from_be_bytes(self.data[self.pos..(self.pos + 2)].try_into()?);
         self.pos += 2;
 
         Ok(extract)
@@ -145,8 +145,7 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract =
-            u32::from_be_bytes(self.data[self.pos..(self.pos + 4)].try_into()?);
+        let extract = u32::from_be_bytes(self.data[self.pos..(self.pos + 4)].try_into()?);
         self.pos += 4;
 
         Ok(extract)
@@ -162,8 +161,7 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract =
-            u64::from_be_bytes(self.data[self.pos..(self.pos + 8)].try_into()?);
+        let extract = u64::from_be_bytes(self.data[self.pos..(self.pos + 8)].try_into()?);
         self.pos += 8;
 
         Ok(extract)
@@ -244,8 +242,7 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos..(self.pos + 2)]
-            .clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos..(self.pos + 2)].clone_from_slice(&value.to_be_bytes());
         self.pos += 2;
 
         Ok(())
@@ -261,8 +258,7 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos..(self.pos + 4)]
-            .clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos..(self.pos + 4)].clone_from_slice(&value.to_be_bytes());
         self.pos += 4;
 
         Ok(())
@@ -278,8 +274,7 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos..(self.pos + 8)]
-            .clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos..(self.pos + 8)].clone_from_slice(&value.to_be_bytes());
         self.pos += 8;
 
         Ok(())
@@ -328,14 +323,16 @@ pub fn encode_uint_var(value: u64) -> PyResult<Vec<u8>> {
         let encoded: u64 = 0xC000_0000_0000_0000 | value;
         Ok(encoded.to_be_bytes().into())
     } else {
-        Err(PyValueError::new_err("Value too large to encode as a variable-length integer"))
+        Err(PyValueError::new_err(
+            "Value too large to encode as a variable-length integer",
+        ))
     }
 }
 
 #[pyfunction]
 pub fn size_uint_var(value: u64) -> PyResult<u8> {
     // 1-byte
-    if value <= 0x3F{
+    if value <= 0x3F {
         Ok(1)
     }
     // 2-bytes
@@ -350,6 +347,8 @@ pub fn size_uint_var(value: u64) -> PyResult<u8> {
     else if value <= 0x3FFFFFFFFFFFFFFF {
         Ok(8)
     } else {
-        Err(PyValueError::new_err("Integer is too big for a variable-length integer"))
+        Err(PyValueError::new_err(
+            "Integer is too big for a variable-length integer",
+        ))
     }
 }

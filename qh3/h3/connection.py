@@ -4,7 +4,10 @@ import logging
 import re
 from enum import Enum, IntEnum
 
+from .._compat import UINT_VAR_MAX_SIZE
 from .._hazmat import (
+    Buffer,
+    BufferReadError,
     DecoderStreamError,
     DecompressionFailed,
     EncoderStreamError,
@@ -12,10 +15,7 @@ from .._hazmat import (
     QpackEncoder,
     StreamBlocked,
     encode_uint_var,
-    Buffer,
-    BufferReadError,
 )
-from .._compat import UINT_VAR_MAX_SIZE
 from ..quic.connection import QuicConnection, stream_is_unidirectional
 from ..quic.events import DatagramFrameReceived, QuicEvent, StreamDataReceived
 from ..quic.logger import QuicLoggerTrace

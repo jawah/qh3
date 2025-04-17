@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 from .._compat import DATACLASS_KWARGS
-from .._hazmat import AeadAes128Gcm, RangeSet, Buffer
+from .._hazmat import AeadAes128Gcm, Buffer, RangeSet
 
 PACKET_LONG_HEADER = 0x80
 PACKET_FIXED_BIT = 0x40

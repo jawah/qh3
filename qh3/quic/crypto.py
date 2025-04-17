@@ -3,7 +3,14 @@ from __future__ import annotations
 import binascii
 from typing import Callable
 
-from .._hazmat import QUICHeaderProtection as HeaderProtection, AeadChaCha20Poly1305, AeadAes256Gcm, AeadAes128Gcm, CryptoError, decode_packet_number
+from .._hazmat import (
+    AeadAes128Gcm,
+    AeadAes256Gcm,
+    AeadChaCha20Poly1305,
+    CryptoError,
+    decode_packet_number,
+)
+from .._hazmat import QUICHeaderProtection as HeaderProtection
 from ..tls import CipherSuite, cipher_suite_hash, hkdf_expand_label, hkdf_extract
 from .packet import (
     QuicProtocolVersion,
@@ -60,7 +67,6 @@ def derive_key_iv_hp(
 
 
 class CryptoContext:
-
     __slots__ = (
         "aead",
         "cipher_suite",
@@ -193,7 +199,6 @@ def next_key_phase(self: CryptoContext) -> CryptoContext:
 
 
 class CryptoPair:
-
     __slots__ = (
         "aead_tag_size",
         "recv",
