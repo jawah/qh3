@@ -114,23 +114,6 @@ class QuicHeader:
     "Supported protocol versions. Only present in `VERSION_NEGOTIATION` packets."
 
 
-def decode_packet_number(truncated: int, num_bits: int, expected: int) -> int:
-    """
-    Recover a packet number from a truncated packet number.
-
-    See: Appendix A - Sample Packet Number Decoding Algorithm
-    """
-    window = 1 << num_bits
-    half_window = window // 2
-    candidate = (expected & ~(window - 1)) | truncated
-    if candidate <= expected - half_window and candidate < (1 << 62) - window:
-        return candidate + window
-    elif candidate > expected + half_window and candidate >= window:
-        return candidate - window
-    else:
-        return candidate
-
-
 def get_retry_integrity_tag(
     packet_without_tag: bytes, original_destination_cid: bytes, version: int
 ) -> bytes:

@@ -7,7 +7,6 @@ from .._hazmat import QUICHeaderProtection as HeaderProtection, AeadChaCha20Poly
 from ..tls import CipherSuite, cipher_suite_hash, hkdf_expand_label, hkdf_extract
 from .packet import (
     QuicProtocolVersion,
-    decode_packet_number,
     is_long_header,
 )
 

@@ -297,3 +297,11 @@ class RangeSet(Sequence):
     def __getitem__(self, key: Any) -> tuple[int, int]: ...
     def __len__(self) -> int: ...
     def __repr__(self) -> str: ...
+
+
+def decode_packet_number(truncated: int, num_bits: int, expected: int) -> int:
+    """
+    Recover a packet number from a truncated packet number.
+
+    See: Appendix A - Sample Packet Number Decoding Algorithm
+    """

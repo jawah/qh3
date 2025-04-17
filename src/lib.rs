@@ -13,6 +13,7 @@ mod pkcs8;
 mod private_key;
 mod rangeset;
 mod rsa;
+mod utils;
 
 pub use self::aead::{AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305};
 pub use self::agreement::{
@@ -38,6 +39,7 @@ pub use self::private_key::{
 };
 pub use self::rangeset::RangeSet;
 pub use self::rsa::Rsa;
+pub use self::utils::decode_packet_number;
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
 
@@ -46,6 +48,8 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // idna UTS 46
     m.add_function(wrap_pyfunction!(idna_encode, m)?)?;
     m.add_function(wrap_pyfunction!(idna_decode, m)?)?;
+    // utils
+    m.add_function(wrap_pyfunction!(decode_packet_number, m)?)?;
     // rangeset
     m.add_class::<RangeSet>()?;
     // ls-qpack bridge
