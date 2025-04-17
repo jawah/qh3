@@ -142,11 +142,15 @@ def get_retry_integrity_tag(
 
 
 def get_spin_bit(first_byte: int) -> bool:
-    return bool(first_byte & PACKET_SPIN_BIT)
+    if first_byte & PACKET_SPIN_BIT:
+        return True
+    return False
 
 
 def is_long_header(first_byte: int) -> bool:
-    return bool(first_byte & PACKET_LONG_HEADER)
+    if first_byte & PACKET_LONG_HEADER:
+        return True
+    return False
 
 
 def pretty_protocol_version(version: int) -> str:
@@ -163,7 +167,8 @@ def pretty_protocol_version(version: int) -> str:
 def pull_quic_header(buf: Buffer, host_cid_length: int | None = None) -> QuicHeader:
     packet_start = buf.tell()
 
-    version = None
+    version: int | None
+
     integrity_tag = b""
     supported_versions = []
     token = b""

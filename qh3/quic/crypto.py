@@ -60,6 +60,18 @@ def derive_key_iv_hp(
 
 
 class CryptoContext:
+
+    __slots__ = (
+        "aead",
+        "cipher_suite",
+        "hp",
+        "key_phase",
+        "secret",
+        "version",
+        "_setup_cb",
+        "_teardown_cb",
+    )
+
     def __init__(
         self,
         key_phase: int = 0,
@@ -181,6 +193,14 @@ def next_key_phase(self: CryptoContext) -> CryptoContext:
 
 
 class CryptoPair:
+
+    __slots__ = (
+        "aead_tag_size",
+        "recv",
+        "send",
+        "_update_key_requested",
+    )
+
     def __init__(
         self,
         recv_setup_cb: Callback = NoCallback,

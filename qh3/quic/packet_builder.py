@@ -203,12 +203,10 @@ class QuicPacketBuilder:
         """
         Starts a new packet.
         """
-        assert packet_type in (
-            QuicPacketType.INITIAL,
-            QuicPacketType.HANDSHAKE,
-            QuicPacketType.ZERO_RTT,
-            QuicPacketType.ONE_RTT,
-        ), "Invalid packet type"
+        assert packet_type not in {
+            QuicPacketType.RETRY,
+            QuicPacketType.VERSION_NEGOTIATION
+        }, "Invalid packet type"
 
         buf = self._buffer
 

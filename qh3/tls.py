@@ -2223,5 +2223,5 @@ class Context:
 
     def _set_state(self, state: State) -> None:
         if self.__logger:
-            self.__logger.debug("TLS %s -> %s", self.state, state)
+            self.__logger.debug("TLS %s -> %s", self.state.name, state.name)
         self.state = state
