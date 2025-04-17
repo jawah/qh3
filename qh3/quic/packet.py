@@ -7,8 +7,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 from .._compat import DATACLASS_KWARGS
-from .._hazmat import AeadAes128Gcm, RangeSet
-from ..buffer import Buffer
+from .._hazmat import AeadAes128Gcm, Buffer, RangeSet
 
 PACKET_LONG_HEADER = 0x80
 PACKET_FIXED_BIT = 0x40
@@ -115,23 +114,6 @@ class QuicHeader:
     "Supported protocol versions. Only present in `VERSION_NEGOTIATION` packets."
 
 
-def decode_packet_number(truncated: int, num_bits: int, expected: int) -> int:
-    """
-    Recover a packet number from a truncated packet number.
-
-    See: Appendix A - Sample Packet Number Decoding Algorithm
-    """
-    window = 1 << num_bits
-    half_window = window // 2
-    candidate = (expected & ~(window - 1)) | truncated
-    if candidate <= expected - half_window and candidate < (1 << 62) - window:
-        return candidate + window
-    elif candidate > expected + half_window and candidate >= window:
-        return candidate - window
-    else:
-        return candidate
-
-
 def get_retry_integrity_tag(
     packet_without_tag: bytes, original_destination_cid: bytes, version: int
 ) -> bytes:
@@ -153,18 +135,22 @@ def get_retry_integrity_tag(
         aead_nonce = RETRY_AEAD_NONCE_VERSION_1
 
     # run AES-128-GCM
-    aead = AeadAes128Gcm(aead_key, b"")
+    aead = AeadAes128Gcm(aead_key, b"null!12bytes")
     integrity_tag = aead.encrypt_with_nonce(aead_nonce, b"", buf.data)
     assert len(integrity_tag) == RETRY_INTEGRITY_TAG_SIZE
     return integrity_tag
 
 
 def get_spin_bit(first_byte: int) -> bool:
-    return bool(first_byte & PACKET_SPIN_BIT)
+    if first_byte & PACKET_SPIN_BIT:
+        return True
+    return False
 
 
 def is_long_header(first_byte: int) -> bool:
-    return bool(first_byte & PACKET_LONG_HEADER)
+    if first_byte & PACKET_LONG_HEADER:
+        return True
+    return False
 
 
 def pretty_protocol_version(version: int) -> str:
@@ -181,7 +167,8 @@ def pretty_protocol_version(version: int) -> str:
 def pull_quic_header(buf: Buffer, host_cid_length: int | None = None) -> QuicHeader:
     packet_start = buf.tell()
 
-    version = None
+    version: int | None
+
     integrity_tag = b""
     supported_versions = []
     token = b""

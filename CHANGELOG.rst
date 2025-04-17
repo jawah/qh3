@@ -1,3 +1,12 @@
+1.4.5 (2025-04-17)
+====================
+
+**Misc**
+- General performance improvements in various parts of the code. Up to 15% faster (against 1.4.4).
+
+**Fixed**
+- unclosed StreamWriter warning in our asyncio Protocol implementation.
+
 1.4.4 (2025-04-11)
 ====================
 

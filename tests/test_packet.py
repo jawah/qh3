@@ -3,14 +3,13 @@ from __future__ import annotations
 import pytest
 import binascii
 
-from qh3.buffer import Buffer, BufferReadError
+from qh3._hazmat import Buffer, BufferReadError, decode_packet_number
 from qh3.quic import packet
 from qh3.quic.packet import (
     QuicPacketType,
     QuicPreferredAddress,
     QuicProtocolVersion,
     QuicTransportParameters,
-    decode_packet_number,
     encode_quic_retry,
     encode_quic_version_negotiation,
     get_retry_integrity_tag,

@@ -63,9 +63,15 @@ impl AeadAes256Gcm {
             Err(_) => return Err(CryptoError::new_err("Invalid AEAD key")),
         };
 
+        let iv_as_vec = iv.as_bytes().to_vec();
+
+        if iv_as_vec.len() != NONCE_LEN {
+            return Err(CryptoError::new_err("Invalid iv length"));
+        }
+
         Ok(AeadAes256Gcm {
             key: LessSafeKey::new(unbound),
-            iv: iv.as_bytes().to_vec(),
+            iv: iv_as_vec,
         })
     }
 
@@ -126,9 +132,15 @@ impl AeadAes128Gcm {
             Err(_) => return Err(CryptoError::new_err("Invalid AEAD key")),
         };
 
+        let iv_as_vec = iv.as_bytes().to_vec();
+
+        if iv_as_vec.len() != NONCE_LEN {
+            return Err(CryptoError::new_err("Invalid iv length"));
+        }
+
         Ok(AeadAes128Gcm {
             key: LessSafeKey::new(unbound),
-            iv: iv.as_bytes().to_vec(),
+            iv: iv_as_vec,
         })
     }
 
@@ -206,11 +218,17 @@ impl AeadAes128Gcm {
 #[pymethods]
 impl AeadChaCha20Poly1305 {
     #[new]
-    pub fn py_new(key: Bound<'_, PyBytes>, iv: Bound<'_, PyBytes>) -> Self {
-        AeadChaCha20Poly1305 {
-            key: LessSafeKey::new(UnboundKey::new(&CHACHA20_POLY1305, key.as_bytes()).unwrap()),
-            iv: iv.as_bytes().to_vec(),
+    pub fn py_new(key: Bound<'_, PyBytes>, iv: Bound<'_, PyBytes>) -> PyResult<Self> {
+        let iv_as_vec = iv.as_bytes().to_vec();
+
+        if iv_as_vec.len() != NONCE_LEN {
+            return Err(CryptoError::new_err("Invalid iv length"));
         }
+
+        Ok(AeadChaCha20Poly1305 {
+            key: LessSafeKey::new(UnboundKey::new(&CHACHA20_POLY1305, key.as_bytes()).unwrap()),
+            iv: iv_as_vec,
+        })
     }
 
     pub fn decrypt<'a>(

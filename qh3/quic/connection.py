@@ -14,15 +14,9 @@ if TYPE_CHECKING:
     from .logger import QuicLoggerTrace
 
 from .. import tls
-from .._compat import DATACLASS_KWARGS
+from .._compat import DATACLASS_KWARGS, UINT_VAR_MAX, UINT_VAR_MAX_SIZE
+from .._hazmat import Buffer, BufferReadError, size_uint_var
 from .._hazmat import Certificate as X509Certificate
-from ..buffer import (
-    UINT_VAR_MAX,
-    UINT_VAR_MAX_SIZE,
-    Buffer,
-    BufferReadError,
-    size_uint_var,
-)
 from . import events
 from .crypto import CryptoError, CryptoPair, KeyUnavailableError, NoCallback
 from .packet import (
@@ -153,7 +147,9 @@ def stream_is_unidirectional(stream_id: int) -> bool:
     """
     Returns True if the stream is unidirectional.
     """
-    return bool(stream_id & 2)
+    if stream_id & 2:
+        return True
+    return False
 
 
 class Limit:
@@ -166,7 +162,7 @@ class Limit:
 
 
 class QuicConnectionError(Exception):
-    def __init__(self, error_code: int, frame_type: int, reason_phrase: str):
+    def __init__(self, error_code: int, frame_type: int | None, reason_phrase: str):
         self.error_code = error_code
         self.frame_type = frame_type
         self.reason_phrase = reason_phrase
@@ -943,7 +939,7 @@ class QuicConnection:
             crypto_frame_required = False
 
             # server initialization
-            if not self._is_client and self._state == QuicConnectionState.FIRSTFLIGHT:
+            if not self._is_client and self._state is QuicConnectionState.FIRSTFLIGHT:
                 assert header.packet_type == QuicPacketType.INITIAL, (
                     "first packet must be INITIAL"
                 )
@@ -1054,7 +1050,7 @@ class QuicConnection:
                 self._peer_cid.cid = header.source_cid
                 self._peer_cid.sequence_number = 0
 
-            if self._state == QuicConnectionState.FIRSTFLIGHT:
+            if self._state is QuicConnectionState.FIRSTFLIGHT:
                 self._remote_initial_source_connection_id = header.source_cid
                 self._set_state(QuicConnectionState.CONNECTED)
 
@@ -1350,14 +1346,14 @@ class QuicConnection:
 
     def _find_network_path(self, addr: NetworkAddress) -> QuicNetworkPath:
         # check existing network paths
-        for idx, network_path in enumerate(self._network_paths):
+        for network_path in self._network_paths:
             if network_path.addr == addr:
                 return network_path
 
         # new network path
-        network_path = QuicNetworkPath(addr)
-        self._logger.debug("Network path %s discovered", network_path.addr)
-        return network_path
+        self._logger.debug("Network path %s discovered", addr)
+
+        return QuicNetworkPath(addr)
 
     def _get_or_create_stream(self, frame_type: int, stream_id: int) -> QuicStream:
         """
@@ -1368,9 +1364,10 @@ class QuicConnection:
             raise StreamFinishedError
 
         stream = self._streams.get(stream_id, None)
+
         if stream is None:
             # check initiator
-            if stream_is_client_initiated(stream_id) == self._is_client:
+            if stream_is_client_initiated(stream_id) is self._is_client:
                 raise QuicConnectionError(
                     error_code=QuicErrorCode.STREAM_STATE_ERROR,
                     frame_type=frame_type,
@@ -1407,6 +1404,7 @@ class QuicConnection:
                 writable=not stream_is_unidirectional(stream_id),
             )
             self._streams_queue.append(stream)
+
         return stream
 
     def _get_or_create_stream_for_send(self, stream_id: int) -> QuicStream:
@@ -1421,7 +1419,7 @@ class QuicConnection:
         stream = self._streams.get(stream_id, None)
         if stream is None:
             # check initiator
-            if stream_is_client_initiated(stream_id) != self._is_client:
+            if stream_is_client_initiated(stream_id) is not self._is_client:
                 raise ValueError("Cannot send data on unknown peer-initiated stream")
 
             # determine limits
@@ -2486,6 +2484,7 @@ class QuicConnection:
         frame_found = False
         is_ack_eliciting = False
         is_probing = None
+
         while not buf.eof():
             # get frame type
             try:
@@ -2626,7 +2625,7 @@ class QuicConnection:
         # https://datatracker.ietf.org/doc/html/rfc9368#section-4
         if (
             self._is_client
-            and self._state == QuicConnectionState.FIRSTFLIGHT
+            and self._state is QuicConnectionState.FIRSTFLIGHT
             and not self._version_negotiated_incompatible
         ):
             if self._quic_logger is not None:
@@ -2974,18 +2973,18 @@ class QuicConnection:
         return buf.data
 
     def _set_state(self, state: QuicConnectionState) -> None:
-        self._logger.debug("%s -> %s", self._state, state)
+        self._logger.debug("%s -> %s", self._state.name, state.name)
         self._state = state
 
     def _stream_can_receive(self, stream_id: int) -> bool:
         return stream_is_client_initiated(
             stream_id
-        ) != self._is_client or not stream_is_unidirectional(stream_id)
+        ) is not self._is_client or not stream_is_unidirectional(stream_id)
 
     def _stream_can_send(self, stream_id: int) -> bool:
         return stream_is_client_initiated(
             stream_id
-        ) == self._is_client or not stream_is_unidirectional(stream_id)
+        ) is self._is_client or not stream_is_unidirectional(stream_id)
 
     def _unblock_streams(self, is_unidirectional: bool) -> None:
         if is_unidirectional:
@@ -3077,6 +3076,7 @@ class QuicConnection:
                 self._pacing_at = self._loss._pacer.next_send_time(now=now)
                 if self._pacing_at is not None:
                     break
+
             builder.start_packet(packet_type, crypto)
 
             if self._handshake_complete:
@@ -3101,7 +3101,7 @@ class QuicConnection:
                     network_path.local_challenge_sent = True
 
                 # PATH RESPONSE
-                while len(network_path.remote_challenges) > 0:
+                while network_path.remote_challenges:
                     challenge = network_path.remote_challenges.popleft()
                     self._write_path_response_frame(
                         builder=builder, challenge=challenge
@@ -3115,11 +3115,12 @@ class QuicConnection:
                         )
 
                 # RETIRE_CONNECTION_ID
-                for sequence_number in self._retire_connection_ids[:]:
-                    self._write_retire_connection_id_frame(
-                        builder=builder, sequence_number=sequence_number
-                    )
-                    self._retire_connection_ids.pop(0)
+                if self._retire_connection_ids:
+                    for sequence_number in self._retire_connection_ids:
+                        self._write_retire_connection_id_frame(
+                            builder=builder, sequence_number=sequence_number
+                        )
+                    self._retire_connection_ids.clear()
 
                 # STREAMS_BLOCKED
                 if self._streams_blocked_pending:
@@ -3216,7 +3217,8 @@ class QuicConnection:
                 # This method of updating the streams queue ensures that discarded
                 # streams are removed and ones which sent are moved to the end even
                 # if an exception occurs in the loop.
-                self._streams_queue = to_reshelve + sent
+                sent[0:0] = to_reshelve
+                self._streams_queue = sent
 
             if builder.packet_is_empty:
                 break

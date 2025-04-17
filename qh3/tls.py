@@ -17,9 +17,7 @@ from hmac import HMAC
 from typing import Any, Callable, Generator, Optional, Sequence, Tuple, TypeVar
 
 from ._hazmat import (
-    Certificate as X509Certificate,
-)
-from ._hazmat import (
+    Buffer,
     CryptoError,
     DsaPrivateKey,
     ECDHP256KeyExchange,
@@ -41,7 +39,9 @@ from ._hazmat import (
     idna_encode,
     verify_with_public_key,
 )
-from .buffer import Buffer
+from ._hazmat import (
+    Certificate as X509Certificate,
+)
 
 # candidates based on https://github.com/tiran/certifi-system-store by Christian Heimes
 _CA_FILE_CANDIDATES = [
@@ -2223,5 +2223,5 @@ class Context:
 
     def _set_state(self, state: State) -> None:
         if self.__logger:
-            self.__logger.debug("TLS %s -> %s", self.state, state)
+            self.__logger.debug("TLS %s -> %s", self.state.name, state.name)
         self.state = state

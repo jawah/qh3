@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import binascii
 
-from qh3.buffer import Buffer
+from qh3._hazmat import Buffer
 from qh3.quic.crypto import (
     INITIAL_CIPHER_SUITE,
     CryptoError,

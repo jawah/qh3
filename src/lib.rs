@@ -12,14 +12,16 @@ mod ocsp;
 mod pkcs8;
 mod private_key;
 mod rangeset;
+mod recovery;
 mod rsa;
+mod utils;
 
 pub use self::aead::{AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305};
 pub use self::agreement::{
     ECDHP256KeyExchange, ECDHP384KeyExchange, ECDHP521KeyExchange, X25519KeyExchange,
     X25519ML768KeyExchange,
 };
-pub use self::buffer::{Buffer, BufferReadError, BufferWriteError};
+pub use self::buffer::{encode_uint_var, size_uint_var, Buffer, BufferReadError, BufferWriteError};
 pub use self::certificate::{
     Certificate, ExpiredCertificateError, InvalidNameCertificateError, SelfSignedCertificateError,
     ServerVerifier, UnacceptableCertificateError,
@@ -37,7 +39,9 @@ pub use self::private_key::{
     SignatureError,
 };
 pub use self::rangeset::RangeSet;
+pub use self::recovery::{QuicPacketPacer, QuicRttMonitor};
 pub use self::rsa::Rsa;
+pub use self::utils::decode_packet_number;
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
 
@@ -46,8 +50,13 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // idna UTS 46
     m.add_function(wrap_pyfunction!(idna_encode, m)?)?;
     m.add_function(wrap_pyfunction!(idna_decode, m)?)?;
+    // utils
+    m.add_function(wrap_pyfunction!(decode_packet_number, m)?)?;
     // rangeset
     m.add_class::<RangeSet>()?;
+    // recovery utils
+    m.add_class::<QuicPacketPacer>()?;
+    m.add_class::<QuicRttMonitor>()?;
     // ls-qpack bridge
     m.add_class::<QpackDecoder>()?;
     m.add_class::<QpackEncoder>()?;
@@ -109,5 +118,7 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("BufferReadError", py.get_type::<BufferReadError>())?;
     m.add("BufferWriteError", py.get_type::<BufferWriteError>())?;
     m.add_class::<Buffer>()?;
+    m.add_function(wrap_pyfunction!(encode_uint_var, m)?)?;
+    m.add_function(wrap_pyfunction!(size_uint_var, m)?)?;
     Ok(())
 }

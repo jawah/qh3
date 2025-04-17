@@ -240,6 +240,7 @@ class TestHighLevel:
 
                 assert client._quic.tls._server_name == "xn--eckwd4c7c.xn--zckzah"
 
+
     @pytest.mark.skipif("loss" in SKIP_TESTS, reason="Skipping loss tests")
     @patch("socket.socket.sendto", new_callable=lambda: sendto_with_loss)
     @pytest.mark.asyncio

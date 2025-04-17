@@ -6,12 +6,10 @@ import math
 from qh3 import tls
 from qh3.quic.packet import QuicPacketType
 from qh3.quic.packet_builder import QuicSentPacket
-from qh3._hazmat import RangeSet
+from qh3._hazmat import RangeSet, QuicPacketPacer, QuicRttMonitor
 from qh3.quic.recovery import (
-    QuicPacketPacer,
     QuicPacketRecovery,
     QuicPacketSpace,
-    QuicRttMonitor,
 )
 
 

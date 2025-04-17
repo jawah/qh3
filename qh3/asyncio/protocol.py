@@ -14,7 +14,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
     def __init__(
         self, quic: QuicConnection, stream_handler: QuicStreamHandler | None = None
     ):
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         self._closed = asyncio.Event()
         self._connected = False
@@ -224,6 +224,7 @@ class QuicStreamAdapter(asyncio.Transport):
 
         self.protocol = protocol
         self.stream_id = stream_id
+        self._closing = False
 
     def can_write_eof(self) -> bool:
         return True
@@ -235,26 +236,19 @@ class QuicStreamAdapter(asyncio.Transport):
         if name == "stream_id":
             return self.stream_id
 
-    def write(self, data):
+    def write(self, data) -> None:
         self.protocol._quic.send_stream_data(self.stream_id, data)
         self.protocol._transmit_soon()
 
-    def write_eof(self):
+    def write_eof(self) -> None:
+        if self._closing:
+            return
+        self._closing = True
         self.protocol._quic.send_stream_data(self.stream_id, b"", end_stream=True)
         self.protocol._transmit_soon()
 
-    def is_closing(self):
-        return (
-            self.protocol._quic._close_pending
-            or self.stream_id in self.protocol._quic._streams_finished
-        )
+    def close(self) -> None:
+        self.write_eof()
 
-    def close(self):
-        if self.protocol._quic._close_pending:
-            return  # Defensive:
-        if self.stream_id in self.protocol._quic._streams_finished:
-            return  # Defensive:
-        try:
-            self.protocol._quic.send_stream_data(self.stream_id, b"", True)
-        except AssertionError:
-            pass  # Defensive: avoid duplicate call (FIN bit may already be set!)
+    def is_closing(self) -> bool:
+        return self._closing

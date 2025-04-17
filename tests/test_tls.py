@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import serialization
 from qh3 import tls
 from qh3._hazmat import Certificate as InnerCertificate
 from qh3._hazmat import CryptoError, EcPrivateKey, Ed25519PrivateKey
-from qh3.buffer import Buffer, BufferReadError
+from qh3._hazmat import Buffer, BufferReadError
 from qh3.quic.configuration import QuicConfiguration
 from qh3.tls import (
     Certificate,

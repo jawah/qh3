@@ -8,7 +8,8 @@ import time
 from typing import List, Tuple
 
 from qh3 import tls
-from qh3.buffer import UINT_VAR_MAX, Buffer, encode_uint_var
+from qh3._hazmat import Buffer, encode_uint_var
+from qh3._compat import UINT_VAR_MAX
 from qh3.quic import events
 from qh3.quic.configuration import QuicConfiguration
 from qh3.quic.connection import (
@@ -34,7 +35,7 @@ from qh3.quic.packet import (
     push_quic_transport_parameters,
 )
 from qh3.quic.packet_builder import QuicDeliveryState, QuicPacketBuilder
-from qh3.quic.recovery import QuicPacketPacer
+from qh3.quic.recovery import K_MAX_DATAGRAM_SIZE, K_SECOND, K_MICRO_SECOND
 
 from .utils import (
     SERVER_CACERTFILE,
@@ -73,6 +74,52 @@ class SessionTicketStore:
 
     def pop(self, label):
         return self.tickets.pop(label, None)
+
+
+class QuicPacketPacer:
+    def __init__(self) -> None:
+        self.bucket_max: float = 0.0
+        self.bucket_time: float = 0.0
+        self.evaluation_time: float = 0.0
+        self.packet_time: float | None = None
+
+    def next_send_time(self, now: float) -> float | None:
+        if self.packet_time is not None:
+            self.update_bucket(now=now)
+            if self.bucket_time <= 0:
+                return now + self.packet_time
+        return None
+
+    def update_after_send(self, now: float) -> None:
+        if self.packet_time is not None:
+            self.update_bucket(now=now)
+            if self.bucket_time < self.packet_time:
+                self.bucket_time = 0.0
+            else:
+                self.bucket_time -= self.packet_time
+
+    def update_bucket(self, now: float) -> None:
+        if now > self.evaluation_time:
+            self.bucket_time = min(
+                self.bucket_time + (now - self.evaluation_time), self.bucket_max
+            )
+            self.evaluation_time = now
+
+    def update_rate(self, congestion_window: int, smoothed_rtt: float) -> None:
+        pacing_rate = congestion_window / max(smoothed_rtt, K_MICRO_SECOND)
+        self.packet_time = max(
+            K_MICRO_SECOND, min(K_MAX_DATAGRAM_SIZE / pacing_rate, K_SECOND)
+        )
+
+        self.bucket_max = (
+            max(
+                2 * K_MAX_DATAGRAM_SIZE,
+                min(congestion_window // 4, 16 * K_MAX_DATAGRAM_SIZE),
+            )
+            / pacing_rate
+        )
+        if self.bucket_time > self.bucket_max:
+            self.bucket_time = self.bucket_max
 
 
 def client_receive_context(client, epoch=tls.Epoch.ONE_RTT):
@@ -1222,16 +1269,16 @@ class TestQuicConnection:
         crypto.setup_initial(
             client._peer_cid.cid, is_client=False, version=client._version
         )
-        crypto.encrypt_packet_real = crypto.encrypt_packet
+        CryptoPair.encrypt_packet_real = CryptoPair.encrypt_packet
 
-        def encrypt_packet(plain_header, plain_payload, packet_number):
+        def encrypt_packet(self, plain_header, plain_payload, packet_number):
             # mess with reserved bits
             plain_header = bytes([plain_header[0] | 0x0C]) + plain_header[1:]
-            return crypto.encrypt_packet_real(
-                plain_header, plain_payload, packet_number
+            return CryptoPair.encrypt_packet_real(
+                self, plain_header, plain_payload, packet_number
             )
 
-        crypto.encrypt_packet = encrypt_packet
+        CryptoPair.encrypt_packet = encrypt_packet
 
         builder.start_packet(QuicPacketType.INITIAL, crypto)
         buf = builder.start_frame(QuicFrameType.PADDING)
@@ -1246,6 +1293,9 @@ class TestQuicConnection:
                 frame_type=QuicFrameType.PADDING,
                 reason_phrase="Reserved bits must be zero",
             )
+
+        CryptoPair.encrypt_packet = CryptoPair.encrypt_packet_real
+        del CryptoPair.encrypt_packet_real
 
     def test_receive_datagram_wrong_version(self):
         client = create_standalone_client(self)

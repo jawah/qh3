@@ -260,7 +260,7 @@ async def perform_http_request(
             logger.info(str(http_event.headers))
         if isinstance(http_event, DataReceived):
             octets += len(http_event.data)
-            logger.info(str(http_event.data))
+            # logger.info(str(http_event.data))
 
     logger.info(
         f"Response received for {method} {urlparse(url).path} : "
