@@ -52,7 +52,7 @@ async def connect(
       and a :class:`asyncio.StreamWriter`.
     * ``local_port`` is the UDP port number that this client wants to bind.
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     local_host = "::"
 
     # if host is not an IP address, pass it to enable SNI
