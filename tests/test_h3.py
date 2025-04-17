@@ -5,7 +5,7 @@ import binascii
 import contextlib
 import copy
 
-from qh3.buffer import Buffer, encode_uint_var
+from qh3._hazmat import Buffer, encode_uint_var
 from qh3.h3.connection import (
     H3_ALPN,
     ErrorCode,

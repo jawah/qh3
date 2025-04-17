@@ -3,9 +3,8 @@ from __future__ import annotations
 import pytest
 import binascii
 
-from qh3.buffer import Buffer
+from qh3._hazmat import Buffer
 from qh3.quic.crypto import (
-    AEAD,
     CIPHER_SUITES,
     INITIAL_CIPHER_SUITE,
     CryptoError,
@@ -13,6 +12,7 @@ from qh3.quic.crypto import (
     HeaderProtection,
     derive_key_iv_hp,
 )
+from qh3._hazmat import AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305
 from qh3.quic.packet import PACKET_FIXED_BIT, QuicProtocolVersion
 from qh3.tls import CipherSuite
 
@@ -137,15 +137,22 @@ class TestCrypto:
         cipher_name: bytes = CIPHER_SUITES[INITIAL_CIPHER_SUITE][1],
         key: bytes = b"topsecret16bytes",
         iv: bytes = b"12!nullbytes",
-    ) -> AEAD:
-        return AEAD(cipher_name, key, iv)
+    ) -> AeadAes256Gcm | AeadAes128Gcm | AeadChaCha20Poly1305:
+
+        if cipher_name == b"chacha20-poly1305":
+            return AeadChaCha20Poly1305(key, iv)
+        elif cipher_name == b"aes-256-gcm":
+            return AeadAes256Gcm(key, iv)
+        elif cipher_name == b"aes-128-gcm":
+            return AeadAes128Gcm(key, iv)
+        raise CryptoError(f"Invalid cipher name: {cipher_name.decode()}")
 
     def create_hp(
         self,
         cipher_name: bytes = CIPHER_SUITES[INITIAL_CIPHER_SUITE][0],
         key: bytes = b"topsecret16bytes",
     ) -> HeaderProtection:
-        return HeaderProtection(cipher_name, key)
+        return HeaderProtection(cipher_name.decode(), key)
 
     def test_derive_key_iv_hp(self):
         # https://datatracker.ietf.org/doc/html/rfc9001#appendix-A.1
@@ -381,7 +388,7 @@ class TestCrypto:
         # invalid key length
         with pytest.raises(CryptoError) as cm:
             self.create_aead(key=bytes(33))
-        assert str(cm.value) == "Invalid key length"
+        assert str(cm.value) == "Invalid AEAD key"
 
         # invalid iv length
         with pytest.raises(CryptoError) as cm:
@@ -395,9 +402,9 @@ class TestCrypto:
         # invalid cipher
         with pytest.raises(CryptoError) as cm:
             self.create_hp(cipher_name=b"tango9000")
-        assert str(cm.value) == "Invalid cipher name: tango9000"
+        assert str(cm.value) == "Algorithm not supported"
 
         # invalid key length
         with pytest.raises(CryptoError) as cm:
             self.create_hp(key=bytes(33))
-        assert str(cm.value) == "Invalid key length"
+        assert str(cm.value) == "Given key is not valid for chosen algorithm"

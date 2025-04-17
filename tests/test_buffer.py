@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from qh3.buffer import Buffer, BufferReadError, BufferWriteError, size_uint_var
+from qh3._hazmat import Buffer, BufferReadError, BufferWriteError, size_uint_var
 
 
 class TestBuffer:
