@@ -19,7 +19,21 @@ from .packet import (
     encode_long_header_first_byte,
 )
 
+# MinPacketSize and MaxPacketSize control the packet sizes for UDP datagrams.
+# If MinPacketSize is unset, a default value of 1280 bytes will be used during the handshake.
+# If MaxPacketSize is unset, a default value of 1452 bytes will be used.
+# DPLPMTUD will automatically determine the MTU supported by the link-up to the MaxPacketSize,
+# except for in the case where MinPacketSize and MaxPacketSize are configured to the same value,
+# in which case path MTU discovery will be disabled.
+# Values above 65355 are invalid.
+# 20-bytes for IPv6 overhead.
+# 1280 is very conservative
+# Chrome tries 1350 at startup
+# we should do a rudimentary MTU discovery
+# Sending a PING frame 1350
+#           THEN       1452
 PACKET_MAX_SIZE = 1280
+
 PACKET_LENGTH_SEND_SIZE = 2
 PACKET_NUMBER_SEND_SIZE = 2
 
