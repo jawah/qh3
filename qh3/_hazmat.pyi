@@ -305,3 +305,25 @@ def decode_packet_number(truncated: int, num_bits: int, expected: int) -> int:
 
     See: Appendix A - Sample Packet Number Decoding Algorithm
     """
+
+
+class QuicPacketPacer:
+
+    def next_send_time(self, now: float) -> float | None:
+        ...
+    def update_after_send(self, now: float) -> None:
+        ...
+    def update_bucket(self, now: float) -> None:
+        ...
+    def update_rate(self, congestion_window: int, smoothed_rtt: float) -> None:
+        ...
+
+
+class QuicRttMonitor:
+    """
+    Roundtrip time monitor for HyStart.
+    """
+    def add_rtt(self, rtt: float) -> None:
+        ...
+    def is_rtt_increasing(self, rtt: float, now: float) -> bool:
+        ...

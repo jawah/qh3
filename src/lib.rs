@@ -14,6 +14,7 @@ mod private_key;
 mod rangeset;
 mod rsa;
 mod utils;
+mod recovery;
 
 pub use self::aead::{AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305};
 pub use self::agreement::{
@@ -40,6 +41,7 @@ pub use self::private_key::{
 pub use self::rangeset::RangeSet;
 pub use self::rsa::Rsa;
 pub use self::utils::decode_packet_number;
+pub use self::recovery::{QuicPacketPacer, QuicRttMonitor};
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
 
@@ -52,6 +54,9 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_packet_number, m)?)?;
     // rangeset
     m.add_class::<RangeSet>()?;
+    // recovery utils
+    m.add_class::<QuicPacketPacer>()?;
+    m.add_class::<QuicRttMonitor>()?;
     // ls-qpack bridge
     m.add_class::<QpackDecoder>()?;
     m.add_class::<QpackEncoder>()?;

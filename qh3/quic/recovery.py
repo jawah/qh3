@@ -4,7 +4,7 @@ import logging
 import math
 from typing import Any, Callable, Iterable
 
-from .._hazmat import RangeSet
+from .._hazmat import RangeSet, QuicPacketPacer, QuicRttMonitor
 from .logger import QuicLoggerTrace
 from .packet_builder import QuicDeliveryState, QuicSentPacket
 
@@ -36,52 +36,6 @@ class QuicPacketSpace:
         self.largest_acked_packet = 0
         self.loss_time: float | None = None
         self.sent_packets: dict[int, QuicSentPacket] = {}
-
-
-class QuicPacketPacer:
-    def __init__(self) -> None:
-        self.bucket_max: float = 0.0
-        self.bucket_time: float = 0.0
-        self.evaluation_time: float = 0.0
-        self.packet_time: float | None = None
-
-    def next_send_time(self, now: float) -> float:
-        if self.packet_time is not None:
-            self.update_bucket(now=now)
-            if self.bucket_time <= 0:
-                return now + self.packet_time
-        return None
-
-    def update_after_send(self, now: float) -> None:
-        if self.packet_time is not None:
-            self.update_bucket(now=now)
-            if self.bucket_time < self.packet_time:
-                self.bucket_time = 0.0
-            else:
-                self.bucket_time -= self.packet_time
-
-    def update_bucket(self, now: float) -> None:
-        if now > self.evaluation_time:
-            self.bucket_time = min(
-                self.bucket_time + (now - self.evaluation_time), self.bucket_max
-            )
-            self.evaluation_time = now
-
-    def update_rate(self, congestion_window: int, smoothed_rtt: float) -> None:
-        pacing_rate = congestion_window / max(smoothed_rtt, K_MICRO_SECOND)
-        self.packet_time = max(
-            K_MICRO_SECOND, min(K_MAX_DATAGRAM_SIZE / pacing_rate, K_SECOND)
-        )
-
-        self.bucket_max = (
-            max(
-                2 * K_MAX_DATAGRAM_SIZE,
-                min(congestion_window // 4, 16 * K_MAX_DATAGRAM_SIZE),
-            )
-            / pacing_rate
-        )
-        if self.bucket_time > self.bucket_max:
-            self.bucket_time = self.bucket_max
 
 
 class QuicCongestionControl:
@@ -455,58 +409,3 @@ class QuicPacketRecovery:
             )
             if self._quic_logger is not None:
                 self._log_metrics_updated()
-
-
-class QuicRttMonitor:
-    """
-    Roundtrip time monitor for HyStart.
-    """
-
-    def __init__(self) -> None:
-        self._increases = 0
-        self._last_time = None
-        self._ready = False
-        self._size = 5
-
-        self._filtered_min: float | None = None
-
-        self._sample_idx = 0
-        self._sample_max: float | None = None
-        self._sample_min: float | None = None
-        self._sample_time = 0.0
-        self._samples = [0.0 for i in range(self._size)]
-
-    def add_rtt(self, rtt: float) -> None:
-        self._samples[self._sample_idx] = rtt
-        self._sample_idx += 1
-
-        if self._sample_idx >= self._size:
-            self._sample_idx = 0
-            self._ready = True
-
-        if self._ready:
-            self._sample_max = self._samples[0]
-            self._sample_min = self._samples[0]
-            for sample in self._samples[1:]:
-                if sample < self._sample_min:
-                    self._sample_min = sample
-                elif sample > self._sample_max:
-                    self._sample_max = sample
-
-    def is_rtt_increasing(self, rtt: float, now: float) -> bool:
-        if now > self._sample_time + K_GRANULARITY:
-            self.add_rtt(rtt)
-            self._sample_time = now
-
-            if self._ready:
-                if self._filtered_min is None or self._filtered_min > self._sample_max:
-                    self._filtered_min = self._sample_max
-
-                delta = self._sample_min - self._filtered_min
-                if delta * 4 >= self._filtered_min:
-                    self._increases += 1
-                    if self._increases >= self._size:
-                        return True
-                elif delta > 0:
-                    self._increases = 0
-        return False
