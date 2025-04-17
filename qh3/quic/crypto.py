@@ -3,7 +3,7 @@ from __future__ import annotations
 import binascii
 from typing import Callable
 
-from .._crypto import AEAD, CryptoError, HeaderProtection
+from .._hazmat import QUICHeaderProtection as HeaderProtection, AeadChaCha20Poly1305, AeadAes256Gcm, AeadAes128Gcm, CryptoError, decode_packet_number
 from ..tls import CipherSuite, cipher_suite_hash, hkdf_expand_label, hkdf_extract
 from .packet import (
     QuicProtocolVersion,
@@ -67,7 +67,7 @@ class CryptoContext:
         setup_cb: Callback = NoCallback,
         teardown_cb: Callback = NoCallback,
     ) -> None:
-        self.aead: AEAD | None = None
+        self.aead: AeadChaCha20Poly1305 | AeadAes128Gcm | AeadAes256Gcm | None = None
         self.cipher_suite: CipherSuite | None = None
         self.hp: HeaderProtection | None = None
         self.key_phase = key_phase
@@ -101,7 +101,7 @@ class CryptoContext:
 
         # payload protection
         payload = crypto.aead.decrypt(
-            packet[len(plain_header) :], plain_header, packet_number
+            packet_number, packet[len(plain_header) :], plain_header
         )
 
         return plain_header, payload, packet_number, crypto != self
@@ -113,7 +113,7 @@ class CryptoContext:
 
         # payload protection
         protected_payload = self.aead.encrypt(
-            plain_payload, plain_header, packet_number
+            packet_number, plain_payload, plain_header
         )
 
         # header protection
@@ -130,9 +130,18 @@ class CryptoContext:
             secret=secret,
             version=version,
         )
-        self.aead = AEAD(aead_cipher_name, key, iv)
+
+        if aead_cipher_name == b"chacha20-poly1305":
+            self.aead = AeadChaCha20Poly1305(key, iv)
+        elif aead_cipher_name == b"aes-256-gcm":
+            self.aead = AeadAes256Gcm(key, iv)
+        elif aead_cipher_name == b"aes-128-gcm":
+            self.aead = AeadAes128Gcm(key, iv)
+        else:
+            raise CryptoError(f"Invalid cipher name: {aead_cipher_name.decode()}")
+
         self.cipher_suite = cipher_suite
-        self.hp = HeaderProtection(hp_cipher_name, hp)
+        self.hp = HeaderProtection(hp_cipher_name.decode(), hp)
         self.secret = secret
         self.version = version
 

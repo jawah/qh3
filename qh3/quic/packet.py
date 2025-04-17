@@ -152,7 +152,7 @@ def get_retry_integrity_tag(
         aead_nonce = RETRY_AEAD_NONCE_VERSION_1
 
     # run AES-128-GCM
-    aead = AeadAes128Gcm(aead_key, b"")
+    aead = AeadAes128Gcm(aead_key, b"null!12bytes")
     integrity_tag = aead.encrypt_with_nonce(aead_nonce, b"", buf.data)
     assert len(integrity_tag) == RETRY_INTEGRITY_TAG_SIZE
     return integrity_tag
