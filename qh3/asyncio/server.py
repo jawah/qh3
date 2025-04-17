@@ -5,7 +5,7 @@ import os
 from functools import partial
 from typing import Callable, cast
 
-from ..buffer import Buffer
+from .._hazmat import Buffer
 from ..quic.configuration import QuicConfiguration
 from ..quic.connection import NetworkAddress, QuicConnection
 from ..quic.packet import (

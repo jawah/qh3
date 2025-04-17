@@ -5,7 +5,7 @@ from enum import IntEnum
 from typing import Any, Callable, Sequence
 
 from .._compat import DATACLASS_KWARGS
-from ..buffer import Buffer, size_uint_var
+from .._hazmat import Buffer, size_uint_var
 from ..tls import Epoch
 from .crypto import CryptoPair
 from .logger import QuicLoggerTrace

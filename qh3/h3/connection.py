@@ -11,8 +11,11 @@ from .._hazmat import (
     QpackDecoder,
     QpackEncoder,
     StreamBlocked,
+    encode_uint_var,
+    Buffer,
+    BufferReadError,
 )
-from ..buffer import UINT_VAR_MAX_SIZE, Buffer, BufferReadError, encode_uint_var
+from .._compat import UINT_VAR_MAX_SIZE
 from ..quic.connection import QuicConnection, stream_is_unidirectional
 from ..quic.events import DatagramFrameReceived, QuicEvent, StreamDataReceived
 from ..quic.logger import QuicLoggerTrace

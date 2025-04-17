@@ -267,6 +267,17 @@ class Buffer:
     def push_uint64(self, value: int) -> None: ...
     def push_uint_var(self, value: int) -> None: ...
 
+def encode_uint_var(value: int) -> bytes:
+    """
+    Encode a variable-length unsigned integer.
+    """
+
+def size_uint_var(value: int) -> int:
+    """
+    Return the number of bytes required to encode the given value
+    as a QUIC variable-length unsigned integer.
+    """
+
 def idna_encode(text: str) -> bytes:
     """using UTS46"""
 

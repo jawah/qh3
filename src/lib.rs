@@ -19,7 +19,7 @@ pub use self::agreement::{
     ECDHP256KeyExchange, ECDHP384KeyExchange, ECDHP521KeyExchange, X25519KeyExchange,
     X25519ML768KeyExchange,
 };
-pub use self::buffer::{Buffer, BufferReadError, BufferWriteError};
+pub use self::buffer::{Buffer, BufferReadError, BufferWriteError, encode_uint_var, size_uint_var};
 pub use self::certificate::{
     Certificate, ExpiredCertificateError, InvalidNameCertificateError, SelfSignedCertificateError,
     ServerVerifier, UnacceptableCertificateError,
@@ -109,5 +109,7 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("BufferReadError", py.get_type::<BufferReadError>())?;
     m.add("BufferWriteError", py.get_type::<BufferWriteError>())?;
     m.add_class::<Buffer>()?;
+    m.add_function(wrap_pyfunction!(encode_uint_var, m)?)?;
+    m.add_function(wrap_pyfunction!(size_uint_var, m)?)?;
     Ok(())
 }

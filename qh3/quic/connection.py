@@ -14,15 +14,8 @@ if TYPE_CHECKING:
     from .logger import QuicLoggerTrace
 
 from .. import tls
-from .._compat import DATACLASS_KWARGS
-from .._hazmat import Certificate as X509Certificate
-from ..buffer import (
-    UINT_VAR_MAX,
-    UINT_VAR_MAX_SIZE,
-    Buffer,
-    BufferReadError,
-    size_uint_var,
-)
+from .._compat import DATACLASS_KWARGS, UINT_VAR_MAX, UINT_VAR_MAX_SIZE
+from .._hazmat import Certificate as X509Certificate, size_uint_var, Buffer, BufferReadError
 from . import events
 from .crypto import CryptoError, CryptoPair, KeyUnavailableError, NoCallback
 from .packet import (

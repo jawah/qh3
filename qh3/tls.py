@@ -40,8 +40,8 @@ from ._hazmat import (
     X25519ML768KeyExchange,
     idna_encode,
     verify_with_public_key,
+    Buffer,
 )
-from .buffer import Buffer
 
 # candidates based on https://github.com/tiran/certifi-system-store by Christian Heimes
 _CA_FILE_CANDIDATES = [
