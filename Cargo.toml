@@ -1,6 +1,6 @@
 [package]
 name = "qh3"
-version = "1.4.5"
+version = "1.4.6"
 edition = "2021"
 rust-version = "1.75"
 license = "BSD-3"
@@ -37,6 +37,7 @@ idna = { version = "1.0.3" }
 python-source = "qh3"
 
 [profile.release]
-lto = "fat"
+opt-level = 3
+debug = false
+lto = true
 codegen-units = 1
-strip = true
