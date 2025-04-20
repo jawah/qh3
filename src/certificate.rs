@@ -322,6 +322,7 @@ impl ServerVerifier {
         peer: Bound<'a, PyBytes>,
         intermediaries: Vec<Bound<'a, PyBytes>>,
         server_name: String,
+        ocsp_response: Bound<'a, PyBytes>,
     ) -> PyResult<()> {
         let peer_der = CertificateDer::from(peer.as_bytes());
         let mut intermediaries_der = Vec::new();
@@ -338,7 +339,7 @@ impl ServerVerifier {
                     &peer_der,
                     &intermediaries_der,
                     &parsed_name,
-                    &[],
+                    ocsp_response.as_bytes(),
                     UnixTime::now(),
                 );
 
@@ -360,6 +361,9 @@ impl ServerVerifier {
                         )),
                         CertificateError::NotValidYet => Err(ExpiredCertificateError::new_err(
                             "server certificate is not yet valid",
+                        )),
+                        CertificateError::Revoked => Err(ExpiredCertificateError::new_err(
+                            "server certificate is revoked",
                         )),
                         _ => Err(UnacceptableCertificateError::new_err(
                             "the server certificate is unacceptable",

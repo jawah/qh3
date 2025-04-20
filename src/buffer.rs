@@ -135,6 +135,27 @@ impl Buffer {
     }
 
     #[inline(always)]
+    pub fn pull_uint24(&mut self) -> PyResult<u32> {
+        let end_offset = self.pos + 3;
+
+        if self.capacity < end_offset {
+            return Err(BufferReadError::new_err("Read out of bounds"));
+        }
+
+        let mut tmp = Vec::with_capacity(4);
+
+        tmp.push(0);
+        tmp.push(self.data[self.pos]);
+        tmp.push(self.data[self.pos] + 1);
+        tmp.push(self.data[self.pos] + 2);
+
+        let extract = u32::from_be_bytes(tmp.try_into().unwrap());
+        self.pos = end_offset;
+
+        Ok(extract)
+    }
+
+    #[inline(always)]
     pub fn pull_uint32(&mut self) -> PyResult<u32> {
         let end_offset = self.pos + 4;
 

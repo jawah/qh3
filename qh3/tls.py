@@ -38,6 +38,7 @@ from ._hazmat import (
     X25519ML768KeyExchange,
     idna_encode,
     verify_with_public_key,
+    BufferReadError,
 )
 from ._hazmat import (
     Certificate as X509Certificate,
@@ -320,6 +321,7 @@ def verify_certificate(
     capath: str | None = None,
     server_name: str | None = None,
     assert_server_name: bool = True,
+    ocsp_response: bytes | None = None,
 ) -> None:
     if chain is None:
         chain = []
@@ -416,7 +418,7 @@ def verify_certificate(
         raise AlertBadCertificate("unable to determine server name target")
 
     if not authorities:
-        raise AlertBadCertificate("unable to get local issuer certificate")
+        raise AlertBadCertificate("unable to get local issuer certificate (empty CA store)")
 
     # load CAs
     try:
@@ -429,6 +431,7 @@ def verify_certificate(
             certificate.public_bytes(),
             [c.public_bytes() for c in chain],
             server_name,
+            ocsp_response or b""
         )
     except (
         SelfSignedCertificateError,
@@ -792,6 +795,13 @@ def push_client_hello(buf: Buffer, hello: ClientHello) -> None:
 
             if hello.early_data:
                 with push_extension(buf, ExtensionType.EARLY_DATA):
+                    pass
+
+            with push_extension(buf, ExtensionType.STATUS_REQUEST):
+                buf.push_uint8(1)  # OCSP
+                with push_block(buf, 2):  # empty responder_id_list
+                    pass
+                with push_block(buf, 2):  # empty extensions
                     pass
 
             # pre_shared_key MUST be last
@@ -1381,6 +1391,7 @@ class Context:
         self._new_session_ticket: NewSessionTicket | None = None
         self._peer_certificate: X509Certificate | None = None
         self._peer_certificate_chain: list[X509Certificate] = []
+        self._ocsp_response: bytes | None = None
         self._receive_buffer = b""
         self._session_resumed = False
         self._enc_key: bytes | None = None
@@ -1733,6 +1744,30 @@ class Context:
     def _client_handle_certificate(self, input_buf: Buffer) -> None:
         certificate = pull_certificate(input_buf)
 
+        # attempt to extract a possible OCSP staple extension from
+        # the leaf certificate only.
+        ext_buf = Buffer(data=certificate.certificates[0][1])
+
+        try:
+            # RFC 8446, Section 4.4.2.2
+
+            while not ext_buf.eof():
+                ext_type = ext_buf.pull_uint16()
+                ext_len = ext_buf.pull_uint16()
+
+                if ext_type == ExtensionType.STATUS_REQUEST:
+                    status_type = ext_buf.pull_uint8()
+                    if status_type == 1:
+                        resp_len = ext_buf.pull_uint24()
+                        self._ocsp_response = ext_buf.pull_bytes(resp_len)
+                        break
+                    else:
+                        ext_buf.pull_bytes(ext_len - 1)
+                else:
+                    break
+        except BufferReadError:
+            pass  # Defensive: against malformed extensions.
+
         self._peer_certificate = X509Certificate(certificate.certificates[0][0])
         self._peer_certificate_chain = [
             X509Certificate(certificate.certificates[i][0])
@@ -1776,6 +1811,7 @@ class Context:
                 chain=self._peer_certificate_chain,
                 server_name=self._server_name,
                 assert_server_name=self._verify_hostname,
+                ocsp_response=self._ocsp_response,
             )
 
         if self._assert_fingerprint is not None:

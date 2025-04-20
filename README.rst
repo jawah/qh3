@@ -67,6 +67,7 @@ Features
 - logging QUIC events in QLOG format
 - HTTP/3 server push support
 - Post-Quantum (KEM) Key-Exchange (NIST FIPS 203 ML-KEM-768)
+- OCSP Stapling (Client Only)
 
 Requirements
 ------------
