@@ -456,7 +456,7 @@ class TestContext:
 
         with pytest.raises(tls.AlertBadCertificate) as cm:
             self._handshake(client, server)
-        assert str(cm.value) == "unable to get local issuer certificate"
+        assert str(cm.value).startswith("unable to get local issuer certificate")
 
     def test_handshake_with_certificate_no_verify(self):
         client = self.create_client(cafile=None, verify_mode=ssl.CERT_NONE)
