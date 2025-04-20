@@ -68,7 +68,11 @@ class AeadAes128Gcm:
 class ServerVerifier:
     def __init__(self, authorities: list[bytes]) -> None: ...
     def verify(
-        self, peer: bytes, intermediaries: list[bytes], server_name: str, ocsp_response: bytes
+        self,
+        peer: bytes,
+        intermediaries: list[bytes],
+        server_name: str,
+        ocsp_response: bytes,
     ) -> None: ...
 
 class Certificate:

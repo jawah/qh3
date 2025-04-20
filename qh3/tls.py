@@ -18,6 +18,7 @@ from typing import Any, Callable, Generator, Optional, Sequence, Tuple, TypeVar
 
 from ._hazmat import (
     Buffer,
+    BufferReadError,
     CryptoError,
     DsaPrivateKey,
     ECDHP256KeyExchange,
@@ -38,7 +39,6 @@ from ._hazmat import (
     X25519ML768KeyExchange,
     idna_encode,
     verify_with_public_key,
-    BufferReadError,
 )
 from ._hazmat import (
     Certificate as X509Certificate,
@@ -418,7 +418,9 @@ def verify_certificate(
         raise AlertBadCertificate("unable to determine server name target")
 
     if not authorities:
-        raise AlertBadCertificate("unable to get local issuer certificate (empty CA store)")
+        raise AlertBadCertificate(
+            "unable to get local issuer certificate (empty CA store)"
+        )
 
     # load CAs
     try:
@@ -431,7 +433,7 @@ def verify_certificate(
             certificate.public_bytes(),
             [c.public_bytes() for c in chain],
             server_name,
-            ocsp_response or b""
+            ocsp_response or b"",
         )
     except (
         SelfSignedCertificateError,
