@@ -737,6 +737,8 @@ def pull_client_hello(buf: Buffer) -> ClientHello:
                     binders=pull_list(buf, 2, partial(pull_psk_binder, buf)),
                 )
                 after_psk = True
+            elif extension_type == ExtensionType.STATUS_REQUEST:
+                buf.pull_bytes(extension_length)  # we don't implement it for the server...
             elif extension_type == ExtensionType.GREASE:
                 pass  # simply ignore it!
             else:
