@@ -48,6 +48,7 @@ impl QuicPacketPacer {
     ///
     /// If a packet time is defined and the bucket has been depleted (≤ 0),
     /// returns `now + packet_time`; otherwise, returns `None`.
+    #[inline(always)]
     fn next_send_time(&mut self, now: f64) -> Option<f64> {
         if let Some(packet_time) = self.packet_time {
             self.update_bucket(now);
@@ -62,6 +63,7 @@ impl QuicPacketPacer {
     ///
     /// If the bucket has less available time than the packet time, it is
     /// drained (set to 0). Otherwise, the packet time is subtracted.
+    #[inline(always)]
     fn update_after_send(&mut self, now: f64) {
         if let Some(packet_time) = self.packet_time {
             self.update_bucket(now);
@@ -74,6 +76,7 @@ impl QuicPacketPacer {
     }
 
     /// Replenishes the bucket based on the elapsed time since the last update.
+    #[inline(always)]
     fn update_bucket(&mut self, now: f64) {
         if now > self.evaluation_time {
             // Increase the bucket by the time delta but do not exceed bucket_max.
@@ -95,6 +98,7 @@ impl QuicPacketPacer {
     /// bucket_max = max(2*K_MAX_DATAGRAM_SIZE, min(congestion_window/4, 16*K_MAX_DATAGRAM_SIZE))
     ///              / pacing_rate
     /// ```
+    #[inline(always)]
     fn update_rate(&mut self, congestion_window: usize, smoothed_rtt: f64) {
         let pacing_rate = (congestion_window as f64) / smoothed_rtt.max(K_MICRO_SECOND);
         let pt = (K_MAX_DATAGRAM_SIZE as f64) / pacing_rate;
@@ -164,6 +168,7 @@ impl QuicRttMonitor {
     /// This updates the sample buffer with the new `rtt` value.
     /// When the buffer becomes full, it marks the monitor as ready and computes
     /// the minimum and maximum RTT from the samples.
+    #[inline(always)]
     fn add_rtt(&mut self, rtt: f64) {
         // Insert the new RTT sample at the current index.
         self._samples[self._sample_idx] = rtt;
@@ -202,6 +207,7 @@ impl QuicRttMonitor {
     ///
     /// If the RTT increase is sustained for at least `_size` increments,
     /// the method returns `True`.
+    #[inline(always)]
     fn is_rtt_increasing(&mut self, rtt: f64, now: f64) -> bool {
         // Update the sample if enough time has elapsed.
         if now > self._sample_time + K_GRANULARITY {

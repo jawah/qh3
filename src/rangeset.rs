@@ -16,6 +16,7 @@ impl RangeSet {
     }
 
     #[pyo3(signature = (start, stop=None))]
+    #[inline(always)]
     pub fn add(&mut self, start: i64, stop: Option<i64>) {
         let mut start = start;
         let mut stop = stop.unwrap_or(start + 1);
@@ -45,6 +46,7 @@ impl RangeSet {
         self.ranges.push((start, stop));
     }
 
+    #[inline(always)]
     pub fn subtract(&mut self, start: i64, stop: i64) {
         assert!(stop > start);
         let mut i = 0;
@@ -71,10 +73,12 @@ impl RangeSet {
         }
     }
 
+    #[inline(always)]
     pub fn shift(&mut self) -> (i64, i64) {
         self.ranges.remove(0)
     }
 
+    #[inline(always)]
     pub fn bounds(&self) -> (i64, i64) {
         let first = self.ranges.first().expect("RangeSet is empty");
         let last = self.ranges.last().unwrap();
