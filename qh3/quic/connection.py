@@ -6,7 +6,7 @@ import os
 from collections import deque
 from dataclasses import dataclass
 from enum import IntEnum
-from functools import partial
+from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
@@ -150,6 +150,20 @@ def stream_is_unidirectional(stream_id: int) -> bool:
     if stream_id & 2:
         return True
     return False
+
+
+@lru_cache()
+def check_stream_id_for_sending(is_client: bool, stream_id: int) -> bool:
+    return stream_is_client_initiated(
+        stream_id
+    ) is is_client or not stream_is_unidirectional(stream_id)
+
+
+@lru_cache()
+def check_stream_id_for_receiving(is_client: bool, stream_id: int) -> bool:
+    return stream_is_client_initiated(
+        stream_id
+    ) is not is_client or not stream_is_unidirectional(stream_id)
 
 
 class Limit:
@@ -1189,7 +1203,7 @@ class QuicConnection:
         :param stream_id: The stream's ID.
         :param error_code: An error code indicating why the stream is being stopped.
         """
-        if not self._stream_can_receive(stream_id):
+        if not check_stream_id_for_receiving(self._is_client, stream_id):
             raise ValueError(
                 "Cannot stop receiving on a local-initiated unidirectional stream"
             )
@@ -1262,7 +1276,7 @@ class QuicConnection:
         """
         Check the specified stream can receive data or raises a QuicConnectionError.
         """
-        if not self._stream_can_receive(stream_id):
+        if not check_stream_id_for_receiving(self._is_client, stream_id):
             raise QuicConnectionError(
                 error_code=QuicErrorCode.STREAM_STATE_ERROR,
                 frame_type=frame_type,
@@ -1273,7 +1287,7 @@ class QuicConnection:
         """
         Check the specified stream can send data or raises a QuicConnectionError.
         """
-        if not self._stream_can_send(stream_id):
+        if not check_stream_id_for_sending(self._is_client, stream_id):
             raise QuicConnectionError(
                 error_code=QuicErrorCode.STREAM_STATE_ERROR,
                 frame_type=frame_type,
@@ -1413,7 +1427,7 @@ class QuicConnection:
 
         This always occurs as a result of an API call.
         """
-        if not self._stream_can_send(stream_id):
+        if not check_stream_id_for_sending(self._is_client, stream_id):
             raise ValueError("Cannot send data on peer-initiated unidirectional stream")
 
         stream = self._streams.get(stream_id, None)
@@ -2976,16 +2990,6 @@ class QuicConnection:
         self._logger.debug("%s -> %s", self._state.name, state.name)
         self._state = state
 
-    def _stream_can_receive(self, stream_id: int) -> bool:
-        return stream_is_client_initiated(
-            stream_id
-        ) is not self._is_client or not stream_is_unidirectional(stream_id)
-
-    def _stream_can_send(self, stream_id: int) -> bool:
-        return stream_is_client_initiated(
-            stream_id
-        ) is self._is_client or not stream_is_unidirectional(stream_id)
-
     def _unblock_streams(self, is_unidirectional: bool) -> None:
         if is_unidirectional:
             max_stream_data_remote = self._remote_max_stream_data_uni
@@ -3163,14 +3167,15 @@ class QuicConnection:
 
             # DATAGRAM
             while self._datagrams_pending:
+                datagram_pending = self._datagrams_pending.popleft()
                 try:
                     self._write_datagram_frame(
                         builder=builder,
-                        data=self._datagrams_pending[0],
+                        data=datagram_pending,
                         frame_type=QuicFrameType.DATAGRAM_WITH_LENGTH,
                     )
-                    self._datagrams_pending.popleft()
                 except QuicPacketBuilderStop:
+                    self._datagrams_pending.appendleft(datagram_pending)
                     break
 
             to_reshelve: list[QuicStream] = []
@@ -3180,8 +3185,8 @@ class QuicConnection:
                 for stream in self._streams_queue:
                     # if the stream is finished, discard it
                     if stream.is_finished:
-                        self._logger.debug("Stream %d discarded", stream.stream_id)
-                        self._streams.pop(stream.stream_id)
+                        self._logger.debug(f"Stream {stream.stream_id} discarded")
+                        del self._streams[stream.stream_id]
                         self._streams_finished.add(stream.stream_id)
                         continue
 
