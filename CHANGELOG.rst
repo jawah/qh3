@@ -1,3 +1,15 @@
+1.5.0 (2025-04-17)
+====================
+
+**Misc**
+- General performance improvements in various parts of the code. Up to 5% faster (against 1.4.5).
+
+**Changed**
+- GIL is now released during AEAD encryption/decryption.
+
+**Added**
+- OCSP stapling support for the client.
+
 1.4.5 (2025-04-17)
 ====================
 
