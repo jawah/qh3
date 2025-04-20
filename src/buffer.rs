@@ -70,6 +70,7 @@ impl Buffer {
         Ok(PyBytes::new(py, &self.data[start..end]))
     }
 
+    #[inline(always)]
     pub fn eof(&self) -> bool {
         self.pos == self.capacity
     }
@@ -121,48 +122,63 @@ impl Buffer {
 
     #[inline(always)]
     pub fn pull_uint16(&mut self) -> PyResult<u16> {
-        if self.eof() {
+        let end_offset = self.pos + 2;
+
+        if self.capacity < end_offset {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        if self.capacity < self.pos + 2 {
+        let extract = u16::from_be_bytes(self.data[self.pos..end_offset].try_into()?);
+        self.pos = end_offset;
+
+        Ok(extract)
+    }
+
+    #[inline(always)]
+    pub fn pull_uint24(&mut self) -> PyResult<u32> {
+        let end_offset = self.pos + 3;
+
+        if self.capacity < end_offset {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u16::from_be_bytes(self.data[self.pos..(self.pos + 2)].try_into()?);
-        self.pos += 2;
+        let tmp = vec![
+            0,
+            self.data[self.pos],
+            self.data[self.pos] + 1,
+            self.data[self.pos] + 2,
+        ];
+
+        let extract = u32::from_be_bytes(tmp.try_into().unwrap());
+        self.pos = end_offset;
 
         Ok(extract)
     }
 
     #[inline(always)]
     pub fn pull_uint32(&mut self) -> PyResult<u32> {
-        if self.eof() {
+        let end_offset = self.pos + 4;
+
+        if self.capacity < end_offset {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        if self.capacity < self.pos + 4 {
-            return Err(BufferReadError::new_err("Read out of bounds"));
-        }
-
-        let extract = u32::from_be_bytes(self.data[self.pos..(self.pos + 4)].try_into()?);
-        self.pos += 4;
+        let extract = u32::from_be_bytes(self.data[self.pos..end_offset].try_into()?);
+        self.pos = end_offset;
 
         Ok(extract)
     }
 
     #[inline(always)]
     pub fn pull_uint64(&mut self) -> PyResult<u64> {
-        if self.eof() {
+        let end_offset = self.pos + 8;
+
+        if self.capacity < end_offset {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        if self.capacity < self.pos + 8 {
-            return Err(BufferReadError::new_err("Read out of bounds"));
-        }
-
-        let extract = u64::from_be_bytes(self.data[self.pos..(self.pos + 8)].try_into()?);
-        self.pos += 8;
+        let extract = u64::from_be_bytes(self.data[self.pos..end_offset].try_into()?);
+        self.pos = end_offset;
 
         Ok(extract)
     }
@@ -234,48 +250,42 @@ impl Buffer {
 
     #[inline(always)]
     pub fn push_uint16(&mut self, value: u16) -> PyResult<()> {
-        if self.eof() {
+        let end_offset = self.pos + 2;
+
+        if self.capacity < end_offset {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        if self.capacity < self.pos + 2 {
-            return Err(BufferWriteError::new_err("Write out of bounds"));
-        }
-
-        self.data[self.pos..(self.pos + 2)].clone_from_slice(&value.to_be_bytes());
-        self.pos += 2;
+        self.data[self.pos..end_offset].clone_from_slice(&value.to_be_bytes());
+        self.pos = end_offset;
 
         Ok(())
     }
 
     #[inline(always)]
     pub fn push_uint32(&mut self, value: u32) -> PyResult<()> {
-        if self.eof() {
+        let end_offset = self.pos + 4;
+
+        if self.capacity < end_offset {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        if self.capacity < self.pos + 4 {
-            return Err(BufferWriteError::new_err("Write out of bounds"));
-        }
-
-        self.data[self.pos..(self.pos + 4)].clone_from_slice(&value.to_be_bytes());
-        self.pos += 4;
+        self.data[self.pos..end_offset].clone_from_slice(&value.to_be_bytes());
+        self.pos = end_offset;
 
         Ok(())
     }
 
     #[inline(always)]
     pub fn push_uint64(&mut self, value: u64) -> PyResult<()> {
-        if self.eof() {
+        let end_offset = self.pos + 8;
+
+        if self.capacity < end_offset {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        if self.capacity < self.pos + 8 {
-            return Err(BufferWriteError::new_err("Write out of bounds"));
-        }
-
-        self.data[self.pos..(self.pos + 8)].clone_from_slice(&value.to_be_bytes());
-        self.pos += 8;
+        self.data[self.pos..end_offset].clone_from_slice(&value.to_be_bytes());
+        self.pos = end_offset;
 
         Ok(())
     }

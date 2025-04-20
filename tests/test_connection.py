@@ -19,7 +19,10 @@ from qh3.quic.connection import (
     QuicConnection,
     QuicConnectionError,
     QuicNetworkPath,
-    QuicReceiveContext, MAX_LOCAL_CHALLENGES,
+    QuicReceiveContext,
+    MAX_LOCAL_CHALLENGES,
+    check_stream_id_for_receiving,
+    check_stream_id_for_sending,
 )
 from qh3.quic.crypto import CryptoPair
 from qh3.quic.logger import QuicLogger
@@ -2807,28 +2810,32 @@ class TestQuicConnection:
         with client_and_server() as (client, server):
             for off in [0, 4, 8]:
                 # Client-Initiated, Bidirectional
-                assert client._stream_can_receive(off)
-                assert client._stream_can_send(off)
-                assert server._stream_can_receive(off)
-                assert server._stream_can_send(off)
+                assert check_stream_id_for_receiving(True, off)
+                assert check_stream_id_for_sending(True, off)
+
+                assert check_stream_id_for_receiving(False, off)
+                assert check_stream_id_for_sending(False, off)
 
                 # Server-Initiated, Bidirectional
-                assert client._stream_can_receive(off + 1)
-                assert client._stream_can_send(off + 1)
-                assert server._stream_can_receive(off + 1)
-                assert server._stream_can_send(off + 1)
+                assert check_stream_id_for_receiving(True, off+1)
+                assert check_stream_id_for_sending(True, off+1)
+
+                assert check_stream_id_for_receiving(False, off+1)
+                assert check_stream_id_for_sending(False, off+1)
 
                 # Client-Initiated, Unidirectional
-                assert not client._stream_can_receive(off + 2)
-                assert client._stream_can_send(off + 2)
-                assert server._stream_can_receive(off + 2)
-                assert not server._stream_can_send(off + 2)
+                assert not check_stream_id_for_receiving(True, off + 2)
+                assert check_stream_id_for_sending(True, off + 2)
+
+                assert check_stream_id_for_receiving(False, off + 2)
+                assert not check_stream_id_for_sending(False, off + 2)
 
                 # Server-Initiated, Unidirectional
-                assert client._stream_can_receive(off + 3)
-                assert not client._stream_can_send(off + 3)
-                assert not server._stream_can_receive(off + 3)
-                assert server._stream_can_send(off + 3)
+                assert check_stream_id_for_receiving(True, off + 3)
+                assert not check_stream_id_for_sending(True, off + 3)
+
+                assert not check_stream_id_for_receiving(False, off + 3)
+                assert check_stream_id_for_sending(False, off + 3)
 
     def test_version_negotiation_fail(self):
         client = create_standalone_client(self)
