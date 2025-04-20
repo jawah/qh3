@@ -75,6 +75,36 @@ class QuicPacketBuilder:
     Helper for building QUIC packets.
     """
 
+    __slots__ = (
+        "max_flight_bytes",
+        "max_total_bytes",
+        "quic_logger_frames",
+        "_host_cid",
+        "_is_client",
+        "_peer_cid",
+        "_peer_token",
+        "_quic_logger",
+        "_spin_bit",
+        "_version",
+        "_datagrams",
+        "_datagram_flight_bytes",
+        "_datagram_init",
+        "_datagram_needs_padding",
+        "_packets",
+        "_flight_bytes",
+        "_total_bytes",
+        "_header_size",
+        "_packet",
+        "_packet_crypto",
+        "_packet_long_header",
+        "_packet_number",
+        "_packet_start",
+        "_packet_type",
+        "_buffer",
+        "_buffer_capacity",
+        "_flight_capacity",
+    )
+
     def __init__(
         self,
         *,
