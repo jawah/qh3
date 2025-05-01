@@ -147,6 +147,7 @@ class TestHighLevel:
                     serialization.NoEncryption(),
                 ),
                 256,
+                True,
             )
         else:
             inner_private_key = Ed25519PrivateKey(
