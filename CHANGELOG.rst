@@ -1,3 +1,9 @@
+1.5.1 (2025-05-02)
+====================
+
+**Fixed**
+- Parsing of SEC1/PKCS8 ECC Private Key. https://github.com/jawah/qh3/issues/73
+
 1.5.0 (2025-04-20)
 ====================
 

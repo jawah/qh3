@@ -271,7 +271,9 @@ def load_pem_private_key(
 
         assert curve_type is not None
 
-        return EcPrivateKey(pkey_info.public_bytes(), curve_type)
+        return EcPrivateKey(
+            pkey_info.public_bytes(), curve_type, b"BEGIN EC PRIVATE KEY" not in data
+        )
     elif pkey_info.get_type() == KeyType.DSA:
         return DsaPrivateKey(pkey_info.public_bytes())
     elif pkey_info.get_type() == KeyType.RSA:

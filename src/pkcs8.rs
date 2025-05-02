@@ -14,13 +14,18 @@ use rsa::{
 use crate::CryptoError;
 use rustls_pemfile::{read_one_from_slice, Item};
 
+const RSA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
+const DSA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10040.4.1");
+const SECP_KEY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+const ED25519_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.101.112");
+
 #[pyclass(module = "qh3._hazmat", eq, eq_int)]
 #[derive(Clone, Copy, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum KeyType {
-    ECDSA_P256,
-    ECDSA_P384,
-    ECDSA_P521,
+    ECDSA_P256, // R1 -- prime
+    ECDSA_P384, // R1 -- prime
+    ECDSA_P521, // R1 -- prime
     ED25519,
     DSA,
     RSA,
@@ -36,33 +41,47 @@ impl TryFrom<InternalPrivateKeyInfo<'_>> for PrivateKeyInfo {
     type Error = Error;
 
     fn try_from(pkcs8: InternalPrivateKeyInfo<'_>) -> Result<PrivateKeyInfo, Error> {
-        let der_document = pkcs8.to_der().unwrap();
+        let der_document = pkcs8.to_der()?;
 
-        let rsa_oid = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1")
-            .as_bytes()
-            .to_vec();
-        let dsa_oid = ObjectIdentifier::new_unwrap("1.2.840.10040.4.1")
-            .as_bytes()
-            .to_vec();
-
-        if rsa_oid == pkcs8.algorithm.oid.as_bytes().to_vec() {
-            return Ok(PrivateKeyInfo {
+        match pkcs8.algorithm.oid {
+            RSA_OID => Ok(PrivateKeyInfo {
                 der_encoded: der_document.clone(),
                 cert_type: KeyType::RSA,
-            });
-        }
-
-        if dsa_oid == pkcs8.algorithm.oid.as_bytes().to_vec() {
-            return Ok(PrivateKeyInfo {
+            }),
+            DSA_OID => Ok(PrivateKeyInfo {
                 der_encoded: der_document.clone(),
                 cert_type: KeyType::DSA,
-            });
-        }
+            }),
+            SECP_KEY => {
+                let params_any = pkcs8
+                    .algorithm
+                    .parameters
+                    .ok_or(Error::KeyMalformed)?
+                    .decode_as::<ObjectIdentifier>()
+                    .map_err(|_| Error::KeyMalformed)?;
 
-        Ok(PrivateKeyInfo {
-            der_encoded: der_document.clone(),
-            cert_type: KeyType::ED25519,
-        })
+                // either compare to hard-coded OID strings:
+                let cert_type = match params_any.to_string().as_str() {
+                    // prime256v1 / secp256r1
+                    "1.2.840.10045.3.1.7" => KeyType::ECDSA_P256,
+                    // secp384r1
+                    "1.3.132.0.34" => KeyType::ECDSA_P384,
+                    // secp521r1
+                    "1.3.132.0.35" => KeyType::ECDSA_P521,
+                    _ => return Err(Error::ParametersMalformed),
+                };
+
+                Ok(PrivateKeyInfo {
+                    der_encoded: der_document.clone(),
+                    cert_type,
+                })
+            }
+            ED25519_OID => Ok(PrivateKeyInfo {
+                der_encoded: der_document.clone(),
+                cert_type: KeyType::ED25519,
+            }),
+            _ => Err(Error::KeyMalformed),
+        }
     }
 }
 
@@ -79,6 +98,10 @@ impl PrivateKeyInfo {
 
         let is_encrypted = decoded_bytes.contains("ENCRYPTED");
         let item = read_one_from_slice(pem_content);
+
+        if item.is_err() {
+            return Err(CryptoError::new_err("Given PEM key is malformed"));
+        }
 
         match item.unwrap().unwrap().0 {
             Item::Pkcs1Key(key) => {
@@ -118,7 +141,15 @@ impl PrivateKeyInfo {
                     };
                 }
 
-                Ok(PrivateKeyInfo::from_pkcs8_pem(decoded_bytes).unwrap())
+                let decoded = PrivateKeyInfo::from_pkcs8_pem(decoded_bytes);
+
+                if decoded.is_err() {
+                    return Err(CryptoError::new_err(
+                        "Given PEM key is unsupported. e.g. SECP256K1 are unsupported.",
+                    ));
+                }
+
+                Ok(decoded.unwrap())
             }
             Item::Sec1Key(key) => {
                 if is_encrypted {

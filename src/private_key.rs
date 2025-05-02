@@ -84,7 +84,7 @@ impl Ed25519PrivateKey {
 #[pymethods]
 impl EcPrivateKey {
     #[new]
-    pub fn py_new(pkcs8: Bound<'_, PyBytes>, curve_type: u32) -> PyResult<Self> {
+    pub fn py_new(der_key: Bound<'_, PyBytes>, curve_type: u32, is_pkcs8: bool) -> PyResult<Self> {
         let signing_algorithm = match curve_type {
             256 => &ECDSA_P256_SHA256_ASN1_SIGNING,
             384 => &ECDSA_P384_SHA384_ASN1_SIGNING,
@@ -96,15 +96,32 @@ impl EcPrivateKey {
             }
         };
 
-        let pk = match InternalEcPrivateKey::from_pkcs8(signing_algorithm, pkcs8.as_bytes()) {
-            Ok(key) => key,
-            Err(_) => return Err(CryptoError::new_err("Invalid Ec PrivateKey")),
-        };
+        if is_pkcs8 {
+            // PKCS8 DER
+            let pk = match InternalEcPrivateKey::from_pkcs8(signing_algorithm, der_key.as_bytes()) {
+                Ok(key) => key,
+                Err(e) => return Err(CryptoError::new_err(format!("invalid ec key: {}", e))),
+            };
 
-        Ok(EcPrivateKey {
-            inner: pk,
-            curve: curve_type,
-        })
+            Ok(EcPrivateKey {
+                inner: pk,
+                curve: curve_type,
+            })
+        } else {
+            // SEC1 DER
+            let pk = match InternalEcPrivateKey::from_private_key_der(
+                signing_algorithm,
+                der_key.as_bytes(),
+            ) {
+                Ok(key) => key,
+                Err(e) => return Err(CryptoError::new_err(format!("invalid sec1 key: {}", e))),
+            };
+
+            Ok(EcPrivateKey {
+                inner: pk,
+                curve: curve_type,
+            })
+        }
     }
 
     pub fn sign<'a>(

@@ -5,6 +5,7 @@ import binascii
 import ssl
 
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from qh3 import tls
 from qh3._hazmat import Certificate as InnerCertificate
@@ -36,7 +37,7 @@ from qh3.tls import (
     push_encrypted_extensions,
     push_finished,
     push_new_session_ticket,
-    push_server_hello,
+    push_server_hello, load_pem_private_key,
 )
 
 from .utils import (
@@ -390,6 +391,7 @@ class TestContext:
                     serialization.NoEncryption(),
                 ),
                 256,
+                True,
             )
         else:
             server.certificate_private_key = Ed25519PrivateKey(
@@ -1185,3 +1187,26 @@ class TestTls:
         buf = Buffer(128)
         push_finished(buf, finished)
         assert buf.data == load("tls_finished.bin")
+
+    def test_parsing_ec_private_key(self) -> None:
+        for curve_type in [256, 384, 521]:
+
+            if curve_type == 256:
+                cryptography_ec_type = ec.SECP256R1
+            elif curve_type == 384:
+                cryptography_ec_type = ec.SECP384R1
+            else:
+                cryptography_ec_type = ec.SECP521R1
+
+            key = ec.generate_private_key(curve=cryptography_ec_type())
+
+            pkcs8_pem = key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+
+            parsed_pkey = load_pem_private_key(pkcs8_pem)
+
+            assert isinstance(parsed_pkey, EcPrivateKey)
+            assert parsed_pkey.curve_type == curve_type
