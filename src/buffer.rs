@@ -71,6 +71,7 @@ impl Buffer {
     }
 
     #[inline(always)]
+    #[pyo3(signature = ())]
     pub fn eof(&self) -> bool {
         self.pos == self.capacity
     }
@@ -87,11 +88,13 @@ impl Buffer {
     }
 
     #[inline(always)]
+    #[pyo3(signature = ())]
     pub fn tell(&self) -> usize {
         self.pos
     }
 
     #[inline(always)]
+    #[pyo3(signature = (length))]
     pub fn pull_bytes<'a>(
         &mut self,
         py: Python<'a>,
@@ -109,6 +112,7 @@ impl Buffer {
     }
 
     #[inline(always)]
+    #[pyo3(signature = ())]
     pub fn pull_uint8(&mut self) -> PyResult<u8> {
         if self.eof() {
             return Err(BufferReadError::new_err("Read out of bounds"));
@@ -121,6 +125,7 @@ impl Buffer {
     }
 
     #[inline(always)]
+    #[pyo3(signature = ())]
     pub fn pull_uint16(&mut self) -> PyResult<u16> {
         let end_offset = self.pos + 2;
 
@@ -135,6 +140,7 @@ impl Buffer {
     }
 
     #[inline(always)]
+    #[pyo3(signature = ())]
     pub fn pull_uint24(&mut self) -> PyResult<u32> {
         let end_offset = self.pos + 3;
 
@@ -156,6 +162,7 @@ impl Buffer {
     }
 
     #[inline(always)]
+    #[pyo3(signature = ())]
     pub fn pull_uint32(&mut self) -> PyResult<u32> {
         let end_offset = self.pos + 4;
 
@@ -170,6 +177,7 @@ impl Buffer {
     }
 
     #[inline(always)]
+    #[pyo3(signature = ())]
     pub fn pull_uint64(&mut self) -> PyResult<u64> {
         let end_offset = self.pos + 8;
 
@@ -184,6 +192,7 @@ impl Buffer {
     }
 
     #[inline(always)]
+    #[pyo3(signature = ())]
     pub fn pull_uint_var(&mut self) -> PyResult<u64> {
         if self.eof() {
             return Err(BufferReadError::new_err("Read out of bounds"));
