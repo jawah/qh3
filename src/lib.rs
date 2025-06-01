@@ -5,6 +5,7 @@ mod aead;
 mod agreement;
 mod buffer;
 mod certificate;
+mod crl;
 mod headers;
 mod hpk;
 mod intldomain;
@@ -15,7 +16,6 @@ mod rangeset;
 mod recovery;
 mod rsa;
 mod utils;
-mod crl;
 
 pub use self::aead::{AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305};
 pub use self::agreement::{
@@ -27,6 +27,7 @@ pub use self::certificate::{
     Certificate, ExpiredCertificateError, InvalidNameCertificateError, SelfSignedCertificateError,
     ServerVerifier, UnacceptableCertificateError,
 };
+pub use self::crl::{CertificateRevocationList, RevokedCertificate};
 pub use self::headers::{
     DecoderStreamError, DecompressionFailed, EncoderStreamError, QpackDecoder, QpackEncoder,
     StreamBlocked,
@@ -43,7 +44,6 @@ pub use self::rangeset::RangeSet;
 pub use self::recovery::{QuicPacketPacer, QuicRttMonitor};
 pub use self::rsa::Rsa;
 pub use self::utils::decode_packet_number;
-pub use self::crl::{CertificateRevocationList, RevokedCertificate};
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
 
