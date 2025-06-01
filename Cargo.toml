@@ -13,9 +13,9 @@ name = "qh3"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.24.2", features = ["extension-module", "abi3-py37", "generate-import-lib"] }
+pyo3 = { version = "0.25.0", features = ["extension-module", "abi3-py37", "generate-import-lib"] }
 ls-qpack-rs = "0.2.0"
-rustls = "0.23.25"
+rustls = "0.23.27"
 x509-parser = "0.17.0"
 rsa = { version = "0.9.8", features = ["sha2", "pem", "getrandom"] }
 dsa = "0.6.3"
@@ -24,7 +24,7 @@ rand = "0.8.5"
 pkcs8 = { version = "0.10.2", features = ["encryption", "pem"] }
 pkcs1 = { version = "0.7.5", features = ["pem"] }
 rustls-pemfile = "2.2.0"
-aws-lc-rs = { version = "1.13.0", features=["bindgen"], default-features = false }
+aws-lc-rs = { version = "1.13.1", features=["bindgen"], default-features = false }
 x509-ocsp = { version = "0.2.1", features = ["builder"] }
 x509-cert = "0.2.5"
 der = "0.7.9"
