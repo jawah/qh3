@@ -1,13 +1,22 @@
 1.5.2 (2025-06-01)
 ====================
 
+**Added**
+- Passing extra intermediates CA in the configuration so that we could discretely rebuild the chain before validation.
+  This is most useful in a corporate environment where server may misbehave and miss sending the full chain in the TLS handshake.
+  The list of intermediate may be available in the OS trust store. It is not fetched automatically, you will have to provide
+  them in the configuration. See the ``caextra`` property.
+
+**Fixed**
+- Default CA root list loading when none are given.
+
 **Changed**
 - Upgraded aws-lc-rs to 1.13.1
 - Upgraded rustls to 0.23.27
 - Upgraded pyo3 to 0.25.0
 
 **Misc**
-- Added CRL helpers
+- Added CRL helpers.
 
 1.5.1 (2025-05-02)
 ====================
