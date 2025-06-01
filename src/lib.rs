@@ -15,6 +15,7 @@ mod rangeset;
 mod recovery;
 mod rsa;
 mod utils;
+mod crl;
 
 pub use self::aead::{AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305};
 pub use self::agreement::{
@@ -42,6 +43,7 @@ pub use self::rangeset::RangeSet;
 pub use self::recovery::{QuicPacketPacer, QuicRttMonitor};
 pub use self::rsa::Rsa;
 pub use self::utils::decode_packet_number;
+pub use self::crl::{CertificateRevocationList, RevokedCertificate};
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
 
@@ -114,6 +116,9 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<OCSPResponseStatus>()?;
     m.add_class::<ReasonFlags>()?;
     m.add_class::<OCSPRequest>()?;
+    // Niquests CRL helper
+    m.add_class::<CertificateRevocationList>()?;
+    m.add_class::<RevokedCertificate>()?;
     // Buffer
     m.add("BufferReadError", py.get_type::<BufferReadError>())?;
     m.add("BufferWriteError", py.get_type::<BufferWriteError>())?;

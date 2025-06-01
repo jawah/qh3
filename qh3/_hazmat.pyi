@@ -322,3 +322,33 @@ class QuicRttMonitor:
     """
     def add_rtt(self, rtt: float) -> None: ...
     def is_rtt_increasing(self, rtt: float, now: float) -> bool: ...
+
+
+class RevokedCertificate:
+
+    serial_number: str
+    reason: ReasonFlags
+    expired_at: int
+
+
+class CertificateRevocationList:
+
+    def __init__(self, crl: bytes) -> None: ...
+
+    def is_revoked(self, serial_number: str) -> RevokedCertificate | None: ...
+
+    def serialize(self) -> bytes: ...
+
+    @staticmethod
+    def deserialize(src: bytes) -> CertificateRevocationList: ...
+
+    def __len__(self) -> int: ...
+
+    @property
+    def issuer(self) -> str: ...
+
+    @property
+    def last_updated_at(self) -> int: ...
+
+    @property
+    def next_update_at(self) -> int: ...
