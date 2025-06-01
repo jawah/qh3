@@ -1,3 +1,14 @@
+1.5.2 (2025-06-01)
+====================
+
+**Changed**
+- Upgraded aws-lc-rs to 1.13.1
+- Upgraded rustls to 0.23.27
+- Upgraded pyo3 to 0.25.0
+
+**Misc**
+- Added CRL helpers
+
 1.5.1 (2025-05-02)
 ====================
 
