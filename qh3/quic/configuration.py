@@ -93,7 +93,7 @@ class QuicConfiguration:
     """
     Any intermediates CA that can be used to reconstruct the chain locally.
     Beware that this bundle will never be seen as trust anchors.
-    
+
     .. note:: This is only used by clients.
     """
 

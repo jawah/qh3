@@ -38,8 +38,8 @@ from ._hazmat import (
     X25519KeyExchange,
     X25519ML768KeyExchange,
     idna_encode,
-    verify_with_public_key,
     rebuild_chain,
+    verify_with_public_key,
 )
 from ._hazmat import (
     Certificate as X509Certificate,
@@ -343,9 +343,7 @@ def verify_certificate(
         default_ctx.load_default_certs()
 
         for ca in default_ctx.get_ca_certs(binary_form=True):
-            authorities.append(
-                ca
-            )
+            authorities.append(ca)
 
     if server_name is None or assert_server_name is False:
         # get_subject_alt_names()... caution for :
@@ -386,7 +384,7 @@ def verify_certificate(
     if not chain and caextra:
         raw_chain = rebuild_chain(
             certificate.public_bytes(),
-            [i.public_bytes() for i in load_pem_x509_certificates(caextra)]
+            [i.public_bytes() for i in load_pem_x509_certificates(caextra)],
         )
 
         if len(raw_chain) >= 2:
