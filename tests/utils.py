@@ -90,6 +90,9 @@ SERVER_CERTFILE_WITH_CHAIN = os.path.join(
 )
 SERVER_KEYFILE = os.path.join(os.path.dirname(__file__), "ssl_key.pem")
 SERVER_COMBINEDFILE = os.path.join(os.path.dirname(__file__), "ssl_combined.pem")
+
+CRL_DUMMY = os.path.join(os.path.dirname(__file__), "le.crl")
+
 SKIP_TESTS = frozenset(os.environ.get("AIOQUIC_SKIP_TESTS", "").split(","))
 
 if os.environ.get("AIOQUIC_DEBUG"):

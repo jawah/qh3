@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 
 #[pyclass(module = "qh3._hazmat", eq, eq_int)]
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug)]
 #[allow(non_camel_case_types)]
 pub enum ReasonFlags {
     unspecified = 0,

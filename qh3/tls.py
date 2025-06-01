@@ -38,23 +38,13 @@ from ._hazmat import (
     X25519KeyExchange,
     X25519ML768KeyExchange,
     idna_encode,
+    rebuild_chain,
     verify_with_public_key,
 )
 from ._hazmat import (
     Certificate as X509Certificate,
 )
 
-# candidates based on https://github.com/tiran/certifi-system-store by Christian Heimes
-_CA_FILE_CANDIDATES = [
-    # Alpine, Arch, Fedora 34+, OpenWRT, RHEL 9+, BSD
-    "/etc/ssl/cert.pem",
-    # Fedora <= 34, RHEL <= 9, CentOS <= 9
-    "/etc/pki/tls/cert.pem",
-    # Debian, Ubuntu (requires ca-certificates)
-    "/etc/ssl/certs/ca-certificates.crt",
-    # SUSE
-    "/etc/ssl/ca-bundle.pem",
-]
 _HASHED_CERT_FILENAME_RE = re.compile(r"^[0-9a-fA-F]{8}\.[0-9]$")
 
 TLS_VERSION_GREASE = 0x0A0A
@@ -321,6 +311,7 @@ def verify_certificate(
     cadata: bytes | None = None,
     cafile: str | None = None,
     capath: str | None = None,
+    caextra: bytes | None = None,
     server_name: str | None = None,
     assert_server_name: bool = True,
     ocsp_response: bytes | None = None,
@@ -347,49 +338,12 @@ def verify_certificate(
 
     # when nothing is given to us, try to load defaults.
     # try to mimic ssl.load_default_locations(...) linux and windows supported.
-    # borrowed from cpython and sethmlarson/truststore
     if cadata is None and cafile is None and capath is None:
-        defaults = ssl.get_default_verify_paths()
+        default_ctx = ssl.create_default_context()
+        default_ctx.load_default_certs()
 
-        if defaults.cafile or (
-            defaults.capath and _capath_contains_certs(defaults.capath)
-        ):
-            if defaults.capath and _capath_contains_certs(defaults.capath):
-                for path in glob.glob(f"{capath}/*"):
-                    with open(path, "rb") as fp:
-                        for cert in load_pem_x509_certificates(fp.read()):
-                            authorities.append(cert.public_bytes())
-
-            if defaults.cafile:
-                with open(defaults.cafile, "rb") as fp:
-                    for cert in load_pem_x509_certificates(fp.read()):
-                        authorities.append(cert.public_bytes())
-        else:
-            # that part is optional, let's say nice to have.
-            # failure are skipped silently.
-            if hasattr(ssl, "enum_certificates"):
-                for storename in (
-                    "CA",
-                    "ROOT",
-                ):
-                    try:
-                        for cacert_raw, encoding, trust in ssl.enum_certificates(
-                            storename
-                        ):
-                            # CA certs are never PKCS#7 encoded
-                            if encoding == "x509_asn":
-                                if trust is True:
-                                    for _cert in load_pem_x509_certificates(cacert_raw):
-                                        authorities.append(_cert.public_bytes())
-                    except (PermissionError, ValueError):
-                        pass
-            else:
-                # Let's search other common locations instead.
-                for candidate_cafile in _CA_FILE_CANDIDATES:
-                    if os.path.isfile(candidate_cafile):
-                        with open(candidate_cafile, "rb") as fp:
-                            for cert in load_pem_x509_certificates(fp.read()):
-                                authorities.append(cert.public_bytes())
+        for ca in default_ctx.get_ca_certs(binary_form=True):
+            authorities.append(ca)
 
     if server_name is None or assert_server_name is False:
         # get_subject_alt_names()... caution for :
@@ -423,6 +377,21 @@ def verify_certificate(
         raise AlertBadCertificate(
             "unable to get local issuer certificate (empty CA store)"
         )
+
+    # rebuild the intermediate chain locally
+    # in case the server did not pass them along
+    # and the configuration does hold a list of intermediates.
+    if not chain and caextra:
+        raw_chain = rebuild_chain(
+            certificate.public_bytes(),
+            [i.public_bytes() for i in load_pem_x509_certificates(caextra)],
+        )
+
+        if len(raw_chain) >= 2:
+            for i in raw_chain[1:]:
+                chain.append(X509Certificate(i))
+        else:
+            chain = []
 
     # load CAs
     try:
@@ -1308,6 +1277,7 @@ class Context:
         is_client: bool,
         alpn_protocols: list[str] | None = None,
         cadata: bytes | None = None,
+        caextra: bytes | None = None,
         cafile: str | None = None,
         capath: str | None = None,
         cipher_suites: list[CipherSuite] | None = None,
@@ -1322,6 +1292,7 @@ class Context:
         # configuration
         self._alpn_protocols = alpn_protocols
         self._cadata = cadata
+        self._caextra = caextra
         self._cafile = cafile
         self._capath = capath
         self._hostname_checks_common_name = hostname_checks_common_name
@@ -1815,6 +1786,7 @@ class Context:
                 cadata=self._cadata,
                 cafile=self._cafile,
                 capath=self._capath,
+                caextra=self._caextra,
                 certificate=self._peer_certificate,
                 chain=self._peer_certificate_chain,
                 server_name=self._server_name,

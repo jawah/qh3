@@ -89,6 +89,14 @@ class QuicConfiguration:
     cafile: str | None = None
     capath: str | None = None
 
+    caextra: bytes | None = None
+    """
+    Any intermediates CA that can be used to reconstruct the chain locally.
+    Beware that this bundle will never be seen as trust anchors.
+
+    .. note:: This is only used by clients.
+    """
+
     certificate: X509Certificate | None = None
     certificate_chain: list[X509Certificate] = field(default_factory=list)
 
@@ -170,6 +178,7 @@ class QuicConfiguration:
         cafile: str | None = None,
         capath: str | None = None,
         cadata: bytes | None = None,
+        caextra: bytes | None = None,
     ) -> None:
         """
         Load a set of "certification authority" (CA) certificates used to
@@ -178,3 +187,4 @@ class QuicConfiguration:
         self.cafile = cafile
         self.capath = capath
         self.cadata = cadata
+        self.caextra = caextra

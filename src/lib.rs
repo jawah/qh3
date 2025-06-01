@@ -5,6 +5,8 @@ mod aead;
 mod agreement;
 mod buffer;
 mod certificate;
+mod chain;
+mod crl;
 mod headers;
 mod hpk;
 mod intldomain;
@@ -26,6 +28,8 @@ pub use self::certificate::{
     Certificate, ExpiredCertificateError, InvalidNameCertificateError, SelfSignedCertificateError,
     ServerVerifier, UnacceptableCertificateError,
 };
+pub use self::chain::rebuild_chain;
+pub use self::crl::{CertificateRevocationList, RevokedCertificate};
 pub use self::headers::{
     DecoderStreamError, DecompressionFailed, EncoderStreamError, QpackDecoder, QpackEncoder,
     StreamBlocked,
@@ -87,6 +91,7 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "UnacceptableCertificateError",
         py.get_type::<UnacceptableCertificateError>(),
     )?;
+    m.add_function(wrap_pyfunction!(rebuild_chain, m)?)?;
     // RSA specialized for the Retry Token
     m.add_class::<Rsa>()?;
     // Header protection mask
@@ -114,6 +119,9 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<OCSPResponseStatus>()?;
     m.add_class::<ReasonFlags>()?;
     m.add_class::<OCSPRequest>()?;
+    // Niquests CRL helper
+    m.add_class::<CertificateRevocationList>()?;
+    m.add_class::<RevokedCertificate>()?;
     // Buffer
     m.add("BufferReadError", py.get_type::<BufferReadError>())?;
     m.add("BufferWriteError", py.get_type::<BufferWriteError>())?;
