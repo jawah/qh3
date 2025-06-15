@@ -8,6 +8,7 @@
 
 **Changed**
 - Caching the trust store loading in-memory to avoid unnecessary overhead on each TLS handshake.
+- Upgraded pyo3 to 0.25.1
 
 **Fixed**
 - Aligned our TLS certificate chain validation with CPython+OpenSSL default behaviors. Pushing intermediates CA
