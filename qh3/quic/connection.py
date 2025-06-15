@@ -1489,7 +1489,6 @@ class QuicConnection:
         self.tls = tls.Context(
             alpn_protocols=self._configuration.alpn_protocols,
             cadata=self._configuration.cadata,
-            caextra=self._configuration.caextra,
             cafile=self._configuration.cafile,
             capath=self._configuration.capath,
             cipher_suites=self.configuration.cipher_suites,
