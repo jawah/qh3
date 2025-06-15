@@ -17,6 +17,7 @@ mod rangeset;
 mod recovery;
 mod rsa;
 mod utils;
+mod verify;
 
 pub use self::aead::{AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305};
 pub use self::agreement::{
@@ -26,7 +27,7 @@ pub use self::agreement::{
 pub use self::buffer::{encode_uint_var, size_uint_var, Buffer, BufferReadError, BufferWriteError};
 pub use self::certificate::{
     Certificate, ExpiredCertificateError, InvalidNameCertificateError, SelfSignedCertificateError,
-    ServerVerifier, UnacceptableCertificateError,
+    ServerVerifier, TlsCertUsage, UnacceptableCertificateError,
 };
 pub use self::chain::rebuild_chain;
 pub use self::crl::{CertificateRevocationList, RevokedCertificate};
@@ -75,6 +76,7 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Certificate Store X509 Verification + Certificate Representation
     m.add_class::<ServerVerifier>()?;
     m.add_class::<Certificate>()?;
+    m.add_class::<TlsCertUsage>()?;
     m.add(
         "SelfSignedCertificateError",
         py.get_type::<SelfSignedCertificateError>(),

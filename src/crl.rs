@@ -1,9 +1,11 @@
+use crate::verify::{context_for_verify, verify_signature};
 use crate::{CryptoError, ReasonFlags};
 use bincode::{deserialize, serialize};
 use pyo3::prelude::PyBytesMethods;
 use pyo3::types::{PyBytes, PyType};
 use pyo3::{pyclass, pymethods, Bound, PyResult, Python};
 use serde::{Deserialize, Serialize};
+use x509_parser::certificate::X509Certificate;
 use x509_parser::prelude::FromDer;
 use x509_parser::prelude::ReasonCode as InternalCode;
 use x509_parser::revocation_list::CertificateRevocationList as InternalCrl;
@@ -49,13 +51,16 @@ pub struct CertificateRevocationList {
     issuer: String,
     last_updated_at: i64,
     next_update_at: i64,
+    tbs_inner: Vec<u8>,
+    signature: Vec<u8>,
+    raw: Vec<u8>,
 }
 
 #[pymethods]
 impl CertificateRevocationList {
     #[new]
-    pub fn py_new(crl: Bound<'_, PyBytes>) -> PyResult<Self> {
-        match InternalCrl::from_der(crl.as_bytes()) {
+    pub fn py_new(crl_der: Bound<'_, PyBytes>) -> PyResult<Self> {
+        match InternalCrl::from_der(crl_der.as_bytes()) {
             Ok((_rem, crl)) => {
                 let mut revoked_list = Vec::new();
 
@@ -88,9 +93,34 @@ impl CertificateRevocationList {
                     issuer: format!("{}", crl.issuer()),
                     last_updated_at: crl.last_update().timestamp(),
                     next_update_at: crl.next_update().unwrap_or(ASN1Time::now()).timestamp() + 3600,
+                    tbs_inner: crl.tbs_cert_list.as_ref().to_vec(),
+                    signature: crl.signature_value.data.to_vec(),
+                    raw: crl_der.as_bytes().to_vec(),
                 })
             }
             Err(_) => Err(CryptoError::new_err("unable to parse crl")),
+        }
+    }
+
+    pub fn authenticate_for(&self, issuer_der: Bound<'_, PyBytes>) -> bool {
+        let issuer = X509Certificate::from_der(issuer_der.as_bytes()).unwrap().1;
+
+        match InternalCrl::from_der(self.raw.as_ref()) {
+            Ok((_rem, crl)) => {
+                let pubkey_info = match context_for_verify(&crl.signature_algorithm, &issuer) {
+                    Some(info) => info,
+                    _ => return false,
+                };
+
+                verify_signature(
+                    pubkey_info.1.as_ref(),
+                    pubkey_info.0,
+                    self.tbs_inner.as_ref(),
+                    self.signature.as_ref(),
+                )
+                .is_ok()
+            }
+            _ => false,
         }
     }
 
