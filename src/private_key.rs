@@ -5,8 +5,8 @@ use aws_lc_rs::signature::{
 use dsa::SigningKey as InternalDsaPrivateKey;
 use rsa::{RsaPrivateKey as InternalRsaPrivateKey, RsaPublicKey as InternalRsaPublicKey};
 
-use rsa::pkcs1v15::{SigningKey as InternalRsaPkcsSigningKey};
-use rsa::pss::{SigningKey as InternalRsaPssSigningKey};
+use rsa::pkcs1v15::SigningKey as InternalRsaPkcsSigningKey;
+use rsa::pss::SigningKey as InternalRsaPssSigningKey;
 
 use rsa::sha2::{Sha256, Sha384, Sha512};
 use rsa::signature::SignatureEncoding;
@@ -17,6 +17,7 @@ use pkcs8::EncodePublicKey;
 
 use aws_lc_rs::rand::SystemRandom;
 
+use crate::verify::{verify_signature, PublicKeyAlgorithm};
 use crate::CryptoError;
 use pyo3::exceptions::PyException;
 use pyo3::pyfunction;
@@ -25,7 +26,6 @@ use pyo3::types::PyBytes;
 use pyo3::types::PyBytesMethods;
 use pyo3::{pyclass, Bound};
 use pyo3::{PyResult, Python};
-use crate::verify::{verify_signature, PublicKeyAlgorithm};
 
 pyo3::create_exception!(_hazmat, SignatureError, PyException);
 
@@ -259,13 +259,18 @@ pub fn verify_with_public_key(
         0x0403 => PublicKeyAlgorithm::EcdsaP256WithSha256,
         0x0503 => PublicKeyAlgorithm::EcdsaP384WithSha384,
         0x0603 => PublicKeyAlgorithm::EcdsaP521WithSha512,
-        _ => return Err(CryptoError::new_err(format!("unsupported signature algorithm {}", algorithm)))
+        _ => {
+            return Err(CryptoError::new_err(format!(
+                "unsupported signature algorithm {}",
+                algorithm
+            )))
+        }
     };
 
     verify_signature(
         public_key_raw.as_bytes(),
         sig_algorithm,
         message.as_bytes(),
-        signature.as_bytes()
+        signature.as_bytes(),
     )
 }

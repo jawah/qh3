@@ -1,3 +1,4 @@
+use crate::verify::{context_for_verify, verify_signature};
 use crate::{CryptoError, ReasonFlags};
 use bincode::{deserialize, serialize};
 use pyo3::prelude::PyBytesMethods;
@@ -9,7 +10,6 @@ use x509_parser::prelude::FromDer;
 use x509_parser::prelude::ReasonCode as InternalCode;
 use x509_parser::revocation_list::CertificateRevocationList as InternalCrl;
 use x509_parser::time::ASN1Time;
-use crate::verify::{context_for_verify, verify_signature};
 
 #[pyclass(module = "qh3._hazmat")]
 #[derive(Clone, Serialize, Deserialize)]
@@ -109,17 +109,18 @@ impl CertificateRevocationList {
             Ok((_rem, crl)) => {
                 let pubkey_info = match context_for_verify(&crl.signature_algorithm, &issuer) {
                     Some(info) => info,
-                    _ => return false
+                    _ => return false,
                 };
 
-                !verify_signature(
+                verify_signature(
                     pubkey_info.1.as_ref(),
                     pubkey_info.0,
                     self.tbs_inner.as_ref(),
                     self.signature.as_ref(),
-                ).is_err()
-            },
-            _ => false
+                )
+                .is_ok()
+            }
+            _ => false,
         }
     }
 

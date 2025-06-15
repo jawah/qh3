@@ -7,10 +7,10 @@ use x509_parser::asn1_rs::{oid, Oid};
 use x509_parser::certificate::X509Certificate;
 use x509_parser::signature_algorithm::RsaSsaPssParams;
 
-use rsa::pkcs1v15::{Signature as RsaPkcsSignature};
-use rsa::pss::{Signature as RsaPssSignature};
+use rsa::pkcs1v15::Signature as RsaPkcsSignature;
+use rsa::pss::Signature as RsaPssSignature;
 
-use rsa::{RsaPublicKey as InternalRsaPublicKey};
+use rsa::RsaPublicKey as InternalRsaPublicKey;
 
 use rsa::pkcs1v15::VerifyingKey as RsaPkcsVerifyingKey;
 use rsa::pss::VerifyingKey as RsaPssVerifyingKey;
@@ -19,19 +19,18 @@ use rsa::signature::Verifier;
 
 use ed25519_dalek::{Signature as Ed25519Signature, VerifyingKey as Ed25519VerifyingKey};
 
-use pkcs8::{DecodePublicKey};
+use crate::{CryptoError, SignatureError};
+use pkcs8::DecodePublicKey;
 use sha1::Sha1;
 use x509_parser::x509::AlgorithmIdentifier;
-use crate::{CryptoError, SignatureError};
 
+const RSA_PSS: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
 
-const RSA_PSS: Oid<'static> = oid!(1.2.840.113549.1.1.10);
+const RSA_PSS_SHA256_PARAMETER: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
+const RSA_PSS_SHA384_PARAMETER: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
+const RSA_PSS_SHA512_PARAMETER: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
 
-const RSA_PSS_SHA256_PARAMETER: Oid<'static> = oid!(2.16.840.1.101.3.4.2.1);
-const RSA_PSS_SHA384_PARAMETER: Oid<'static> = oid!(2.16.840.1.101.3.4.2.2);
-const RSA_PSS_SHA512_PARAMETER: Oid<'static> = oid!(2.16.840.1.101.3.4.2.3);
-
-const RSA_PKCS_SHA1: Oid<'static> = oid!(1.2.840.113549.1.1.5);
+const RSA_PKCS_SHA1: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .5);
 const RSA_PKCS_SHA256: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .11);
 const RSA_PKCS_SHA384: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
 const RSA_PKCS_SHA512: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
@@ -40,12 +39,11 @@ const ECDSA_SHA256: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .2);
 const ECDSA_SHA384: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .3);
 const ECDSA_SHA512: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .4);
 
-const ED25519: Oid<'static> = oid!(1.3.101.112);
+const ED25519: Oid<'static> = oid!(1.3.101 .112);
 
-const CURVE_P256: Oid<'static> = oid!(1.2.840.10045.3.1.7);
-const CURVE_P384: Oid<'static> = oid!(1.3.132.0.34);
-const CURVE_P521: Oid<'static> = oid!(1.3.132.0.35);
-
+const CURVE_P256: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
+const CURVE_P384: Oid<'static> = oid!(1.3.132 .0 .34);
+const CURVE_P521: Oid<'static> = oid!(1.3.132 .0 .35);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicKeyAlgorithm {
@@ -74,14 +72,14 @@ pub enum PublicKeyAlgorithm {
     EcdsaP521WithSha512 = 17,
 }
 
-pub fn context_for_verify(signature_algorithm: &AlgorithmIdentifier, issuer: &X509Certificate) -> Option<(PublicKeyAlgorithm, Vec<u8>)> {
+pub fn context_for_verify(
+    signature_algorithm: &AlgorithmIdentifier,
+    issuer: &X509Certificate,
+) -> Option<(PublicKeyAlgorithm, Vec<u8>)> {
     let signature_oid = &signature_algorithm.algorithm;
 
     let algo = if signature_oid == &RSA_PSS {
-        let params = match signature_algorithm.parameters.as_ref() {
-            Some(any) => any,
-            None => return None,
-        };
+        let params = signature_algorithm.parameters.as_ref()?;
 
         let params = RsaSsaPssParams::try_from(params).unwrap();
 
@@ -104,15 +102,19 @@ pub fn context_for_verify(signature_algorithm: &AlgorithmIdentifier, issuer: &X5
         PublicKeyAlgorithm::RsaPkcsSha384
     } else if signature_oid == &RSA_PKCS_SHA512 {
         PublicKeyAlgorithm::RsaPkcsSha512
-    } else if signature_oid == &ECDSA_SHA256 || signature_oid == &ECDSA_SHA384 || signature_oid == &ECDSA_SHA512 {
+    } else if signature_oid == &ECDSA_SHA256
+        || signature_oid == &ECDSA_SHA384
+        || signature_oid == &ECDSA_SHA512
+    {
         // we actually want the curve from the parent (aka. issuer)
-        let params = issuer.tbs_certificate.subject_pki.algorithm.parameters.as_ref();
+        let params = issuer
+            .tbs_certificate
+            .subject_pki
+            .algorithm
+            .parameters
+            .as_ref()?;
 
-        if params.is_none() {
-            return None;
-        }
-
-        if let Ok(curve_oid) = params.unwrap().as_oid() {
+        if let Ok(curve_oid) = params.as_oid() {
             if curve_oid == CURVE_P256 {
                 if signature_oid == &ECDSA_SHA256 {
                     PublicKeyAlgorithm::EcdsaP256WithSha256
@@ -150,12 +152,11 @@ pub fn context_for_verify(signature_algorithm: &AlgorithmIdentifier, issuer: &X5
     Some((algo, pubkey_raw))
 }
 
-
 pub fn verify_signature(
     public_key_raw: &[u8],
     algorithm: PublicKeyAlgorithm,
     message: &[u8],
-    signature: &[u8]
+    signature: &[u8],
 ) -> Result<(), PyErr> {
     if algorithm == PublicKeyAlgorithm::Ed25519 {
         let ed25519_verifier: Ed25519VerifyingKey =
@@ -173,7 +174,16 @@ pub fn verify_signature(
             Err(_) => Err(SignatureError::new_err("signature mismatch (ed25519)")),
             _ => Ok(()),
         }
-    } else if algorithm == PublicKeyAlgorithm::EcdsaP256WithSha256 || algorithm == PublicKeyAlgorithm::EcdsaP256WithSha384 || algorithm == PublicKeyAlgorithm::EcdsaP256WithSha512 || algorithm == PublicKeyAlgorithm::EcdsaP384WithSha256 || algorithm == PublicKeyAlgorithm::EcdsaP384WithSha384 || algorithm == PublicKeyAlgorithm::EcdsaP384WithSha512 || algorithm == PublicKeyAlgorithm::EcdsaP521WithSha256 || algorithm == PublicKeyAlgorithm::EcdsaP521WithSha384 || algorithm == PublicKeyAlgorithm::EcdsaP521WithSha512 {
+    } else if algorithm == PublicKeyAlgorithm::EcdsaP256WithSha256
+        || algorithm == PublicKeyAlgorithm::EcdsaP256WithSha384
+        || algorithm == PublicKeyAlgorithm::EcdsaP256WithSha512
+        || algorithm == PublicKeyAlgorithm::EcdsaP384WithSha256
+        || algorithm == PublicKeyAlgorithm::EcdsaP384WithSha384
+        || algorithm == PublicKeyAlgorithm::EcdsaP384WithSha512
+        || algorithm == PublicKeyAlgorithm::EcdsaP521WithSha256
+        || algorithm == PublicKeyAlgorithm::EcdsaP521WithSha384
+        || algorithm == PublicKeyAlgorithm::EcdsaP521WithSha512
+    {
         let public_key = UnparsedPublicKey::new(
             match algorithm {
                 PublicKeyAlgorithm::EcdsaP256WithSha256 => &signature::ECDSA_P256_SHA256_ASN1,
@@ -193,16 +203,27 @@ pub fn verify_signature(
         let res = public_key.verify(message, signature);
 
         match res {
-            Err(Unspecified) => Err(SignatureError::new_err(format!("signature mismatch ({:?})", algorithm))),
+            Err(Unspecified) => Err(SignatureError::new_err(format!(
+                "signature mismatch ({:?})",
+                algorithm
+            ))),
             _ => Ok(()),
         }
-    } else if algorithm == PublicKeyAlgorithm::RsaPkcsSha1 || algorithm == PublicKeyAlgorithm::RsaPkcsSha256 || algorithm == PublicKeyAlgorithm::RsaPkcsSha384 || algorithm == PublicKeyAlgorithm::RsaPkcsSha512 {
-
-        let rsa_parsed_public_key =
-            match InternalRsaPublicKey::from_public_key_der(public_key_raw) {
-                Ok(public_key) => public_key,
-                Err(e) => return Err(CryptoError::new_err(format!("Invalid RSA public key {}", e))),
-            };
+    } else if algorithm == PublicKeyAlgorithm::RsaPkcsSha1
+        || algorithm == PublicKeyAlgorithm::RsaPkcsSha256
+        || algorithm == PublicKeyAlgorithm::RsaPkcsSha384
+        || algorithm == PublicKeyAlgorithm::RsaPkcsSha512
+    {
+        let rsa_parsed_public_key = match InternalRsaPublicKey::from_public_key_der(public_key_raw)
+        {
+            Ok(public_key) => public_key,
+            Err(e) => {
+                return Err(CryptoError::new_err(format!(
+                    "Invalid RSA public key {}",
+                    e
+                )))
+            }
+        };
 
         if algorithm == PublicKeyAlgorithm::RsaPkcsSha1 {
             let verifier = RsaPkcsVerifyingKey::<Sha1>::new(rsa_parsed_public_key);
@@ -257,15 +278,20 @@ pub fn verify_signature(
                 _ => Ok(()),
             }
         } else {
-            Err(SignatureError::new_err("unsupported RSA signature algorithm"))
+            Err(SignatureError::new_err(
+                "unsupported RSA signature algorithm",
+            ))
         }
-
-    } else if algorithm == PublicKeyAlgorithm::RsaPssSha1 || algorithm == PublicKeyAlgorithm::RsaPssSha256 || algorithm == PublicKeyAlgorithm::RsaPssSha384 || algorithm == PublicKeyAlgorithm::RsaPssSha512 {
-        let rsa_parsed_public_key =
-            match InternalRsaPublicKey::from_public_key_der(public_key_raw) {
-                Ok(public_key) => public_key,
-                Err(_) => return Err(CryptoError::new_err("Invalid RSA public key")),
-            };
+    } else if algorithm == PublicKeyAlgorithm::RsaPssSha1
+        || algorithm == PublicKeyAlgorithm::RsaPssSha256
+        || algorithm == PublicKeyAlgorithm::RsaPssSha384
+        || algorithm == PublicKeyAlgorithm::RsaPssSha512
+    {
+        let rsa_parsed_public_key = match InternalRsaPublicKey::from_public_key_der(public_key_raw)
+        {
+            Ok(public_key) => public_key,
+            Err(_) => return Err(CryptoError::new_err("Invalid RSA public key")),
+        };
 
         if algorithm == PublicKeyAlgorithm::RsaPssSha1 {
             let verifier = RsaPssVerifyingKey::<Sha1>::new(rsa_parsed_public_key);
@@ -320,7 +346,9 @@ pub fn verify_signature(
                 _ => Ok(()),
             }
         } else {
-            Err(SignatureError::new_err("unsupported RSA signature algorithm"))
+            Err(SignatureError::new_err(
+                "unsupported RSA signature algorithm",
+            ))
         }
     } else {
         Err(SignatureError::new_err("unsupported signature algorithm"))

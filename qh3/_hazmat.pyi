@@ -75,13 +75,11 @@ class ServerVerifier:
         ocsp_response: bytes,
     ) -> None: ...
 
-
 class TlsCertUsage(Enum):
     ServerAuth = 0
     ClientAuth = 1
     Both = 2
     Other = 3
-
 
 class Certificate:
     """

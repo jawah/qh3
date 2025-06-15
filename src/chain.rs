@@ -1,37 +1,30 @@
-use crate::{SignatureError};
+use crate::SignatureError;
 use pyo3::types::PyBytes;
 use pyo3::types::PyBytesMethods;
 use pyo3::{pyfunction, Bound, PyErr, PyResult, Python};
 
+use crate::verify::{context_for_verify, verify_signature};
 use x509_parser::nom::AsBytes;
 use x509_parser::prelude::*;
-use crate::verify::{context_for_verify, verify_signature};
 
 /// Given a leaf certificate and a candidate issuer certificate, verify that
 /// `parent`'s public key actually signed `child`'s TBS bytes under the declared
 /// signature algorithm. Supports the most common OIDs.
 /// Returns `Ok(())` if the signature is valid, or an Err(CryptoError) otherwise.
-fn is_parent(
-    child: &X509Certificate<'_>,
-    parent: &X509Certificate<'_>,
-) -> Result<(), PyErr> {
+fn is_parent(child: &X509Certificate<'_>, parent: &X509Certificate<'_>) -> Result<(), PyErr> {
     let tbs = child.tbs_certificate.as_ref(); // the “to be signed” bytes
     let sig = child.signature_value.data.as_bytes(); // signature BIT STRING
 
-    let context_verify = match context_for_verify(
-        &child.signature_algorithm,
-        parent
-    ) {
+    let context_verify = match context_for_verify(&child.signature_algorithm, parent) {
         Some(ctx) => ctx,
-        None => return Err(SignatureError::new_err("unable to extract context for cert signature verify"))
+        None => {
+            return Err(SignatureError::new_err(
+                "unable to extract context for cert signature verify",
+            ))
+        }
     };
 
-    verify_signature(
-        context_verify.1.as_ref(),
-        context_verify.0,
-        tbs,
-        sig,
-    )
+    verify_signature(context_verify.1.as_ref(), context_verify.0, tbs, sig)
 }
 
 /// This function safely rebuild a certificate chain

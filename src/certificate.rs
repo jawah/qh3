@@ -15,11 +15,11 @@ use x509_parser::public_key::PublicKey;
 
 use std::sync::Arc;
 
+use crate::verify::{context_for_verify, verify_signature};
 use crate::CryptoError;
 use bincode::{deserialize, serialize};
 use pyo3::exceptions::PyException;
 use serde::{Deserialize, Serialize};
-use crate::verify::{context_for_verify, verify_signature};
 
 pyo3::create_exception!(_hazmat, SelfSignedCertificateError, PyException);
 pyo3::create_exception!(_hazmat, InvalidNameCertificateError, PyException);
@@ -136,26 +136,24 @@ impl Certificate {
                     }
                 }
 
-                let cert_pubkey_info = context_for_verify(
-                    &cert.signature,
-                    &cert
-                );
+                let cert_pubkey_info = context_for_verify(&cert.signature, &cert);
 
                 // consider any certificate to not be self-signed
                 // unless proven otherwise.
                 let mut is_selfsigned = false;
 
-                if !cert_pubkey_info.is_none() {
+                if cert_pubkey_info.is_some() {
                     let tbs_bytes = cert.tbs_certificate.as_ref();
                     let sig_bytes = cert.signature_value.data.as_ref();
                     let spki_der = cert.tbs_certificate.subject_pki.raw;
 
-                    is_selfsigned = !verify_signature(
+                    is_selfsigned = verify_signature(
                         spki_der,
                         cert_pubkey_info.unwrap().0,
                         tbs_bytes,
-                        sig_bytes
-                    ).is_err();
+                        sig_bytes,
+                    )
+                    .is_ok();
                 }
 
                 Ok(Certificate {

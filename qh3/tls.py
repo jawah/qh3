@@ -12,7 +12,7 @@ from binascii import unhexlify
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import IntEnum
-from functools import partial, lru_cache
+from functools import lru_cache, partial
 from hmac import HMAC
 from typing import Any, Callable, Generator, Optional, Sequence, Tuple, TypeVar
 
@@ -34,13 +34,13 @@ from ._hazmat import (
     SelfSignedCertificateError,
     ServerVerifier,
     SignatureError,
+    TlsCertUsage,
     UnacceptableCertificateError,
     X25519KeyExchange,
     X25519ML768KeyExchange,
     idna_encode,
     rebuild_chain,
     verify_with_public_key,
-    TlsCertUsage,
 )
 from ._hazmat import (
     Certificate as X509Certificate,
@@ -313,7 +313,8 @@ def load_store_and_sort(
     capath: str | None = None,
 ) -> tuple[list[X509Certificate], list[X509Certificate], list[X509Certificate]]:
     """
-    Given cadata, cafile and capath load X509 certificates and sort them into three distinct list:
+    Given cadata, cafile and capath load X509 certificates and sort
+    them into three distinct list:
         - Trust anchors (ca self-signed)
         - Intermediates (ca signed by other ca)
         - Others (not suitable for our purposes)
@@ -354,11 +355,7 @@ def load_store_and_sort(
         default_ctx.load_default_certs()
 
         for ca in default_ctx.get_ca_certs(binary_form=True):
-            _sort_cert_in_appropriate_list(
-                X509Certificate(
-                    ca
-                )
-            )
+            _sort_cert_in_appropriate_list(X509Certificate(ca))
 
     return trust_anchors, intermediaries, others
 
