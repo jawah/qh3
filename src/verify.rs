@@ -126,6 +126,10 @@ pub fn context_for_verify(
             } else if curve_oid == CURVE_P384 {
                 if signature_oid == &ECDSA_SHA384 {
                     PublicKeyAlgorithm::EcdsaP384WithSha384
+                } else if signature_oid == &ECDSA_SHA512 {
+                    PublicKeyAlgorithm::EcdsaP384WithSha512
+                } else if signature_oid == &ECDSA_SHA256 {
+                    PublicKeyAlgorithm::EcdsaP384WithSha256
                 } else {
                     return None;
                 }
