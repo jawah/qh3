@@ -1,4 +1,4 @@
-1.5.3 (2025-06-15)
+1.5.3 (2025-06-16)
 ====================
 
 **Removed**
@@ -16,6 +16,7 @@
 
 **Misc**
 - Changed CRL helpers and add the validation layer (signature).
+- Added the validation layer to OCSP response (signature).
 
 1.5.2 (2025-06-01)
 ====================
