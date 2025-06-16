@@ -328,10 +328,14 @@ def load_store_and_sort(
     def _sort_cert_in_appropriate_list(c) -> None:
         nonlocal trust_anchors, intermediaries, others
 
-        if c.usage != TlsCertUsage.Other:
-            others.append(c)
-        elif c.self_signed:
-            trust_anchors.append(c)
+        if c.self_signed:
+            # root CA must be tagged OTHER
+            # EKU must not have client auth
+            # or server auth. it's a red flag! period.
+            if c.usage != TlsCertUsage.Other:
+                others.append(c)
+            else:
+                trust_anchors.append(c)
         else:
             intermediaries.append(c)
 
