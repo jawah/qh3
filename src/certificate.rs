@@ -15,6 +15,7 @@ use x509_parser::public_key::PublicKey;
 
 use std::sync::Arc;
 
+use crate::verify::{context_for_verify, verify_signature};
 use crate::CryptoError;
 use bincode::{deserialize, serialize};
 use pyo3::exceptions::PyException;
@@ -24,6 +25,30 @@ pyo3::create_exception!(_hazmat, SelfSignedCertificateError, PyException);
 pyo3::create_exception!(_hazmat, InvalidNameCertificateError, PyException);
 pyo3::create_exception!(_hazmat, ExpiredCertificateError, PyException);
 pyo3::create_exception!(_hazmat, UnacceptableCertificateError, PyException);
+
+/// Enum for identifying certificate usage in TLS context.
+#[pyclass(name = "TlsCertUsage", module = "qh3._hazmat", eq, eq_int)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub enum TlsCertUsage {
+    ServerAuth = 0,
+    ClientAuth = 1,
+    Both = 2,
+    Other = 3,
+}
+
+/// Identify the certificate usage for TLS (server, client, both, or other)
+fn identify_tls_usage(cert: &X509Certificate) -> TlsCertUsage {
+    if let Ok(Some(eku)) = cert.extended_key_usage() {
+        match (eku.value.server_auth, eku.value.client_auth) {
+            (true, true) => TlsCertUsage::Both,
+            (true, false) => TlsCertUsage::ServerAuth,
+            (false, true) => TlsCertUsage::ClientAuth,
+            (false, false) => TlsCertUsage::Other,
+        }
+    } else {
+        TlsCertUsage::Other
+    }
+}
 
 #[pyclass(name = "Extension", module = "qh3._hazmat")]
 #[derive(Clone, Serialize, Deserialize)]
@@ -52,6 +77,9 @@ pub struct Certificate {
     issuer: Vec<Subject>,
     public_bytes: Vec<u8>,
     public_key: Vec<u8>,
+    self_signed: bool,
+    is_ca: bool,
+    usage: TlsCertUsage,
 }
 
 #[pymethods]
@@ -108,6 +136,26 @@ impl Certificate {
                     }
                 }
 
+                let cert_pubkey_info = context_for_verify(&cert.signature, &cert);
+
+                // consider any certificate to not be self-signed
+                // unless proven otherwise.
+                let mut is_selfsigned = false;
+
+                if cert_pubkey_info.is_some() {
+                    let tbs_bytes = cert.tbs_certificate.as_ref();
+                    let sig_bytes = cert.signature_value.data.as_ref();
+                    let spki_der = cert.tbs_certificate.subject_pki.raw;
+
+                    is_selfsigned = verify_signature(
+                        spki_der,
+                        cert_pubkey_info.unwrap().0,
+                        tbs_bytes,
+                        sig_bytes,
+                    )
+                    .is_ok();
+                }
+
                 Ok(Certificate {
                     version: match cert.version() {
                         X509Version::V1 => 0,
@@ -128,6 +176,9 @@ impl Certificate {
                         Ok(PublicKey::DSA(cert_decoded)) => cert_decoded.to_vec(),
                         _ => cert.public_key().raw.to_vec(),
                     },
+                    self_signed: is_selfsigned,
+                    is_ca: cert.is_ca(),
+                    usage: identify_tls_usage(&cert),
                 })
             }
             _ => Err(CryptoError::new_err("x509 parsing failed")),
@@ -274,6 +325,21 @@ impl Certificate {
 
     pub fn public_key<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
         PyBytes::new(py, &self.public_key)
+    }
+
+    #[getter]
+    pub fn self_signed(&self) -> bool {
+        self.self_signed
+    }
+
+    #[getter]
+    pub fn is_ca(&self) -> bool {
+        self.is_ca
+    }
+
+    #[getter]
+    pub fn usage(&self) -> TlsCertUsage {
+        self.usage.clone()
     }
 
     fn __eq__(&self, other: &Self) -> bool {

@@ -20,6 +20,13 @@ use bincode::{deserialize, serialize};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 
+use x509_parser::certificate::X509Certificate;
+use x509_parser::nom::AsBytes;
+use x509_parser::prelude::AlgorithmIdentifier;
+use x509_parser::prelude::FromDer;
+
+use crate::verify::{context_for_verify, verify_signature};
+
 #[pyclass(module = "qh3._hazmat", eq, eq_int)]
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug)]
 #[allow(non_camel_case_types)]
@@ -65,6 +72,7 @@ pub struct OCSPResponse {
     response_status: OCSPResponseStatus,
     certificate_status: OCSPCertStatus,
     revocation_reason: Option<ReasonFlags>,
+    raw: Vec<u8>,
 }
 
 #[pymethods]
@@ -131,6 +139,7 @@ impl OCSPResponse {
                 },
                 InternalCertStatus::Good(_) | InternalCertStatus::Unknown(_) => None,
             },
+            raw: raw_response.as_bytes().to_vec(),
         })
     }
 
@@ -152,6 +161,54 @@ impl OCSPResponse {
     #[getter]
     pub fn revocation_reason(&self) -> Option<ReasonFlags> {
         self.revocation_reason
+    }
+
+    pub fn authenticate_for(&self, issuer_der: Bound<'_, PyBytes>) -> PyResult<bool> {
+        let issuer = X509Certificate::from_der(issuer_der.as_bytes()).unwrap().1;
+
+        let ocsp_res: OcspResponse = match OcspResponse::from_der(self.raw.as_ref()) {
+            Ok(ocsp_res) => ocsp_res,
+            Err(_) => return Err(PyValueError::new_err("OCSP DER given is invalid")),
+        };
+
+        if ocsp_res.response_bytes.is_none() {
+            return Err(PyValueError::new_err("OCSP Server did not provide answers"));
+        }
+
+        let raw_ocsp_response = ocsp_res.response_bytes.unwrap();
+
+        let inner_resp: BasicOcspResponse =
+            BasicOcspResponse::from_der(raw_ocsp_response.response.as_bytes()).unwrap();
+
+        if inner_resp.tbs_response_data.responses.is_empty() {
+            return Err(PyValueError::new_err("OCSP Server did not provide answers"));
+        }
+
+        // applying some trick to get that signature algorithm matching
+        // the x509_parser inner struct.
+        let der_bytes = inner_resp.signature_algorithm.to_der().unwrap();
+
+        // Convert to AlgorithmIdentifier
+        let res = AlgorithmIdentifier::from_der(der_bytes.as_slice());
+
+        let algorithm = res.unwrap().1;
+
+        let ctx_verify = match context_for_verify(&algorithm, &issuer) {
+            Some(ctx) => ctx,
+            None => {
+                return Err(PyValueError::new_err(
+                    "Unable to verify ocsp response signature (algorithm unsupported)",
+                ))
+            }
+        };
+
+        Ok(verify_signature(
+            ctx_verify.1.as_bytes(),
+            ctx_verify.0,
+            inner_resp.tbs_response_data.to_der().unwrap().as_bytes(),
+            inner_resp.signature.as_bytes().unwrap(),
+        )
+        .is_ok())
     }
 
     pub fn serialize<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {

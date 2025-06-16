@@ -12,7 +12,7 @@ from binascii import unhexlify
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import IntEnum
-from functools import partial
+from functools import lru_cache, partial
 from hmac import HMAC
 from typing import Any, Callable, Generator, Optional, Sequence, Tuple, TypeVar
 
@@ -34,6 +34,7 @@ from ._hazmat import (
     SelfSignedCertificateError,
     ServerVerifier,
     SignatureError,
+    TlsCertUsage,
     UnacceptableCertificateError,
     X25519KeyExchange,
     X25519ML768KeyExchange,
@@ -305,13 +306,70 @@ def _capath_contains_certs(capath: str) -> bool:
     return False
 
 
+@lru_cache(maxsize=64)
+def load_store_and_sort(
+    cadata: bytes | None = None,
+    cafile: str | None = None,
+    capath: str | None = None,
+) -> tuple[list[X509Certificate], list[X509Certificate], list[X509Certificate]]:
+    """
+    Given cadata, cafile and capath load X509 certificates and sort
+    them into three distinct list:
+        - Trust anchors (ca self-signed)
+        - Intermediates (ca signed by other ca)
+        - Others (not suitable for our purposes)
+
+    This function consumes a lot of CPU times, so we want to cache it.
+    """
+    trust_anchors = []
+    intermediaries = []
+    others = []
+
+    def _sort_cert_in_appropriate_list(c) -> None:
+        nonlocal trust_anchors, intermediaries, others
+
+        if c.self_signed:
+            # root CA must be tagged OTHER
+            # EKU must not have client auth
+            # or server auth. it's a red flag! period.
+            if c.usage != TlsCertUsage.Other:
+                others.append(c)
+            else:
+                trust_anchors.append(c)
+        else:
+            intermediaries.append(c)
+
+    if cadata is not None:
+        for cert in load_pem_x509_certificates(cadata):
+            _sort_cert_in_appropriate_list(cert)
+
+    if cafile is not None or capath is not None:
+        if cafile:
+            with open(cafile, "rb") as fp:
+                for cert in load_pem_x509_certificates(fp.read()):
+                    _sort_cert_in_appropriate_list(cert)
+        if capath and _capath_contains_certs(capath):
+            for path in glob.glob(f"{capath}/*"):
+                with open(path, "rb") as fp:
+                    for cert in load_pem_x509_certificates(fp.read()):
+                        _sort_cert_in_appropriate_list(cert)
+
+    if cadata is None and cafile is None and capath is None:
+        default_ctx = ssl.create_default_context()
+        default_ctx.load_default_certs()
+
+        for ca in default_ctx.get_ca_certs(binary_form=True):
+            _sort_cert_in_appropriate_list(X509Certificate(ca))
+
+    return trust_anchors, intermediaries, others
+
+
 def verify_certificate(
     certificate: X509Certificate,
     chain: list[X509Certificate] = None,
     cadata: bytes | None = None,
     cafile: str | None = None,
     capath: str | None = None,
-    caextra: bytes | None = None,
     server_name: str | None = None,
     assert_server_name: bool = True,
     ocsp_response: bytes | None = None,
@@ -319,31 +377,11 @@ def verify_certificate(
     if chain is None:
         chain = []
 
-    authorities: list[bytes] = []
-
-    if cadata is not None:
-        for cert in load_pem_x509_certificates(cadata):
-            authorities.append(cert.public_bytes())
-
-    if cafile is not None or capath is not None:
-        if cafile:
-            with open(cafile, "rb") as fp:
-                for cert in load_pem_x509_certificates(fp.read()):
-                    authorities.append(cert.public_bytes())
-        if capath and _capath_contains_certs(capath):
-            for path in glob.glob(f"{capath}/*"):
-                with open(path, "rb") as fp:
-                    for cert in load_pem_x509_certificates(fp.read()):
-                        authorities.append(cert.public_bytes())
-
-    # when nothing is given to us, try to load defaults.
-    # try to mimic ssl.load_default_locations(...) linux and windows supported.
-    if cadata is None and cafile is None and capath is None:
-        default_ctx = ssl.create_default_context()
-        default_ctx.load_default_certs()
-
-        for ca in default_ctx.get_ca_certs(binary_form=True):
-            authorities.append(ca)
+    trust_anchors, intermediaries, _ = load_store_and_sort(
+        cadata=cadata,
+        cafile=cafile,
+        capath=capath,
+    )
 
     if server_name is None or assert_server_name is False:
         # get_subject_alt_names()... caution for :
@@ -373,7 +411,7 @@ def verify_certificate(
     if server_name is None:
         raise AlertBadCertificate("unable to determine server name target")
 
-    if not authorities:
+    if not trust_anchors:
         raise AlertBadCertificate(
             "unable to get local issuer certificate (empty CA store)"
         )
@@ -381,10 +419,10 @@ def verify_certificate(
     # rebuild the intermediate chain locally
     # in case the server did not pass them along
     # and the configuration does hold a list of intermediates.
-    if not chain and caextra:
+    if not chain and intermediaries:
         raw_chain = rebuild_chain(
             certificate.public_bytes(),
-            [i.public_bytes() for i in load_pem_x509_certificates(caextra)],
+            [c.public_bytes() for c in intermediaries],
         )
 
         if len(raw_chain) >= 2:
@@ -395,7 +433,7 @@ def verify_certificate(
 
     # load CAs
     try:
-        store = ServerVerifier(authorities)
+        store = ServerVerifier([c.public_bytes() for c in trust_anchors])
     except CryptoError as e:
         raise AlertBadCertificate("unable to create the verifier x509 store") from e
 
@@ -1277,7 +1315,6 @@ class Context:
         is_client: bool,
         alpn_protocols: list[str] | None = None,
         cadata: bytes | None = None,
-        caextra: bytes | None = None,
         cafile: str | None = None,
         capath: str | None = None,
         cipher_suites: list[CipherSuite] | None = None,
@@ -1292,7 +1329,6 @@ class Context:
         # configuration
         self._alpn_protocols = alpn_protocols
         self._cadata = cadata
-        self._caextra = caextra
         self._cafile = cafile
         self._capath = capath
         self._hostname_checks_common_name = hostname_checks_common_name
@@ -1786,7 +1822,6 @@ class Context:
                 cadata=self._cadata,
                 cafile=self._cafile,
                 capath=self._capath,
-                caextra=self._caextra,
                 certificate=self._peer_certificate,
                 chain=self._peer_certificate_chain,
                 server_name=self._server_name,

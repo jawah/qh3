@@ -1,3 +1,23 @@
+1.5.3 (2025-06-16)
+====================
+
+**Removed**
+- The ``caextra`` recently added in the Configuration is reverted. After much consideration this was a mistake.
+  End-users are already pushing either willingly or by accident intermediate CA or even non TLS client auth or server
+  auth certificate in the regular CA bundle. We had to find another way.
+
+**Changed**
+- Caching the trust store loading in-memory to avoid unnecessary overhead on each TLS handshake.
+- Upgraded pyo3 to 0.25.1
+
+**Fixed**
+- Aligned our TLS certificate chain validation with CPython+OpenSSL default behaviors. Pushing intermediates CA
+  in the main CA bundle will still require that the trust anchors (root ca) is present.
+
+**Misc**
+- Changed CRL helpers and add the validation layer (signature).
+- Added the validation layer to OCSP response (signature).
+
 1.5.2 (2025-06-01)
 ====================
 
