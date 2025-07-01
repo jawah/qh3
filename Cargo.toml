@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.25.0", features = ["extension-module", "abi3-py37", "generate-import-lib"] }
 ls-qpack-rs = "0.2.0"
-rustls = "0.23.25"
+rustls = "0.23.28"
 x509-parser = "0.17.0"
 rsa = { version = "0.9.8", features = ["sha2", "pem", "getrandom"] }
 dsa = "0.6.3"
