@@ -20,12 +20,12 @@ use bincode::{deserialize, serialize};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 
+use crate::chain::is_parent;
+use crate::verify::{context_for_verify, verify_signature};
 use x509_parser::certificate::X509Certificate;
 use x509_parser::nom::AsBytes;
 use x509_parser::prelude::AlgorithmIdentifier;
 use x509_parser::prelude::FromDer;
-
-use crate::verify::{context_for_verify, verify_signature};
 
 #[pyclass(module = "qh3._hazmat", eq, eq_int)]
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug)]
@@ -191,24 +191,80 @@ impl OCSPResponse {
         // Convert to AlgorithmIdentifier
         let res = AlgorithmIdentifier::from_der(der_bytes.as_slice());
 
+        if res.is_err() {
+            return Err(PyValueError::new_err(
+                "Unable to extract ocsp response signature algorithm identifier",
+            ));
+        }
+
         let algorithm = res.unwrap().1;
 
-        let ctx_verify = match context_for_verify(&algorithm, &issuer) {
-            Some(ctx) => ctx,
-            None => {
-                return Err(PyValueError::new_err(
-                    "Unable to verify ocsp response signature (algorithm unsupported)",
-                ))
-            }
-        };
+        // this branch handle the case where the issuer CA
+        // does not have EKU OCSP signing, they probably issued
+        // one or many intermediate to be capable of signing OCSP
+        // responses.
+        if inner_resp.certs.is_some() {
+            let der_blobs: Vec<Vec<u8>> = inner_resp
+                .certs
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|crt| crt.to_der().expect("DER encoding failed"))
+                .collect();
 
-        Ok(verify_signature(
-            ctx_verify.1.as_bytes(),
-            ctx_verify.0,
-            inner_resp.tbs_response_data.to_der().unwrap().as_bytes(),
-            inner_resp.signature.as_bytes().unwrap(),
-        )
-        .is_ok())
+            let mut extra_chain: Vec<X509Certificate<'_>> = der_blobs
+                .iter()
+                .map(|der| {
+                    let (_, cert) = X509Certificate::from_der(der).expect("parse failed");
+                    cert
+                })
+                .collect();
+
+            extra_chain.push(issuer);
+
+            for child_parent in extra_chain.windows(2) {
+                if is_parent(&child_parent[0], &child_parent[1]).is_err() {
+                    return Ok(false);
+                }
+            }
+
+            let immediate_issuer = &extra_chain[0];
+
+            let ctx_verify = match context_for_verify(&algorithm, immediate_issuer) {
+                Some(ctx) => ctx,
+                None => {
+                    return Err(PyValueError::new_err(
+                        "Unable to verify ocsp response signature (algorithm unsupported)",
+                    ))
+                }
+            };
+
+            Ok(verify_signature(
+                ctx_verify.1.as_bytes(),
+                ctx_verify.0,
+                inner_resp.tbs_response_data.to_der().unwrap().as_bytes(),
+                inner_resp.signature.as_bytes().unwrap(),
+            )
+            .is_ok())
+        } else {
+            // simplest case, the issuer can directly sign those! (most common)
+            let ctx_verify = match context_for_verify(&algorithm, &issuer) {
+                Some(ctx) => ctx,
+                None => {
+                    return Err(PyValueError::new_err(
+                        "Unable to verify ocsp response signature (algorithm unsupported)",
+                    ))
+                }
+            };
+
+            Ok(verify_signature(
+                ctx_verify.1.as_bytes(),
+                ctx_verify.0,
+                inner_resp.tbs_response_data.to_der().unwrap().as_bytes(),
+                inner_resp.signature.as_bytes().unwrap(),
+            )
+            .is_ok())
+        }
     }
 
     pub fn serialize<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
