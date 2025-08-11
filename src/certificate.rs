@@ -123,7 +123,12 @@ impl Certificate {
                                             if let GeneralName::URI(uri) = gn {
                                                 extensions.push(Extension {
                                                     oid: "2.5.29.31".to_string(),
-                                                    value: uri.as_bytes().to_vec(),
+                                                    value: format!(
+                                                        "crlDistributionEndpoint({})",
+                                                        uri
+                                                    )
+                                                    .as_bytes()
+                                                    .to_vec(),
                                                 })
                                             }
                                         }
