@@ -11,7 +11,7 @@ use x509_parser::prelude::*;
 /// `parent`'s public key actually signed `child`'s TBS bytes under the declared
 /// signature algorithm. Supports the most common OIDs.
 /// Returns `Ok(())` if the signature is valid, or an Err(CryptoError) otherwise.
-fn is_parent(child: &X509Certificate<'_>, parent: &X509Certificate<'_>) -> Result<(), PyErr> {
+pub fn is_parent(child: &X509Certificate<'_>, parent: &X509Certificate<'_>) -> Result<(), PyErr> {
     let tbs = child.tbs_certificate.as_ref(); // the “to be signed” bytes
     let sig = child.signature_value.data.as_bytes(); // signature BIT STRING
 

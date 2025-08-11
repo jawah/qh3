@@ -114,6 +114,28 @@ impl Certificate {
                                 })
                             }
                         }
+                        ParsedExtension::CRLDistributionPoints(cdp) => {
+                            for ext_endpoint in &cdp.points {
+                                #[allow(clippy::collapsible_match)]
+                                if let Some(names) = &ext_endpoint.distribution_point {
+                                    if let DistributionPointName::FullName(general_names) = names {
+                                        for gn in general_names.iter() {
+                                            if let GeneralName::URI(uri) = gn {
+                                                extensions.push(Extension {
+                                                    oid: "2.5.29.31".to_string(),
+                                                    value: format!(
+                                                        "crlDistributionEndpoint({})",
+                                                        uri
+                                                    )
+                                                    .as_bytes()
+                                                    .to_vec(),
+                                                })
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         _ => (),
                     }
                 }
@@ -142,18 +164,13 @@ impl Certificate {
                 // unless proven otherwise.
                 let mut is_selfsigned = false;
 
-                if cert_pubkey_info.is_some() {
+                if let Some(ctx_verify) = cert_pubkey_info {
                     let tbs_bytes = cert.tbs_certificate.as_ref();
                     let sig_bytes = cert.signature_value.data.as_ref();
                     let spki_der = cert.tbs_certificate.subject_pki.raw;
 
-                    is_selfsigned = verify_signature(
-                        spki_der,
-                        cert_pubkey_info.unwrap().0,
-                        tbs_bytes,
-                        sig_bytes,
-                    )
-                    .is_ok();
+                    is_selfsigned =
+                        verify_signature(spki_der, ctx_verify.0, tbs_bytes, sig_bytes).is_ok();
                 }
 
                 Ok(Certificate {
@@ -300,6 +317,18 @@ impl Certificate {
 
         for item in &self.extensions {
             if item.oid == "1.3.6.1.5.5.7.48.1" {
+                let _ = values.append(PyBytes::new(py, &item.value));
+            }
+        }
+
+        values
+    }
+
+    pub fn get_crl_endpoints<'a>(&self, py: Python<'a>) -> Bound<'a, PyList> {
+        let values = PyList::empty(py);
+
+        for item in &self.extensions {
+            if item.oid == "2.5.29.31" {
                 let _ = values.append(PyBytes::new(py, &item.value));
             }
         }

@@ -1,6 +1,6 @@
 [package]
 name = "qh3"
-version = "1.5.3"
+version = "1.5.4"
 edition = "2021"
 rust-version = "1.75"
 license = "BSD-3"
@@ -41,3 +41,7 @@ opt-level = 3
 debug = false
 lto = true
 codegen-units = 1
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+uninlined_format_args = "allow"

@@ -19,8 +19,7 @@ impl Buffer {
     #[new]
     #[pyo3(signature = (capacity=None, data=None))]
     pub fn py_new(capacity: Option<usize>, data: Option<Bound<'_, PyBytes>>) -> PyResult<Self> {
-        if data.is_some() {
-            let payload = data.unwrap();
+        if let Some(payload) = data {
             let initial_content = payload.as_bytes().to_vec();
             let length = initial_content.len();
 

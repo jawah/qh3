@@ -1,3 +1,13 @@
+1.5.4 (2025-08-11)
+====================
+
+**Changed**
+- Upgraded aws-lc-rs to v1.13.3
+- Upgraded rustls to v0.23.31
+
+**Misc**
+- OCSP and CRL related helpers improved. This is not useful for end users of qh3.
+
 1.5.3 (2025-06-16)
 ====================
 
