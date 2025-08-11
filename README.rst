@@ -7,8 +7,8 @@ qh3
     :target: https://pypi.python.org/pypi/qh3
     :alt: Supported Interpreters
 
-.. |pypi-stats| image:: https://img.shields.io/pypi/dm/qh3
-   :target: https://pypistats.org/packages/qh3
+.. |pypi-stats| image:: https://static.pepy.tech/badge/qh3/month
+   :target: https://pepy.tech/projects/qh3?timeRange=threeMonths&category=version&includeCIDownloads=true&granularity=daily&viewType=line&versions=1.*
    :alt: PyPI - Downloads
 
 What is ``qh3``?
