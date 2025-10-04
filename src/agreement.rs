@@ -160,7 +160,7 @@ impl X25519ML768KeyExchange {
 
             let x25519_secret = match agreement::agree(
                 &self.x25519_private,
-                &x25519_peer_public_key,
+                x25519_peer_public_key,
                 error::Unspecified,
                 |_key_material| Ok(_key_material.to_vec()),
             ) {
@@ -198,7 +198,7 @@ impl X25519ML768KeyExchange {
 
             let x25519_secret = match agreement::agree(
                 &self.x25519_private,
-                &x25519_peer_public_key,
+                x25519_peer_public_key,
                 error::Unspecified,
                 |_key_material| Ok(_key_material.to_vec()),
             ) {
@@ -266,7 +266,7 @@ impl X25519KeyExchange {
 
         let key_material = match agreement::agree(
             &self.private,
-            &peer_public_key,
+            peer_public_key,
             error::Unspecified,
             |_key_material| Ok(_key_material.to_vec()),
         ) {
@@ -313,7 +313,7 @@ impl ECDHP256KeyExchange {
 
         let key_material = match agreement::agree(
             &self.private,
-            &peer_public_key,
+            peer_public_key,
             error::Unspecified,
             |_key_material| Ok(_key_material.to_vec()),
         ) {
@@ -360,7 +360,7 @@ impl ECDHP384KeyExchange {
 
         let key_material = match agreement::agree(
             &self.private,
-            &peer_public_key,
+            peer_public_key,
             error::Unspecified,
             |_key_material| Ok(_key_material.to_vec()),
         ) {
@@ -407,7 +407,7 @@ impl ECDHP521KeyExchange {
 
         let key_material = match agreement::agree(
             &self.private,
-            &peer_public_key,
+            peer_public_key,
             error::Unspecified,
             |_key_material| Ok(_key_material.to_vec()),
         ) {
