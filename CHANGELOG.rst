@@ -1,10 +1,6 @@
 1.5.5 (2025-10-04)
 ====================
 
-**Changed**
-- Upgraded aws-lc-rs to v1.14.1
-- Upgraded rustls to v0.23.32
-
 **Added**
 - Explicit support for Python 3.14
 
