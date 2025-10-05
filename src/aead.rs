@@ -87,7 +87,7 @@ impl AeadAes256Gcm {
 
         let aad = Aad::from(associated_data.as_bytes());
 
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.key.open_in_place(
                 Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
                 aad,
@@ -112,7 +112,7 @@ impl AeadAes256Gcm {
 
         let aad = Aad::from(associated_data.as_bytes());
 
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.key.seal_in_place_append_tag(
                 Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
                 aad,
@@ -160,7 +160,7 @@ impl AeadAes128Gcm {
 
         let aad = Aad::from(associated_data.as_bytes());
 
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.key.open_in_place(
                 Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
                 aad,
@@ -185,7 +185,7 @@ impl AeadAes128Gcm {
 
         let aad = Aad::from(associated_data.as_bytes());
 
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.key.seal_in_place_append_tag(
                 Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
                 aad,
@@ -211,7 +211,7 @@ impl AeadAes128Gcm {
         let aad = Aad::from(associated_data.as_bytes());
         let nonce_as_ref = nonce.as_bytes();
 
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.key.seal_in_place_append_tag(
                 Nonce::try_assume_unique_for_key(nonce_as_ref).unwrap(),
                 aad,
@@ -254,7 +254,7 @@ impl AeadChaCha20Poly1305 {
 
         let aad = Aad::from(associated_data.as_bytes());
 
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.key.open_in_place(
                 Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
                 aad,
@@ -279,7 +279,7 @@ impl AeadChaCha20Poly1305 {
 
         let aad = Aad::from(associated_data.as_bytes());
 
-        let res = py.allow_threads(|| {
+        let res = py.detach(|| {
             self.key.seal_in_place_append_tag(
                 Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
                 aad,

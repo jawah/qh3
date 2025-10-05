@@ -36,7 +36,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, macos-13, windows-latest]
-        python_version: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11']
+        python_version: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11']
         exclude:
           # circumvent wierd issue with qh3.asyncio+windows+proactor loop...
           - python_version: pypy-3.9
@@ -147,7 +147,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [ x86_64, s390x, aarch64, armv7l, ppc64le, ppc64, i686 ]
-        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t' ]
+        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t', '3.14t' ]
         manylinux: [ 'manylinux2014', 'musllinux_1_1' ]
         exclude:
           - manylinux: musllinux_1_1
@@ -156,12 +156,23 @@ jobs:
             target: ppc64
           - manylinux: musllinux_1_1
             target: ppc64le
+        include:
+          - manylinux: manylinux_2_39
+            target: riscv64gc-unknown-linux-gnu
+            python_version: '3.10'
+          - manylinux: manylinux_2_39
+            target: riscv64gc-unknown-linux-gnu
+            python_version: '3.13t'
+          - manylinux: manylinux_2_39
+            target: riscv64gc-unknown-linux-gnu
+            python_version: '3.14t'
 
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python_version }}
+          allow-prereleases: true
       - name: Build wheels (no workarounds)
         if: matrix.target == 'x86_64'
         uses: PyO3/maturin-action@v1
@@ -323,6 +334,29 @@ jobs:
             sudo apt-get install -y gcc-multilib || echo "no apt support"
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/powerpc64-unknown-linux-gnu/powerpc64-unknown-linux-gnu/sysroot"
 
+      - name: Build wheels (riscv+manylinux_2_39 workaround)
+        if: matrix.target == 'riscv64gc-unknown-linux-gnu' && matrix.manylinux == 'manylinux_2_39'
+        uses: PyO3/maturin-action@v1
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter ${{ matrix.python_version }}
+          sccache: 'true'
+          manylinux: ${{ matrix.manylinux }}
+          docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
+          container: ghcr.io/rust-cross/manylinux_2_39-cross:riscv64
+          before-script-linux: |
+            sudo apt-get update || echo "no apt support"
+            sudo apt-get install -y libclang || echo "no apt support"
+            sudo apt-get install -y libc6 || echo "no apt support"
+            sudo apt-get install -y libc6-dev || echo "no apt support"
+            sudo apt-get install -y libclang-dev || echo "no apt support"
+            sudo apt-get install -y clang || echo "no apt support"
+            sudo apt-get install -y linux-headers-generic || echo "no apt support"
+            sudo apt-get install -y gcc-multilib || echo "no apt support"
+            export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/riscv64-unknown-linux-gnu/riscv64-unknown-linux-gnu/sysroot"
+
       - name: Build wheels (armv7l+manylinux workaround)
         if: matrix.target == 'armv7l' && matrix.manylinux == 'manylinux2014'
         uses: PyO3/maturin-action@v1
@@ -407,7 +441,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [ x64, aarch64, x86 ]
-        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t' ]
+        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t', '3.14t' ]
         exclude:
           - target: aarch64
             python_version: pypy-3.7
@@ -436,6 +470,7 @@ jobs:
         with:
           python-version: ${{ matrix.python_version }}
           architecture: ${{ matrix.target == 'x86' && 'x86' || 'x64' }}
+          allow-prereleases: true
       - uses: ilammy/setup-nasm@v1
       - name: Set up Clang (Cygwin)
         run: choco install llvm -y
@@ -478,12 +513,13 @@ jobs:
       fail-fast: false
       matrix:
         target: [ universal2 ]
-        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t' ]
+        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t', '3.14t' ]
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python_version }}
+          allow-prereleases: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         env:
