@@ -1,5 +1,10 @@
-1.5.5 (2025-10-04)
+1.5.5 (2025-10-05)
 ====================
+
+**Changed**
+- Upgraded aws-lc-rs to v1.14.0
+- Upgraded rustls to v0.23.32
+- Upgraded pyo3 to v0.26.0
 
 **Added**
 - Explicit support for Python 3.14
