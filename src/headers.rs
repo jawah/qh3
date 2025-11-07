@@ -77,10 +77,12 @@ impl QpackEncoder {
         let mut decoded_vec: Vec<(&str, &str)> = Vec::new();
 
         for (header, value) in headers.iter() {
-            let header_str = std::str::from_utf8(header.as_bytes())
-                .map_err(|e| EncoderStreamError::new_err(format!("Invalid UTF-8 in header: {}", e)))?;
-            let value_str = std::str::from_utf8(value.as_bytes())
-                .map_err(|e| EncoderStreamError::new_err(format!("Invalid UTF-8 in value: {}", e)))?;
+            let header_str = std::str::from_utf8(header.as_bytes()).map_err(|e| {
+                EncoderStreamError::new_err(format!("Invalid UTF-8 in header: {}", e))
+            })?;
+            let value_str = std::str::from_utf8(value.as_bytes()).map_err(|e| {
+                EncoderStreamError::new_err(format!("Invalid UTF-8 in value: {}", e))
+            })?;
             decoded_vec.push((header_str, value_str));
         }
 
@@ -136,7 +138,11 @@ impl QpackDecoder {
 
         match output {
             Ok(DecoderOutput::Done(ref buffer)) => {
-                let decoded_headers = PyList::new(py, Vec::<(String, String)>::with_capacity(buffer.headers().len())).unwrap();
+                let decoded_headers = PyList::new(
+                    py,
+                    Vec::<(String, String)>::with_capacity(buffer.headers().len()),
+                )
+                .unwrap();
 
                 for header in buffer.headers() {
                     let _ = decoded_headers.append(
