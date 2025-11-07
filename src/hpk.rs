@@ -49,35 +49,28 @@ impl QUICHeaderProtection {
         let pn_offset = plain_header.len() - pn_length;
         let sample_offset = PACKET_NUMBER_LENGTH_MAX - pn_length;
 
-        let mask_res = self
+        let mask = self
             .hpk
-            .new_mask(&protected_payload[sample_offset..sample_offset + SAMPLE_LENGTH]);
+            .new_mask(&protected_payload[sample_offset..sample_offset + SAMPLE_LENGTH])
+            .map_err(|_| CryptoError::new_err("unable to issue mask protection header"))?;
 
-        let mask = match mask_res {
-            Err(_) => {
-                return Err(CryptoError::new_err(
-                    "unable to issue mask protection header",
-                ))
+        // Use PyBytes::new_with to avoid intermediate allocation
+        PyBytes::new_with(py, plain_header.len() + protected_payload.len(), |buffer| {
+            buffer[..plain_header.len()].copy_from_slice(plain_header);
+            buffer[plain_header.len()..].copy_from_slice(protected_payload);
+
+            if buffer[0] & 0x80 != 0 {
+                buffer[0] ^= mask[0] & 0x0F;
+            } else {
+                buffer[0] ^= mask[0] & 0x1F;
             }
-            Ok(data) => data,
-        };
 
-        let mut buffer = Vec::with_capacity(plain_header.len() + protected_payload.len());
+            for i in 0..pn_length {
+                buffer[pn_offset + i] ^= mask[1 + i];
+            }
 
-        buffer.extend_from_slice(plain_header);
-        buffer.extend_from_slice(protected_payload);
-
-        if buffer[0] & 0x80 != 0 {
-            buffer[0] ^= mask[0] & 0x0F;
-        } else {
-            buffer[0] ^= mask[0] & 0x1F;
-        }
-
-        for i in 0..pn_length {
-            buffer[pn_offset + i] ^= mask[1 + i];
-        }
-
-        Ok(PyBytes::new(py, &buffer))
+            Ok(())
+        })
     }
 
     pub fn remove<'a>(
@@ -88,41 +81,35 @@ impl QUICHeaderProtection {
     ) -> PyResult<(Bound<'a, PyBytes>, u32)> {
         let sample_offset = pn_offset + PACKET_NUMBER_LENGTH_MAX;
 
-        let mask_res = self
+        let mask = self
             .hpk
-            .new_mask(&packet[sample_offset..sample_offset + SAMPLE_LENGTH]);
+            .new_mask(&packet[sample_offset..sample_offset + SAMPLE_LENGTH])
+            .map_err(|_| CryptoError::new_err("unable to issue mask protection header"))?;
 
-        let mask = match mask_res {
-            Err(_) => {
-                return Err(CryptoError::new_err(
-                    "unable to issue mask protection header",
-                ))
-            }
-            Ok(data) => data,
-        };
-
-        let mut buffer = packet.to_vec();
-        let first_byte = buffer[0];
-
-        buffer[0] ^= if first_byte & 0x80 != 0 {
+        let first_byte = packet[0];
+        let first_byte_mask = if first_byte & 0x80 != 0 {
             mask[0] & 0x0F
         } else {
             mask[0] & 0x1F
         };
 
-        let pn_length = (buffer[0] & 0x03) as usize + 1;
-
+        let pn_length = ((first_byte ^ first_byte_mask) & 0x03) as usize + 1;
         let mut pn_truncated: u32 = 0;
 
-        for i in 0..pn_length {
-            let b = buffer[pn_offset + i] ^ mask[1 + i];
-            buffer[pn_offset + i] = b;
-            pn_truncated = (pn_truncated << 8) | (b as u32);
-        }
+        let result = PyBytes::new_with(py, pn_offset + pn_length, |buffer| {
+            buffer[..pn_offset].copy_from_slice(&packet[..pn_offset]);
+            buffer[0] ^= first_byte_mask;
 
-        let sliced = &buffer[..pn_offset + pn_length];
+            for i in 0..pn_length {
+                let b = packet[pn_offset + i] ^ mask[1 + i];
+                buffer[pn_offset + i] = b;
+                pn_truncated = (pn_truncated << 8) | (b as u32);
+            }
 
-        Ok((PyBytes::new(py, sliced), pn_truncated))
+            Ok(())
+        })?;
+
+        Ok((result, pn_truncated))
     }
 
     pub fn mask<'a>(
