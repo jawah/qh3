@@ -1161,6 +1161,9 @@ class QuicConnection:
         """
         Abruptly terminate the sending part of a stream.
 
+        This method has no effect if a reset has already been triggered either by a
+        call to :meth:`reset_stream` or by the reception of a STOP_SENDING frame.
+
         :param stream_id: The stream's ID.
         :param error_code: An error code indicating why the stream is being reset.
         """

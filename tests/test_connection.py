@@ -2125,6 +2125,19 @@ class TestQuicConnection:
 
             assert client.next_event() is None
 
+            # client receives another STOP_SENDING
+            client._handle_stop_sending_frame(
+                client_receive_context(client),
+                QuicFrameType.STOP_SENDING,
+                Buffer(data=b"\x00\x12"),
+            )
+
+            event = client.next_event()
+            assert type(event) == events.StopSendingReceived
+            assert event.stream_id == 0
+            assert event.error_code == 0x12
+            assert client.next_event() is None
+
     def test_handle_stop_sending_frame_receive_only(self):
         with client_and_server() as (client, server):
             # server creates unidirectional stream 3
