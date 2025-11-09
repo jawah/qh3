@@ -65,9 +65,13 @@ jobs:
       - name: Run test CPython
         if: startsWith(matrix.python_version, 'pypy') == false
         run: nox -s test-${{ matrix.python_version }}
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
       - name: Run test PyPy
         if: startsWith(matrix.python_version, 'pypy')
         run: nox -s test-pypy
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
       - name: "Upload artifact"
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
         with:
@@ -136,6 +140,8 @@ jobs:
         if: matrix.os == 'windows-latest'
       - name: Run test
         run: nox -s downstream_niquests
+        env:
+          UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
 
   linux:
     runs-on: ubuntu-22.04
