@@ -89,8 +89,11 @@ impl OCSPResponse {
         }
 
         let inner_resp: BasicOcspResponse =
-            BasicOcspResponse::from_der(ocsp_res.response_bytes.unwrap().response.as_bytes())
-                .unwrap();
+            match BasicOcspResponse::from_der(ocsp_res.response_bytes.unwrap().response.as_bytes())
+            {
+                Ok(resp) => resp,
+                Err(_) => return Err(PyValueError::new_err("Failed to parse basic OCSP response")),
+            };
 
         if inner_resp.tbs_response_data.responses.is_empty() {
             return Err(PyValueError::new_err("OCSP Server did not provide answers"));
