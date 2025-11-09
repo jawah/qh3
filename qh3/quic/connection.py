@@ -61,7 +61,7 @@ EPOCH_SHORTCUTS = {
     "1": tls.Epoch.ONE_RTT,
 }
 MAX_EARLY_DATA = 0xFFFFFFFF
-MAX_REMOTE_CHALLENGES = 5
+MAX_REMOTE_CHALLENGES = 32
 MAX_LOCAL_CHALLENGES = 5
 MAX_PENDING_RETIRES = 100
 SECRETS_LABELS = [
@@ -1161,6 +1161,9 @@ class QuicConnection:
         """
         Abruptly terminate the sending part of a stream.
 
+        This method has no effect if a reset has already been triggered either by a
+        call to :meth:`reset_stream` or by the reception of a STOP_SENDING frame.
+
         :param stream_id: The stream's ID.
         :param error_code: An error code indicating why the stream is being reset.
         """
@@ -2121,7 +2124,11 @@ class QuicConnection:
                 self._quic_logger.encode_path_challenge_frame(data=data)
             )
 
-        context.network_path.remote_challenges.append(data)
+        # Append the new path challenge unless our limit was reached.
+        # This is technically not compliant with RFC 9000 but it's needed
+        # to avoid resource exhaustion attacks.
+        if len(context.network_path.remote_challenges) < MAX_REMOTE_CHALLENGES:
+            context.network_path.remote_challenges.append(data)
 
     def _handle_path_response_frame(
         self, context: QuicReceiveContext, frame_type: int, buf: Buffer
@@ -3084,6 +3091,17 @@ class QuicConnection:
             builder.start_packet(packet_type, crypto)
 
             if self._handshake_complete:
+                # PATH CHALLENGE
+                if not (network_path.is_validated or network_path.local_challenge_sent):
+                    challenge = os.urandom(8)
+                    self._write_path_challenge_frame(
+                        builder=builder, challenge=challenge
+                    )
+                    self._add_local_challenge(
+                        challenge=challenge, network_path=network_path
+                    )
+                    network_path.local_challenge_sent = True
+
                 # ACK
                 if space.ack_at is not None and space.ack_at <= now:
                     self._write_ack_frame(builder=builder, space=space, now=now)
@@ -3093,23 +3111,12 @@ class QuicConnection:
                     self._write_handshake_done_frame(builder=builder)
                     self._handshake_done_pending = False
 
-                # PATH CHALLENGE
-                if not (network_path.is_validated or network_path.local_challenge_sent):
-                    challenge = os.urandom(8)
-                    self._add_local_challenge(
-                        challenge=challenge, network_path=network_path
-                    )
-                    self._write_path_challenge_frame(
-                        builder=builder, challenge=challenge
-                    )
-                    network_path.local_challenge_sent = True
-
                 # PATH RESPONSE
                 while network_path.remote_challenges:
-                    challenge = network_path.remote_challenges.popleft()
                     self._write_path_response_frame(
-                        builder=builder, challenge=challenge
+                        builder=builder, challenge=network_path.remote_challenges[0]
                     )
+                    network_path.remote_challenges.popleft()
 
                 # NEW_CONNECTION_ID
                 for connection_id in self._host_cids:

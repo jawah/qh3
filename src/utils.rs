@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 
 #[pyfunction]
+#[inline(always)]
 pub fn decode_packet_number(truncated: u64, num_bits: u8, expected: u64) -> u64 {
     let window = 1 << num_bits;
     let half_window = window / 2;

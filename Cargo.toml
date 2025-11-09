@@ -1,6 +1,6 @@
 [package]
 name = "qh3"
-version = "1.5.5"
+version = "1.5.6"
 edition = "2021"
 rust-version = "1.75"
 license = "BSD-3"
@@ -13,7 +13,7 @@ name = "qh3"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.26.0", features = ["extension-module", "abi3-py37", "generate-import-lib"] }
+pyo3 = { version = "0.27.0", features = ["extension-module", "abi3-py37", "generate-import-lib"] }
 ls-qpack-rs = "0.2.0"
 rustls = "0.23.25"
 x509-parser = "0.18.0"

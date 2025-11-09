@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 import binascii
 import contextlib
@@ -23,6 +25,7 @@ from qh3.quic.connection import (
     MAX_LOCAL_CHALLENGES,
     check_stream_id_for_receiving,
     check_stream_id_for_sending,
+    MAX_REMOTE_CHALLENGES,
 )
 from qh3.quic.crypto import CryptoPair
 from qh3.quic.logger import QuicLogger
@@ -1865,6 +1868,19 @@ class TestQuicConnection:
                 assert server._local_challenges[int.to_bytes(i, 8, "big")].addr == \
                     f"1.2.3.{i}"
 
+    def test_remote_path_challenges_are_bounded(self):
+        with client_and_server() as (client, server):
+            challenges = [os.urandom(8) for i in range(MAX_REMOTE_CHALLENGES + 2)]
+
+            for challenge in challenges:
+                client._handle_path_challenge_frame(
+                    client_receive_context(client),
+                    QuicFrameType.PATH_CHALLENGE,
+                    Buffer(data=challenge),
+                )
+
+            assert list(client._network_paths[0].remote_challenges) == challenges[0:MAX_REMOTE_CHALLENGES]
+
     def test_handle_path_response_frame_bad(self):
         with client_and_server() as (client, server):
             # server receives unsolicited PATH_RESPONSE
@@ -2123,6 +2139,19 @@ class TestQuicConnection:
             assert event.stream_id == 0
             assert event.error_code == 0x11
 
+            assert client.next_event() is None
+
+            # client receives another STOP_SENDING
+            client._handle_stop_sending_frame(
+                client_receive_context(client),
+                QuicFrameType.STOP_SENDING,
+                Buffer(data=b"\x00\x12"),
+            )
+
+            event = client.next_event()
+            assert type(event) == events.StopSendingReceived
+            assert event.stream_id == 0
+            assert event.error_code == 0x12
             assert client.next_event() is None
 
     def test_handle_stop_sending_frame_receive_only(self):

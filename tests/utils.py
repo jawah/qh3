@@ -93,6 +93,12 @@ SERVER_COMBINEDFILE = os.path.join(os.path.dirname(__file__), "ssl_combined.pem"
 
 CRL_DUMMY = os.path.join(os.path.dirname(__file__), "le.crl")
 
+OCSP_RESPONSE_WITH_CHAIN = os.path.join(os.path.dirname(__file__), "ocsp-with-chain.der")
+ISSUER_FOR_OCSP_RESPONSE_WITH_CHAIN = os.path.join(os.path.dirname(__file__), "issuer-for-ocsp-chain.der")
+
+OCSP_RESPONSE_WITHOUT_CHAIN = os.path.join(os.path.dirname(__file__), "ocsp-classic.der")
+ISSUER_FOR_OCSP_RESPONSE_WITHOUT_CHAIN = os.path.join(os.path.dirname(__file__), "issuer-for-ocsp-classic.der")
+
 SKIP_TESTS = frozenset(os.environ.get("AIOQUIC_SKIP_TESTS", "").split(","))
 
 if os.environ.get("AIOQUIC_DEBUG"):

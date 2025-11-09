@@ -75,7 +75,7 @@ impl Buffer {
         self.pos == self.capacity
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn seek(&mut self, pos: usize) -> PyResult<()> {
         if pos > self.capacity {
             return Err(BufferReadError::new_err("Read out of bounds"));
@@ -92,7 +92,6 @@ impl Buffer {
         self.pos
     }
 
-    #[inline(always)]
     #[pyo3(signature = (length))]
     pub fn pull_bytes<'a>(
         &mut self,
@@ -123,7 +122,7 @@ impl Buffer {
         Ok(extract)
     }
 
-    #[inline(always)]
+    #[inline]
     #[pyo3(signature = ())]
     pub fn pull_uint16(&mut self) -> PyResult<u16> {
         let end_offset = self.pos + 2;
@@ -138,7 +137,7 @@ impl Buffer {
         Ok(extract)
     }
 
-    #[inline(always)]
+    #[inline]
     #[pyo3(signature = ())]
     pub fn pull_uint24(&mut self) -> PyResult<u32> {
         let end_offset = self.pos + 3;
@@ -150,8 +149,8 @@ impl Buffer {
         let tmp = vec![
             0,
             self.data[self.pos],
-            self.data[self.pos] + 1,
-            self.data[self.pos] + 2,
+            self.data[self.pos + 1],
+            self.data[self.pos + 2],
         ];
 
         let extract = u32::from_be_bytes(tmp.try_into().unwrap());
@@ -160,7 +159,7 @@ impl Buffer {
         Ok(extract)
     }
 
-    #[inline(always)]
+    #[inline]
     #[pyo3(signature = ())]
     pub fn pull_uint32(&mut self) -> PyResult<u32> {
         let end_offset = self.pos + 4;
@@ -175,7 +174,7 @@ impl Buffer {
         Ok(extract)
     }
 
-    #[inline(always)]
+    #[inline]
     #[pyo3(signature = ())]
     pub fn pull_uint64(&mut self) -> PyResult<u64> {
         let end_offset = self.pos + 8;
@@ -190,7 +189,6 @@ impl Buffer {
         Ok(extract)
     }
 
-    #[inline(always)]
     #[pyo3(signature = ())]
     pub fn pull_uint_var(&mut self) -> PyResult<u64> {
         if self.eof() {
@@ -200,36 +198,18 @@ impl Buffer {
         let first = self.data[self.pos];
         let var_type = first >> 6;
 
-        if var_type == 0 {
-            self.pos += 1;
-            return Ok(first.into());
-        }
-
-        if var_type == 1 {
-            return match self.pull_uint16() {
-                Ok(val) => {
-                    return Ok((val & 0x3FFF).into());
-                }
-                Err(exception) => Err(exception),
-            };
-        }
-
-        if var_type == 2 {
-            return match self.pull_uint32() {
-                Ok(val) => {
-                    return Ok((val & 0x3FFFFFFF).into());
-                }
-                Err(exception) => Err(exception),
-            };
-        }
-
-        match self.pull_uint64() {
-            Ok(val) => Ok(val & 0x3FFFFFFFFFFFFFFF),
-            Err(exception) => Err(exception),
+        match var_type {
+            0 => {
+                self.pos += 1;
+                Ok(first.into())
+            }
+            1 => self.pull_uint16().map(|val| (val & 0x3FFF).into()),
+            2 => self.pull_uint32().map(|val| (val & 0x3FFFFFFF).into()),
+            _ => self.pull_uint64().map(|val| val & 0x3FFFFFFFFFFFFFFF),
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn push_bytes(&mut self, data: Bound<'_, PyBytes>) -> PyResult<()> {
         let data_to_be_pushed = data.as_bytes();
         let end_pos = self.pos + data_to_be_pushed.len();
@@ -238,13 +218,13 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos..end_pos].clone_from_slice(data_to_be_pushed);
+        self.data[self.pos..end_pos].copy_from_slice(data_to_be_pushed);
         self.pos = end_pos;
 
         Ok(())
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn push_uint8(&mut self, value: u8) -> PyResult<()> {
         if self.eof() {
             return Err(BufferWriteError::new_err("Write out of bounds"));
@@ -256,7 +236,7 @@ impl Buffer {
         Ok(())
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn push_uint16(&mut self, value: u16) -> PyResult<()> {
         let end_offset = self.pos + 2;
 
@@ -264,13 +244,13 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos..end_offset].clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos..end_offset].copy_from_slice(&value.to_be_bytes());
         self.pos = end_offset;
 
         Ok(())
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn push_uint32(&mut self, value: u32) -> PyResult<()> {
         let end_offset = self.pos + 4;
 
@@ -278,13 +258,13 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos..end_offset].clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos..end_offset].copy_from_slice(&value.to_be_bytes());
         self.pos = end_offset;
 
         Ok(())
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn push_uint64(&mut self, value: u64) -> PyResult<()> {
         let end_offset = self.pos + 8;
 
@@ -292,13 +272,12 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos..end_offset].clone_from_slice(&value.to_be_bytes());
+        self.data[self.pos..end_offset].copy_from_slice(&value.to_be_bytes());
         self.pos = end_offset;
 
         Ok(())
     }
 
-    #[inline(always)]
     pub fn push_uint_var(&mut self, value: u64) -> PyResult<()> {
         if value <= 0x3F {
             return self.push_uint8(value.try_into().unwrap());
@@ -318,28 +297,17 @@ impl Buffer {
 
 #[pyfunction]
 pub fn encode_uint_var(value: u64) -> PyResult<Vec<u8>> {
-    // 1-byte
     if value <= 0x3F {
-        // For one byte, the two MSB are 00 (implicitly true if value < 64)
-        Ok([value as u8].into())
-    }
-    // 2-bytes
-    else if value <= 0x3FFF {
-        // Set the two MSB to 01. For a 16-bit value, that is equivalent to OR-ing with 0x4000.
+        Ok(vec![value as u8])
+    } else if value <= 0x3FFF {
         let encoded: u16 = 0x4000 | (value as u16);
-        Ok(encoded.to_be_bytes().into())
-    }
-    // 4-bytes
-    else if value <= 0x3FFFFFFF {
-        // Two MSB = 10 for a 32-bit value is equivalent to OR-ing with 0x8000_0000.
+        Ok(encoded.to_be_bytes().to_vec())
+    } else if value <= 0x3FFFFFFF {
         let encoded: u32 = 0x8000_0000 | (value as u32);
-        Ok(encoded.to_be_bytes().into())
-    }
-    // 8-bytes
-    else if value <= 0x3FFFFFFFFFFFFFFF {
-        // Two MSB = 11 for a 64-bit value is equivalent to OR-ing with 0xC000_0000_0000_0000.
+        Ok(encoded.to_be_bytes().to_vec())
+    } else if value <= 0x3FFFFFFFFFFFFFFF {
         let encoded: u64 = 0xC000_0000_0000_0000 | value;
-        Ok(encoded.to_be_bytes().into())
+        Ok(encoded.to_be_bytes().to_vec())
     } else {
         Err(PyValueError::new_err(
             "Value too large to encode as a variable-length integer",
