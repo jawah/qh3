@@ -1,0 +1,71 @@
+from qh3._hazmat import OCSPResponse, Certificate
+import ssl
+
+
+from .utils import OCSP_RESPONSE_WITH_CHAIN, ISSUER_FOR_OCSP_RESPONSE_WITH_CHAIN, OCSP_RESPONSE_WITHOUT_CHAIN, ISSUER_FOR_OCSP_RESPONSE_WITHOUT_CHAIN
+
+
+def test_ocsp_response_with_chain() -> None:
+    with open(OCSP_RESPONSE_WITH_CHAIN, "rb") as fp:
+        ocsp_response = OCSPResponse(fp.read())
+
+    with open(ISSUER_FOR_OCSP_RESPONSE_WITH_CHAIN, "rb") as fp:
+        issuer = Certificate(fp.read())
+
+    assert ocsp_response.authenticate_for(issuer.public_bytes())
+
+    assert not ocsp_response.authenticate_for(
+        ssl.PEM_cert_to_DER_cert(
+            """-----BEGIN CERTIFICATE-----
+MIICtDCCAjugAwIBAgIQGG511O6woF39Lagghl0eMTAKBggqhkjOPQQDAzBPMQsw
+CQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg
+R3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBYMjAeFw0yNDAzMTMwMDAwMDBaFw0y
+NzAzMTIyMzU5NTlaMDIxCzAJBgNVBAYTAlVTMRYwFAYDVQQKEw1MZXQncyBFbmNy
+eXB0MQswCQYDVQQDEwJFNTB2MBAGByqGSM49AgEGBSuBBAAiA2IABA0LOoprYY62
+79xfWOfGQkVUq2P2ZmFICi5ZdbSBAjdQtz8WedyY7KEol3IgHCzP1XxSIE5UeFuE
+FGvAkK6F7MBRQTxah38GTdT+YNH6bC3hfZUQiKIIVA+ZGkzm6gqs2KOB+DCB9TAO
+BgNVHQ8BAf8EBAMCAYYwHQYDVR0lBBYwFAYIKwYBBQUHAwIGCCsGAQUFBwMBMBIG
+A1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0OBBYEFJ8rX888IU+dBLftKyzExnCL0tcN
+MB8GA1UdIwQYMBaAFHxClq7eS0g7+pL4nozPbYupcjeVMDIGCCsGAQUFBwEBBCYw
+JDAiBggrBgEFBQcwAoYWaHR0cDovL3gyLmkubGVuY3Iub3JnLzATBgNVHSAEDDAK
+MAgGBmeBDAECATAnBgNVHR8EIDAeMBygGqAYhhZodHRwOi8veDIuYy5sZW5jci5v
+cmcvMAoGCCqGSM49BAMDA2cAMGQCMBttLkVBHEU+2V80GHRnE3m6qym1thBOgydK
+i0VOx3vP9EAwHWGl5hxtpJAJkm5GSwIwRikYhDR6vPve2BvYGacE9ct+522E2dqO
+6s42MLmigEws5mASS6l2quhtlUfacgkM
+-----END CERTIFICATE-----
+"""
+        )
+    )
+
+
+def test_ocsp_response_without_chain() -> None:
+    with open(OCSP_RESPONSE_WITHOUT_CHAIN, "rb") as fp:
+        ocsp_response = OCSPResponse(fp.read())
+
+    with open(ISSUER_FOR_OCSP_RESPONSE_WITHOUT_CHAIN, "rb") as fp:
+        issuer = Certificate(fp.read())
+
+    assert ocsp_response.authenticate_for(issuer.public_bytes())
+
+    assert not ocsp_response.authenticate_for(
+        ssl.PEM_cert_to_DER_cert(
+            """-----BEGIN CERTIFICATE-----
+MIICtDCCAjugAwIBAgIQGG511O6woF39Lagghl0eMTAKBggqhkjOPQQDAzBPMQsw
+CQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg
+R3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBYMjAeFw0yNDAzMTMwMDAwMDBaFw0y
+NzAzMTIyMzU5NTlaMDIxCzAJBgNVBAYTAlVTMRYwFAYDVQQKEw1MZXQncyBFbmNy
+eXB0MQswCQYDVQQDEwJFNTB2MBAGByqGSM49AgEGBSuBBAAiA2IABA0LOoprYY62
+79xfWOfGQkVUq2P2ZmFICi5ZdbSBAjdQtz8WedyY7KEol3IgHCzP1XxSIE5UeFuE
+FGvAkK6F7MBRQTxah38GTdT+YNH6bC3hfZUQiKIIVA+ZGkzm6gqs2KOB+DCB9TAO
+BgNVHQ8BAf8EBAMCAYYwHQYDVR0lBBYwFAYIKwYBBQUHAwIGCCsGAQUFBwMBMBIG
+A1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0OBBYEFJ8rX888IU+dBLftKyzExnCL0tcN
+MB8GA1UdIwQYMBaAFHxClq7eS0g7+pL4nozPbYupcjeVMDIGCCsGAQUFBwEBBCYw
+JDAiBggrBgEFBQcwAoYWaHR0cDovL3gyLmkubGVuY3Iub3JnLzATBgNVHSAEDDAK
+MAgGBmeBDAECATAnBgNVHR8EIDAeMBygGqAYhhZodHRwOi8veDIuYy5sZW5jci5v
+cmcvMAoGCCqGSM49BAMDA2cAMGQCMBttLkVBHEU+2V80GHRnE3m6qym1thBOgydK
+i0VOx3vP9EAwHWGl5hxtpJAJkm5GSwIwRikYhDR6vPve2BvYGacE9ct+522E2dqO
+6s42MLmigEws5mASS6l2quhtlUfacgkM
+-----END CERTIFICATE-----
+"""
+        )
+    )
