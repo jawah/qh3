@@ -1,3 +1,19 @@
+1.5.6 (2025-11-09)
+====================
+
+**Fixed**
+- backport (https://github.com/aiortc/aioquic/pull/604) avoid assertion error when receiving multiple STOP_SENDING.
+- backport (https://github.com/aiortc/aioquic/pull/603) limit the number of remote path challenges stored per path.
+- backport (https://github.com/aiortc/aioquic/pull/606) update PATH_CHALLENGE / PATH_RESPONSE state after sending.
+- backport (https://github.com/aiortc/aioquic/pull/606) send PATH_CHALLENGE before other frame types.
+- backport (https://github.com/aiortc/aioquic/pull/590) remove stream objects when stream is ended.
+
+**Changed**
+- Various minor performance improvements in our Rust code.
+
+**Misc**
+- OCSP internals improved for better reliability (niquests usage only).
+
 1.5.5 (2025-10-05)
 ====================
 
