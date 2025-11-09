@@ -225,13 +225,61 @@ impl OCSPResponse {
 
             extra_chain.push(issuer);
 
-            for child_parent in extra_chain.windows(2) {
-                if is_parent(&child_parent[0], &child_parent[1]).is_err() {
-                    return Ok(false);
+            // Find the OCSP signer certificate that chains up to the issuer
+            let mut ocsp_signer = None;
+            let remaining_certs = extra_chain.clone();
+            let issuer_idx = remaining_certs.len() - 1; // issuer is last
+
+            // Try to find which certificate is signed by the issuer
+            for (idx, cert) in remaining_certs[..issuer_idx].iter().enumerate() {
+                if is_parent(cert, &remaining_certs[issuer_idx]).is_ok() {
+                    ocsp_signer = Some(cert);
+
+                    // Verify the complete chain if there are intermediate certs
+                    if idx > 0 {
+                        // Build the chain from ocsp_signer to issuer
+                        let mut chain_to_verify = vec![cert];
+                        let mut certs_to_check: Vec<_> = remaining_certs[..issuer_idx]
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| *i != idx)
+                            .collect();
+
+                        // Try to build the chain
+                        while !certs_to_check.is_empty() {
+                            let mut found = false;
+                            for i in (0..certs_to_check.len()).rev() {
+                                let (_, candidate) = certs_to_check[i];
+                                if is_parent(chain_to_verify.last().unwrap(), candidate).is_ok() {
+                                    chain_to_verify.push(candidate);
+                                    certs_to_check.remove(i);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if !found {
+                                break; // Can't build complete chain
+                            }
+                        }
+
+                        // Verify the chain is complete to issuer
+                        if is_parent(
+                            chain_to_verify.last().unwrap(),
+                            &remaining_certs[issuer_idx],
+                        )
+                        .is_err()
+                        {
+                            continue; // This wasn't the right OCSP signer
+                        }
+                    }
+                    break;
                 }
             }
 
-            let immediate_issuer = &extra_chain[0];
+            let immediate_issuer = match ocsp_signer {
+                Some(cert) => cert,
+                None => return Ok(false),
+            };
 
             let ctx_verify = match context_for_verify(&algorithm, immediate_issuer) {
                 Some(ctx) => ctx,
