@@ -1,4 +1,4 @@
-coverage>=7.2.7,<8
+coverage>=7.2.7,<7.11
 cryptography>=42,<44; python_version <= '3.7'
 cryptography>=44,<47; python_version >= '3.8'
 pytest>=7.4.4,<9
