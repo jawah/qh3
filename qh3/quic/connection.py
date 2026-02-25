@@ -43,7 +43,8 @@ from .packet import (
     push_quic_transport_parameters,
 )
 from .packet_builder import (
-    PACKET_MAX_SIZE,
+    MTU_PROBE_SIZES,
+    SMALLEST_MAX_DATAGRAM_SIZE,
     QuicDeliveryState,
     QuicPacketBuilder,
     QuicPacketBuilderStop,
@@ -340,6 +341,9 @@ class QuicConnection:
         "__frame_handlers",
         "tls",
         "_local_max_data_used",
+        "_max_datagram_size",
+        "_mtu_probe_sizes",
+        "_mtu_probe_pending",
         "_initial_source_connection_id",
     )
 
@@ -373,6 +377,13 @@ class QuicConnection:
         # configuration
         self._configuration = configuration
         self._is_client = configuration.is_client
+        self._max_datagram_size = configuration.max_datagram_size
+        self._mtu_probe_sizes: list[int] = (
+            [s for s in MTU_PROBE_SIZES if s > self._max_datagram_size]
+            if self._is_client and configuration.probe_datagram_size
+            else []
+        )
+        self._mtu_probe_pending: int | None = None
 
         self._ack_delay = K_GRANULARITY
         self._close_at: float | None = None
@@ -481,8 +492,9 @@ class QuicConnection:
         self._loss = QuicPacketRecovery(
             initial_rtt=configuration.initial_rtt,
             peer_completed_address_validation=not self._is_client,
-            quic_logger=self._quic_logger,
             send_probe=self._send_probe,
+            max_datagram_size=self._max_datagram_size,
+            quic_logger=self._quic_logger,
             logger=self._logger,
         )
 
@@ -645,6 +657,7 @@ class QuicConnection:
         builder = QuicPacketBuilder(
             host_cid=self.host_cid,
             is_client=self._is_client,
+            max_datagram_size=self._max_datagram_size,
             packet_number=self._packet_number,
             peer_cid=self._peer_cid.cid,
             peer_token=self._peer_token,
@@ -683,8 +696,11 @@ class QuicConnection:
             builder.max_flight_bytes = (
                 self._loss.congestion_window - self._loss.bytes_in_flight
             )
-            if self._probe_pending and builder.max_flight_bytes < PACKET_MAX_SIZE:
-                builder.max_flight_bytes = PACKET_MAX_SIZE
+            if (
+                self._probe_pending
+                and builder.max_flight_bytes < self._max_datagram_size
+            ):
+                builder.max_flight_bytes = self._max_datagram_size
 
             # limit data on un-validated network paths
             if not network_path.is_validated:
@@ -702,8 +718,49 @@ class QuicConnection:
 
         datagrams, packets = builder.flush()
 
+        # MTU probing — send an oversized PING+PADDING packet
+        last_builder = builder
+        if (
+            self._mtu_probe_sizes
+            and self._mtu_probe_pending is None
+            and self._handshake_confirmed
+            and self._cryptos[tls.Epoch.ONE_RTT].send.is_valid()
+        ):
+            probe_size = self._mtu_probe_sizes[0]
+            self._mtu_probe_pending = probe_size
+            probe_builder = QuicPacketBuilder(
+                host_cid=self.host_cid,
+                is_client=self._is_client,
+                max_datagram_size=probe_size,
+                packet_number=(
+                    builder.packet_number if datagrams else self._packet_number
+                ),
+                peer_cid=self._peer_cid.cid,
+                peer_token=self._peer_token,
+                quic_logger=self._quic_logger,
+                spin_bit=self._spin_bit,
+                version=self._version,
+            )
+            probe_builder.start_packet(
+                QuicPacketType.ONE_RTT, self._cryptos[tls.Epoch.ONE_RTT]
+            )
+            probe_builder.start_frame(
+                QuicFrameType.PING,
+                capacity=1,
+                handler=self._on_mtu_probe_delivery,
+                handler_args=(probe_size,),
+            )
+            pad_size = probe_builder.remaining_flight_space
+            if pad_size > 0:
+                probe_builder._buffer.push_bytes(bytes(pad_size))
+            probe_datagrams, probe_packets = probe_builder.flush()
+            if probe_datagrams:
+                datagrams.extend(probe_datagrams)
+                packets.extend(probe_packets)
+                last_builder = probe_builder
+
         if datagrams:
-            self._packet_number = builder.packet_number
+            self._packet_number = last_builder.packet_number
 
             # register packets
             sent_handshake = False
@@ -2481,6 +2538,24 @@ class QuicConnection:
         else:
             self._ping_pending.extend(uids)
 
+    def _on_mtu_probe_delivery(
+        self, delivery: QuicDeliveryState, probe_size: int
+    ) -> None:
+        """
+        Callback when an MTU probe PING frame is acknowledged or lost.
+        """
+        if delivery == QuicDeliveryState.ACKED:
+            self._logger.debug("MTU probe ACK'd, datagram size now %d", probe_size)
+            self._max_datagram_size = probe_size
+            self._loss._cc._max_datagram_size = probe_size
+            if self._mtu_probe_sizes and self._mtu_probe_sizes[0] == probe_size:
+                self._mtu_probe_sizes.pop(0)
+            self._mtu_probe_pending = None
+        else:
+            self._logger.debug("MTU probe for %d lost, stopping", probe_size)
+            self._mtu_probe_sizes.clear()
+            self._mtu_probe_pending = None
+
     def _on_retire_connection_id_delivery(
         self, delivery: QuicDeliveryState, sequence_number: int
     ) -> None:
@@ -2862,12 +2937,14 @@ class QuicConnection:
                 )
             if (
                 quic_transport_parameters.max_udp_payload_size is not None
-                and quic_transport_parameters.max_udp_payload_size < 1200
+                and quic_transport_parameters.max_udp_payload_size
+                < SMALLEST_MAX_DATAGRAM_SIZE
             ):
                 raise QuicConnectionError(
                     error_code=QuicErrorCode.TRANSPORT_PARAMETER_ERROR,
                     frame_type=QuicFrameType.CRYPTO,
-                    reason_phrase="max_udp_payload_size must be >= 1200",
+                    reason_phrase="max_udp_payload_size must "
+                    f"be >= {SMALLEST_MAX_DATAGRAM_SIZE}",
                 )
 
             # Validate Version Information extension.
@@ -2963,7 +3040,9 @@ class QuicConnection:
             max_ack_delay=25,
             max_datagram_frame_size=self._configuration.max_datagram_frame_size,
             quantum_readiness=(
-                b"Q" * 1200 if self._configuration.quantum_readiness_test else None
+                b"Q" * SMALLEST_MAX_DATAGRAM_SIZE
+                if self._configuration.quantum_readiness_test
+                else None
             ),
             stateless_reset_token=self._host_cids[0].stateless_reset_token,
             version_information=QuicVersionInformation(
@@ -2989,7 +3068,7 @@ class QuicConnection:
                 ),
             )
 
-        buf = Buffer(capacity=3 * PACKET_MAX_SIZE)
+        buf = Buffer(capacity=3 * self._max_datagram_size)
         push_quic_transport_parameters(buf, quic_transport_parameters)
         return buf.data
 
