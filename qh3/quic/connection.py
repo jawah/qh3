@@ -319,6 +319,7 @@ class QuicConnection:
         "_spin_highest_pn",
         "_state",
         "_streams",
+        "_streams_dirty_limits",
         "_streams_queue",
         "_streams_blocked_bidi",
         "_streams_blocked_uni",
@@ -463,6 +464,7 @@ class QuicConnection:
         self._spin_highest_pn = 0
         self._state = QuicConnectionState.FIRSTFLIGHT
         self._streams: dict[int, QuicStream] = {}
+        self._streams_dirty_limits: set[QuicStream] = set()
         self._streams_queue: list[QuicStream] = []
         self._streams_blocked_bidi: list[QuicStream] = []
         self._streams_blocked_uni: list[QuicStream] = []
@@ -2279,6 +2281,8 @@ class QuicConnection:
         if event is not None:
             self._events.append(event)
         self._local_max_data.used += newly_received
+        if newly_received > 0:
+            self._streams_dirty_limits.add(stream)
 
     def _handle_retire_connection_id_frame(
         self, context: QuicReceiveContext, frame_type: int, buf: Buffer
@@ -2414,6 +2418,8 @@ class QuicConnection:
         if event is not None:
             self._events.append(event)
         self._local_max_data.used += newly_received
+        if newly_received > 0:
+            self._streams_dirty_limits.add(stream)
 
     def _handle_stream_data_blocked_frame(
         self, context: QuicReceiveContext, frame_type: int, buf: Buffer
@@ -2515,6 +2521,7 @@ class QuicConnection:
         """
         if delivery != QuicDeliveryState.ACKED:
             stream.max_stream_data_local_sent = 0
+            self._streams_dirty_limits.add(stream)
 
     def _on_new_connection_id_delivery(
         self, delivery: QuicDeliveryState, connection_id: QuicConnectionId
@@ -3232,8 +3239,12 @@ class QuicConnection:
                 self._write_connection_limits(builder=builder, space=space)
 
             # stream-level limits
-            for stream in self._streams.values():
-                self._write_stream_limits(builder=builder, space=space, stream=stream)
+            if self._streams_dirty_limits:
+                for stream in self._streams_dirty_limits:
+                    self._write_stream_limits(
+                        builder=builder, space=space, stream=stream
+                    )
+                self._streams_dirty_limits.clear()
 
             # PING (user-request)
             if self._ping_pending:
@@ -3274,6 +3285,7 @@ class QuicConnection:
                         self._logger.debug(f"Stream {stream.stream_id} discarded")
                         del self._streams[stream.stream_id]
                         self._streams_finished.add(stream.stream_id)
+                        self._streams_dirty_limits.discard(stream)
                         continue
 
                     if stream.receiver.stop_pending:
