@@ -3032,6 +3032,21 @@ class QuicConnection:
             if value is not None:
                 setattr(self, "_remote_" + param, value)
 
+        # Cap MTU probe sizes to the peer's max_udp_payload_size.
+        if (
+            self._mtu_probe_sizes
+            and quic_transport_parameters.max_udp_payload_size is not None
+        ):
+            peer_max = quic_transport_parameters.max_udp_payload_size
+            capped: list[int] = []
+            for s in self._mtu_probe_sizes:
+                size = min(s, peer_max)
+                if size > self._max_datagram_size and (
+                    not capped or size != capped[-1]
+                ):
+                    capped.append(size)
+            self._mtu_probe_sizes = capped
+
     def _serialize_transport_parameters(self) -> bytes:
         quic_transport_parameters = QuicTransportParameters(
             ack_delay_exponent=self._local_ack_delay_exponent,
