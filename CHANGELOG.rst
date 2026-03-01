@@ -1,4 +1,4 @@
-1.6.0 (2026-02-25)
+1.6.0 (2026-03-01)
 ====================
 
 **Added**
@@ -8,6 +8,7 @@
 **Changed**
 - Updated aws-lc-rs v1.14.0 to v1.16.0
 - Minor performance improvement in hot code paths.
+- Remove default Reno congestion algorithm in favor to the Cubic implementation (RFC 9438).
 
 1.5.6 (2025-11-09)
 ====================
