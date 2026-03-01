@@ -42,6 +42,14 @@ dynamic = [
 features = ["pyo3/extension-module", "pyo3/abi3-py37", "pyo3/generate-import-lib"]
 module-name = "qh3._hazmat"
 
+[tool.maturin.sbom]
+# Generate a CycloneDX SBOM for the Rust dependency tree.
+# Defaults to true when the sbom feature is enabled.
+rust = true
+# Generate a CycloneDX SBOM for external shared libraries grafted during
+# auditwheel repair. Defaults to true when repair copies libraries.
+auditwheel = true
+
 [project.urls]
 homepage = "https://github.com/jawah/qh3"
 documentation = "https://qh3.readthedocs.io/"

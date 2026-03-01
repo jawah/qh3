@@ -4,6 +4,7 @@
 **Added**
 - Client side MTU discovery to probe for max datagram size.
 - Setting UDP datagram size at configuration level. (#69)
+- SBOM artifact (cyclonedx) for the Rust side is now generated and integrated into the pre-built wheel.
 
 **Changed**
 - Updated aws-lc-rs v1.14.0 to v1.16.0
