@@ -206,11 +206,8 @@ impl OCSPResponse {
         // does not have EKU OCSP signing, they probably issued
         // one or many intermediate to be capable of signing OCSP
         // responses.
-        if inner_resp.certs.is_some() {
-            let der_blobs: Vec<Vec<u8>> = inner_resp
-                .certs
-                .as_ref()
-                .unwrap()
+        if let Some(certs) = &inner_resp.certs {
+            let der_blobs: Vec<Vec<u8>> = certs
                 .iter()
                 .map(|crt| crt.to_der().expect("DER encoding failed"))
                 .collect();
