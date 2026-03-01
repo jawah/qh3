@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use std::cmp::{max, min};
 
-#[pyclass(module = "qh3._hazmat")]
+#[pyclass(module = "qh3._hazmat", from_py_object)]
 #[derive(Clone)]
 pub struct RangeSet {
     ranges: Vec<(i64, i64)>,

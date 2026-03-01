@@ -3,8 +3,6 @@ use pyo3::prelude::*;
 const K_GRANULARITY: f64 = 0.001; // seconds
 const K_MICRO_SECOND: f64 = 0.000001;
 const K_SECOND: f64 = 1.0;
-const K_MAX_DATAGRAM_SIZE: usize = 1280;
-
 /// A native Rust version of the packet pacer.
 ///
 /// This type manages a “bucket” that replenishes over time and helps compute
@@ -14,17 +12,19 @@ pub struct QuicPacketPacer {
     bucket_max: f64,
     bucket_time: f64,
     evaluation_time: f64,
+    max_datagram_size: usize,
     packet_time: Option<f64>,
 }
 
 #[pymethods]
 impl QuicPacketPacer {
     #[new]
-    fn new() -> Self {
+    fn new(max_datagram_size: usize) -> Self {
         QuicPacketPacer {
             bucket_max: 0.0,
             bucket_time: 0.0,
             evaluation_time: 0.0,
+            max_datagram_size,
             packet_time: None,
         }
     }
@@ -95,19 +95,19 @@ impl QuicPacketPacer {
     ///
     /// The bucket maximum is computed as:
     /// ```text
-    /// bucket_max = max(2*K_MAX_DATAGRAM_SIZE, min(congestion_window/4, 16*K_MAX_DATAGRAM_SIZE))
+    /// bucket_max = max(2*max_datagram_size, min(congestion_window/4, 16*max_datagram_size))
     ///              / pacing_rate
     /// ```
     #[inline(always)]
     fn update_rate(&mut self, congestion_window: usize, smoothed_rtt: f64) {
         let pacing_rate = (congestion_window as f64) / smoothed_rtt.max(K_MICRO_SECOND);
-        let pt = (K_MAX_DATAGRAM_SIZE as f64) / pacing_rate;
+        let pt = (self.max_datagram_size as f64) / pacing_rate;
         let new_packet_time = K_MICRO_SECOND.max(pt.min(K_SECOND));
         self.packet_time = Some(new_packet_time);
 
         let cw_div4 = (congestion_window as f64) / 4.0;
-        let candidate = cw_div4.min(16.0 * (K_MAX_DATAGRAM_SIZE as f64));
-        self.bucket_max = f64::max(2.0 * (K_MAX_DATAGRAM_SIZE as f64), candidate) / pacing_rate;
+        let candidate = cw_div4.min(16.0 * (self.max_datagram_size as f64));
+        self.bucket_max = f64::max(2.0 * (self.max_datagram_size as f64), candidate) / pacing_rate;
         if self.bucket_time > self.bucket_max {
             self.bucket_time = self.bucket_max;
         }

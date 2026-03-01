@@ -19,7 +19,7 @@ def send_probe():
 
 class TestQuicPacketPacer:
     def setup_method(self):
-        self.pacer = QuicPacketPacer()
+        self.pacer = QuicPacketPacer(max_datagram_size=1280)
 
     def test_no_measurement(self):
         assert self.pacer.next_send_time(now=0.0) is None
@@ -71,6 +71,7 @@ class TestQuicPacketRecovery:
             initial_rtt=0.1,
             peer_completed_address_validation=True,
             send_probe=send_probe,
+            max_datagram_size=1280,
         )
         self.recovery.spaces = [
             self.INITIAL_SPACE,

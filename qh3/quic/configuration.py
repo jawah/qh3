@@ -17,6 +17,7 @@ from ..tls import (
 )
 from .logger import QuicLogger
 from .packet import QuicProtocolVersion
+from .packet_builder import PACKET_MAX_SIZE
 
 
 @dataclass
@@ -50,6 +51,16 @@ class QuicConfiguration:
     max_data: int = 1048576
     """
     Connection-wide flow control limit.
+    """
+
+    max_datagram_size: int = PACKET_MAX_SIZE
+    """
+    The maximum QUIC payload size in bytes to send, excluding UDP or IP overhead.
+    """
+
+    probe_datagram_size: bool = True
+    """
+    Enable path MTU discovery. Client-only.
     """
 
     max_stream_data: int = 1048576

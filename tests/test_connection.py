@@ -40,8 +40,8 @@ from qh3.quic.packet import (
     encode_quic_version_negotiation,
     push_quic_transport_parameters,
 )
-from qh3.quic.packet_builder import QuicDeliveryState, QuicPacketBuilder
-from qh3.quic.recovery import K_MAX_DATAGRAM_SIZE, K_SECOND, K_MICRO_SECOND
+from qh3.quic.packet_builder import PACKET_MAX_SIZE, QuicDeliveryState, QuicPacketBuilder
+from qh3.quic.recovery import K_SECOND, K_MICRO_SECOND
 
 from .utils import (
     SERVER_CACERTFILE,
@@ -114,13 +114,13 @@ class QuicPacketPacer:
     def update_rate(self, congestion_window: int, smoothed_rtt: float) -> None:
         pacing_rate = congestion_window / max(smoothed_rtt, K_MICRO_SECOND)
         self.packet_time = max(
-            K_MICRO_SECOND, min(K_MAX_DATAGRAM_SIZE / pacing_rate, K_SECOND)
+            K_MICRO_SECOND, min(PACKET_MAX_SIZE / pacing_rate, K_SECOND)
         )
 
         self.bucket_max = (
             max(
-                2 * K_MAX_DATAGRAM_SIZE,
-                min(congestion_window // 4, 16 * K_MAX_DATAGRAM_SIZE),
+                2 * PACKET_MAX_SIZE,
+                min(congestion_window // 4, 16 * PACKET_MAX_SIZE),
             )
             / pacing_rate
         )
@@ -147,9 +147,10 @@ def consume_events(connection):
 
 
 def create_standalone_client(self, **client_options):
+    effective_options = {"probe_datagram_size": False, **client_options}
     client = QuicConnection(
         configuration=QuicConfiguration(
-            is_client=True, quic_logger=QuicLogger(), **client_options
+            is_client=True, quic_logger=QuicLogger(), **effective_options
         )
     )
     client._ack_delay = 0
@@ -207,8 +208,9 @@ def client_and_server(
     server_options={},
     server_patch=lambda x: None,
 ):
+    effective_client_options = {"probe_datagram_size": False, **client_options}
     client_configuration = QuicConfiguration(
-        is_client=True, quic_logger=QuicLogger(), **client_options
+        is_client=True, quic_logger=QuicLogger(), **effective_client_options
     )
     client_configuration.load_verify_locations(cafile=SERVER_CACERTFILE)
 
@@ -2989,6 +2991,81 @@ class TestQuicConnection:
             assert cm.value.error_code == QuicErrorCode.CRYPTO_BUFFER_EXCEEDED
             assert cm.value.frame_type == QuicFrameType.CRYPTO
             assert highest_good_offset == (MAX_PENDING_CRYPTO // 10000) * 10000
+
+
+class TestMtuProbe:
+    def test_mtu_probe_success(self):
+        with client_and_server(
+            client_options={"probe_datagram_size": True}
+        ) as (client, server):
+            # first probe (1350) was sent and ACK'd during handshake roundtrips
+            assert client._max_datagram_size == 1350
+            assert client._mtu_probe_pending is None
+            assert client._mtu_probe_sizes == [1452]
+
+            consume_events(client)
+            consume_events(server)
+
+            # next call should send a 1452-byte probe
+            items = client.datagrams_to_send(now=time.time())
+            probe_found = any(len(data) == 1452 for data, addr in items)
+            assert probe_found, (
+                f"Expected a 1452-byte probe datagram, got sizes: "
+                f"{[len(d) for d, a in items]}"
+            )
+
+            # deliver to server and get ACK
+            for data, addr in items:
+                server.receive_datagram(data, CLIENT_ADDR, now=time.time())
+            server_items = server.datagrams_to_send(now=time.time())
+            for data, addr in server_items:
+                client.receive_datagram(data, SERVER_ADDR, now=time.time())
+
+            # second probe ACK'd
+            assert client._max_datagram_size == 1452
+            assert client._mtu_probe_pending is None
+            assert client._mtu_probe_sizes == []
+
+    def test_mtu_probe_disabled(self):
+        with client_and_server(
+            client_options={"probe_datagram_size": False}
+        ) as (client, server):
+            consume_events(client)
+            consume_events(server)
+
+            assert client._mtu_probe_sizes == []
+            assert client._max_datagram_size == PACKET_MAX_SIZE
+
+            # no oversized datagrams should be sent
+            items = client.datagrams_to_send(now=time.time())
+            for data, addr in items:
+                assert len(data) <= PACKET_MAX_SIZE
+
+    def test_mtu_probe_lost(self):
+        with client_and_server(
+            client_options={"probe_datagram_size": True}
+        ) as (client, server):
+            consume_events(client)
+            consume_events(server)
+
+            # first probe (1350) was ACK'd during handshake
+            assert client._max_datagram_size == 1350
+            assert client._mtu_probe_pending is None
+            assert client._mtu_probe_sizes == [1452]
+
+            # next call should send a 1452-byte probe
+            items = client.datagrams_to_send(now=time.time())
+            probe_found = any(len(data) == 1452 for data, addr in items)
+            assert probe_found
+            assert client._mtu_probe_pending == 1452
+
+            # simulate the probe being lost by invoking the delivery handler
+            client._on_mtu_probe_delivery(QuicDeliveryState.LOST, 1452)
+
+            # probe should be considered lost; size stays at 1350, no further probes
+            assert client._max_datagram_size == 1350
+            assert client._mtu_probe_sizes == []
+            assert client._mtu_probe_pending is None
 
 
 class TestQuicNetworkPath:

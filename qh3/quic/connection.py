@@ -43,7 +43,8 @@ from .packet import (
     push_quic_transport_parameters,
 )
 from .packet_builder import (
-    PACKET_MAX_SIZE,
+    MTU_PROBE_SIZES,
+    SMALLEST_MAX_DATAGRAM_SIZE,
     QuicDeliveryState,
     QuicPacketBuilder,
     QuicPacketBuilderStop,
@@ -318,6 +319,7 @@ class QuicConnection:
         "_spin_highest_pn",
         "_state",
         "_streams",
+        "_streams_dirty_limits",
         "_streams_queue",
         "_streams_blocked_bidi",
         "_streams_blocked_uni",
@@ -340,6 +342,9 @@ class QuicConnection:
         "__frame_handlers",
         "tls",
         "_local_max_data_used",
+        "_max_datagram_size",
+        "_mtu_probe_sizes",
+        "_mtu_probe_pending",
         "_initial_source_connection_id",
     )
 
@@ -373,6 +378,13 @@ class QuicConnection:
         # configuration
         self._configuration = configuration
         self._is_client = configuration.is_client
+        self._max_datagram_size = configuration.max_datagram_size
+        self._mtu_probe_sizes: list[int] = (
+            [s for s in MTU_PROBE_SIZES if s > self._max_datagram_size]
+            if self._is_client and configuration.probe_datagram_size
+            else []
+        )
+        self._mtu_probe_pending: int | None = None
 
         self._ack_delay = K_GRANULARITY
         self._close_at: float | None = None
@@ -452,6 +464,7 @@ class QuicConnection:
         self._spin_highest_pn = 0
         self._state = QuicConnectionState.FIRSTFLIGHT
         self._streams: dict[int, QuicStream] = {}
+        self._streams_dirty_limits: set[QuicStream] = set()
         self._streams_queue: list[QuicStream] = []
         self._streams_blocked_bidi: list[QuicStream] = []
         self._streams_blocked_uni: list[QuicStream] = []
@@ -481,8 +494,9 @@ class QuicConnection:
         self._loss = QuicPacketRecovery(
             initial_rtt=configuration.initial_rtt,
             peer_completed_address_validation=not self._is_client,
-            quic_logger=self._quic_logger,
             send_probe=self._send_probe,
+            max_datagram_size=self._max_datagram_size,
+            quic_logger=self._quic_logger,
             logger=self._logger,
         )
 
@@ -645,6 +659,7 @@ class QuicConnection:
         builder = QuicPacketBuilder(
             host_cid=self.host_cid,
             is_client=self._is_client,
+            max_datagram_size=self._max_datagram_size,
             packet_number=self._packet_number,
             peer_cid=self._peer_cid.cid,
             peer_token=self._peer_token,
@@ -683,8 +698,11 @@ class QuicConnection:
             builder.max_flight_bytes = (
                 self._loss.congestion_window - self._loss.bytes_in_flight
             )
-            if self._probe_pending and builder.max_flight_bytes < PACKET_MAX_SIZE:
-                builder.max_flight_bytes = PACKET_MAX_SIZE
+            if (
+                self._probe_pending
+                and builder.max_flight_bytes < self._max_datagram_size
+            ):
+                builder.max_flight_bytes = self._max_datagram_size
 
             # limit data on un-validated network paths
             if not network_path.is_validated:
@@ -702,8 +720,49 @@ class QuicConnection:
 
         datagrams, packets = builder.flush()
 
+        # MTU probing — send an oversized PING+PADDING packet
+        last_builder = builder
+        if (
+            self._mtu_probe_sizes
+            and self._mtu_probe_pending is None
+            and self._handshake_confirmed
+            and self._cryptos[tls.Epoch.ONE_RTT].send.is_valid()
+        ):
+            probe_size = self._mtu_probe_sizes[0]
+            self._mtu_probe_pending = probe_size
+            probe_builder = QuicPacketBuilder(
+                host_cid=self.host_cid,
+                is_client=self._is_client,
+                max_datagram_size=probe_size,
+                packet_number=(
+                    builder.packet_number if datagrams else self._packet_number
+                ),
+                peer_cid=self._peer_cid.cid,
+                peer_token=self._peer_token,
+                quic_logger=self._quic_logger,
+                spin_bit=self._spin_bit,
+                version=self._version,
+            )
+            probe_builder.start_packet(
+                QuicPacketType.ONE_RTT, self._cryptos[tls.Epoch.ONE_RTT]
+            )
+            probe_builder.start_frame(
+                QuicFrameType.PING,
+                capacity=1,
+                handler=self._on_mtu_probe_delivery,
+                handler_args=(probe_size,),
+            )
+            pad_size = probe_builder.remaining_flight_space
+            if pad_size > 0:
+                probe_builder._buffer.push_bytes(bytes(pad_size))
+            probe_datagrams, probe_packets = probe_builder.flush()
+            if probe_datagrams:
+                datagrams.extend(probe_datagrams)
+                packets.extend(probe_packets)
+                last_builder = probe_builder
+
         if datagrams:
-            self._packet_number = builder.packet_number
+            self._packet_number = last_builder.packet_number
 
             # register packets
             sent_handshake = False
@@ -2222,6 +2281,8 @@ class QuicConnection:
         if event is not None:
             self._events.append(event)
         self._local_max_data.used += newly_received
+        if newly_received > 0:
+            self._streams_dirty_limits.add(stream)
 
     def _handle_retire_connection_id_frame(
         self, context: QuicReceiveContext, frame_type: int, buf: Buffer
@@ -2357,6 +2418,8 @@ class QuicConnection:
         if event is not None:
             self._events.append(event)
         self._local_max_data.used += newly_received
+        if newly_received > 0:
+            self._streams_dirty_limits.add(stream)
 
     def _handle_stream_data_blocked_frame(
         self, context: QuicReceiveContext, frame_type: int, buf: Buffer
@@ -2458,6 +2521,7 @@ class QuicConnection:
         """
         if delivery != QuicDeliveryState.ACKED:
             stream.max_stream_data_local_sent = 0
+            self._streams_dirty_limits.add(stream)
 
     def _on_new_connection_id_delivery(
         self, delivery: QuicDeliveryState, connection_id: QuicConnectionId
@@ -2480,6 +2544,24 @@ class QuicConnection:
                 self._events.append(events.PingAcknowledged(uid=uid))
         else:
             self._ping_pending.extend(uids)
+
+    def _on_mtu_probe_delivery(
+        self, delivery: QuicDeliveryState, probe_size: int
+    ) -> None:
+        """
+        Callback when an MTU probe PING frame is acknowledged or lost.
+        """
+        if delivery == QuicDeliveryState.ACKED:
+            self._logger.debug("MTU probe ACK'd, datagram size now %d", probe_size)
+            self._max_datagram_size = probe_size
+            self._loss._cc._max_datagram_size = probe_size
+            if self._mtu_probe_sizes and self._mtu_probe_sizes[0] == probe_size:
+                self._mtu_probe_sizes.pop(0)
+            self._mtu_probe_pending = None
+        else:
+            self._logger.debug("MTU probe for %d lost, stopping", probe_size)
+            self._mtu_probe_sizes.clear()
+            self._mtu_probe_pending = None
 
     def _on_retire_connection_id_delivery(
         self, delivery: QuicDeliveryState, sequence_number: int
@@ -2862,12 +2944,14 @@ class QuicConnection:
                 )
             if (
                 quic_transport_parameters.max_udp_payload_size is not None
-                and quic_transport_parameters.max_udp_payload_size < 1200
+                and quic_transport_parameters.max_udp_payload_size
+                < SMALLEST_MAX_DATAGRAM_SIZE
             ):
                 raise QuicConnectionError(
                     error_code=QuicErrorCode.TRANSPORT_PARAMETER_ERROR,
                     frame_type=QuicFrameType.CRYPTO,
-                    reason_phrase="max_udp_payload_size must be >= 1200",
+                    reason_phrase="max_udp_payload_size must "
+                    f"be >= {SMALLEST_MAX_DATAGRAM_SIZE}",
                 )
 
             # Validate Version Information extension.
@@ -2948,6 +3032,21 @@ class QuicConnection:
             if value is not None:
                 setattr(self, "_remote_" + param, value)
 
+        # Cap MTU probe sizes to the peer's max_udp_payload_size.
+        if (
+            self._mtu_probe_sizes
+            and quic_transport_parameters.max_udp_payload_size is not None
+        ):
+            peer_max = quic_transport_parameters.max_udp_payload_size
+            capped: list[int] = []
+            for s in self._mtu_probe_sizes:
+                size = min(s, peer_max)
+                if size > self._max_datagram_size and (
+                    not capped or size != capped[-1]
+                ):
+                    capped.append(size)
+            self._mtu_probe_sizes = capped
+
     def _serialize_transport_parameters(self) -> bytes:
         quic_transport_parameters = QuicTransportParameters(
             ack_delay_exponent=self._local_ack_delay_exponent,
@@ -2963,7 +3062,9 @@ class QuicConnection:
             max_ack_delay=25,
             max_datagram_frame_size=self._configuration.max_datagram_frame_size,
             quantum_readiness=(
-                b"Q" * 1200 if self._configuration.quantum_readiness_test else None
+                b"Q" * SMALLEST_MAX_DATAGRAM_SIZE
+                if self._configuration.quantum_readiness_test
+                else None
             ),
             stateless_reset_token=self._host_cids[0].stateless_reset_token,
             version_information=QuicVersionInformation(
@@ -2989,7 +3090,7 @@ class QuicConnection:
                 ),
             )
 
-        buf = Buffer(capacity=3 * PACKET_MAX_SIZE)
+        buf = Buffer(capacity=3 * self._max_datagram_size)
         push_quic_transport_parameters(buf, quic_transport_parameters)
         return buf.data
 
@@ -3153,8 +3254,12 @@ class QuicConnection:
                 self._write_connection_limits(builder=builder, space=space)
 
             # stream-level limits
-            for stream in self._streams.values():
-                self._write_stream_limits(builder=builder, space=space, stream=stream)
+            if self._streams_dirty_limits:
+                for stream in self._streams_dirty_limits:
+                    self._write_stream_limits(
+                        builder=builder, space=space, stream=stream
+                    )
+                self._streams_dirty_limits.clear()
 
             # PING (user-request)
             if self._ping_pending:
@@ -3185,16 +3290,18 @@ class QuicConnection:
                     self._datagrams_pending.appendleft(datagram_pending)
                     break
 
-            to_reshelve: list[QuicStream] = []
+            queue = self._streams_queue
             sent: list[QuicStream] = []
+            write_idx = 0
 
             try:
-                for stream in self._streams_queue:
+                for stream in queue:
                     # if the stream is finished, discard it
                     if stream.is_finished:
                         self._logger.debug(f"Stream {stream.stream_id} discarded")
                         del self._streams[stream.stream_id]
                         self._streams_finished.add(stream.stream_id)
+                        self._streams_dirty_limits.discard(stream)
                         continue
 
                     if stream.receiver.stop_pending:
@@ -3222,15 +3329,13 @@ class QuicConnection:
                             sent.append(stream)
                             continue
 
-                    to_reshelve.append(stream)
+                    queue[write_idx] = stream
+                    write_idx += 1
             finally:
-                # Make a new stream service order, putting served ones at the end.
-                #
-                # This method of updating the streams queue ensures that discarded
-                # streams are removed and ones which sent are moved to the end even
-                # if an exception occurs in the loop.
-                sent[0:0] = to_reshelve
-                self._streams_queue = sent
+                # Compact in-place: reshelved streams are at queue[0:write_idx],
+                # trim the rest and append sent streams to the end for fairness.
+                del queue[write_idx:]
+                queue.extend(sent)
 
             if builder.packet_is_empty:
                 break
