@@ -1,3 +1,14 @@
+1.6.0 (2026-02-25)
+====================
+
+**Added**
+- Client side MTU discovery to probe for max datagram size.
+- Setting UDP datagram size at configuration level. (#69)
+
+**Changed**
+- Updated aws-lc-rs v1.14.0 to v1.16.0
+- Minor performance improvement in hot code paths.
+
 1.5.6 (2025-11-09)
 ====================
 
