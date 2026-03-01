@@ -3290,11 +3290,12 @@ class QuicConnection:
                     self._datagrams_pending.appendleft(datagram_pending)
                     break
 
-            to_reshelve: list[QuicStream] = []
+            queue = self._streams_queue
             sent: list[QuicStream] = []
+            write_idx = 0
 
             try:
-                for stream in self._streams_queue:
+                for stream in queue:
                     # if the stream is finished, discard it
                     if stream.is_finished:
                         self._logger.debug(f"Stream {stream.stream_id} discarded")
@@ -3328,15 +3329,13 @@ class QuicConnection:
                             sent.append(stream)
                             continue
 
-                    to_reshelve.append(stream)
+                    queue[write_idx] = stream
+                    write_idx += 1
             finally:
-                # Make a new stream service order, putting served ones at the end.
-                #
-                # This method of updating the streams queue ensures that discarded
-                # streams are removed and ones which sent are moved to the end even
-                # if an exception occurs in the loop.
-                sent[0:0] = to_reshelve
-                self._streams_queue = sent
+                # Compact in-place: reshelved streams are at queue[0:write_idx],
+                # trim the rest and append sent streams to the end for fairness.
+                del queue[write_idx:]
+                queue.extend(sent)
 
             if builder.packet_is_empty:
                 break
