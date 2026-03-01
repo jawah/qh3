@@ -19,7 +19,7 @@ const DSA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10040.4.
 const SECP_KEY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
 const ED25519_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.101.112");
 
-#[pyclass(module = "qh3._hazmat", eq, eq_int)]
+#[pyclass(module = "qh3._hazmat", eq, eq_int, from_py_object)]
 #[derive(Clone, Copy, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum KeyType {

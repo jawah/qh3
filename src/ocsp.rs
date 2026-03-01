@@ -27,7 +27,7 @@ use x509_parser::nom::AsBytes;
 use x509_parser::prelude::AlgorithmIdentifier;
 use x509_parser::prelude::FromDer;
 
-#[pyclass(module = "qh3._hazmat", eq, eq_int)]
+#[pyclass(module = "qh3._hazmat", eq, eq_int, from_py_object)]
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug)]
 #[allow(non_camel_case_types)]
 pub enum ReasonFlags {
@@ -43,7 +43,7 @@ pub enum ReasonFlags {
     remove_from_crl = 8,
 }
 
-#[pyclass(module = "qh3._hazmat", eq, eq_int)]
+#[pyclass(module = "qh3._hazmat", eq, eq_int, from_py_object)]
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum OCSPResponseStatus {
@@ -55,7 +55,7 @@ pub enum OCSPResponseStatus {
     UNAUTHORIZED = 6,
 }
 
-#[pyclass(module = "qh3._hazmat", eq, eq_int)]
+#[pyclass(module = "qh3._hazmat", eq, eq_int, from_py_object)]
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum OCSPCertStatus {
@@ -64,7 +64,7 @@ pub enum OCSPCertStatus {
     UNKNOWN = 2,
 }
 
-#[pyclass(module = "qh3._hazmat")]
+#[pyclass(module = "qh3._hazmat", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub struct OCSPResponse {
