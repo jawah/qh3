@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-13, windows-latest]
+        os: [ubuntu-latest, macos-14, windows-latest]
         python_version: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11']
         exclude:
           # circumvent wierd issue with qh3.asyncio+windows+proactor loop...
@@ -45,6 +45,8 @@ jobs:
             os: windows-latest
           - python_version: pypy-3.11
             os: windows-latest
+          - python_version: 3.7
+            os: macos-14
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
@@ -55,7 +57,7 @@ jobs:
       - name: Setup nox
         run: pip install nox
       - name: Set up Clang (Linux)
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get install clang
       - name: Set up Clang (Cygwin)
         if: matrix.os == 'windows-latest'
@@ -119,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-22.04, macos-13, windows-latest ]
+        os: [ ubuntu-latest, macos-14, windows-latest ]
         python_version: [ '3.13',  ]
     runs-on: ${{ matrix.os }}
     steps:
@@ -131,7 +133,7 @@ jobs:
       - name: Setup nox
         run: pip install nox
       - name: Set up Clang (Linux)
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get install clang
       - name: Set up Clang (Cygwin)
         if: matrix.os == 'windows-latest'
@@ -144,7 +146,7 @@ jobs:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
 
   linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     needs:
       - test
       - lint
@@ -171,6 +173,15 @@ jobs:
             python_version: '3.13t'
           - manylinux: manylinux_2_39
             target: riscv64gc-unknown-linux-gnu
+            python_version: '3.14t'
+          - manylinux: musllinux_1_1
+            target: riscv64gc-unknown-linux-musl
+            python_version: '3.10'
+          - manylinux: musllinux_1_1
+            target: riscv64gc-unknown-linux-musl
+            python_version: '3.13t'
+          - manylinux: musllinux_1_1
+            target: riscv64gc-unknown-linux-musl
             python_version: '3.14t'
 
     steps:
@@ -545,7 +556,7 @@ jobs:
       - test
       - lint
       - integration
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
       - name: Build sdist
@@ -561,7 +572,7 @@ jobs:
 
   checksum:
     name: compute hashes
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     needs: [windows, macos, linux, sdist]
     outputs:
       hashes: ${{ steps.compute.outputs.hashes }}
@@ -596,7 +607,7 @@ jobs:
 
   release:
     name: release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     if: "startsWith(github.ref, 'refs/tags/')"
     needs: provenance
     environment: pypi
