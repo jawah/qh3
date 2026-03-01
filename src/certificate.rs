@@ -27,7 +27,13 @@ pyo3::create_exception!(_hazmat, ExpiredCertificateError, PyException);
 pyo3::create_exception!(_hazmat, UnacceptableCertificateError, PyException);
 
 /// Enum for identifying certificate usage in TLS context.
-#[pyclass(name = "TlsCertUsage", module = "qh3._hazmat", eq, eq_int, from_py_object)]
+#[pyclass(
+    name = "TlsCertUsage",
+    module = "qh3._hazmat",
+    eq,
+    eq_int,
+    from_py_object
+)]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum TlsCertUsage {
     ServerAuth = 0,
