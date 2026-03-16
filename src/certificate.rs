@@ -27,7 +27,13 @@ pyo3::create_exception!(_hazmat, ExpiredCertificateError, PyException);
 pyo3::create_exception!(_hazmat, UnacceptableCertificateError, PyException);
 
 /// Enum for identifying certificate usage in TLS context.
-#[pyclass(name = "TlsCertUsage", module = "qh3._hazmat", eq, eq_int)]
+#[pyclass(
+    name = "TlsCertUsage",
+    module = "qh3._hazmat",
+    eq,
+    eq_int,
+    from_py_object
+)]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum TlsCertUsage {
     ServerAuth = 0,
@@ -50,21 +56,21 @@ fn identify_tls_usage(cert: &X509Certificate) -> TlsCertUsage {
     }
 }
 
-#[pyclass(name = "Extension", module = "qh3._hazmat")]
+#[pyclass(name = "Extension", module = "qh3._hazmat", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Extension {
     oid: String,
     value: Vec<u8>,
 }
 
-#[pyclass(name = "Subject", module = "qh3._hazmat")]
+#[pyclass(name = "Subject", module = "qh3._hazmat", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Subject {
     oid: String,
     value: Vec<u8>,
 }
 
-#[pyclass(name = "Certificate", module = "qh3._hazmat")]
+#[pyclass(name = "Certificate", module = "qh3._hazmat", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Certificate {
     version: u8,

@@ -35,7 +35,9 @@ from .packet import (
 # we should do a rudimentary MTU discovery
 # Sending a PING frame 1350
 #           THEN       1452
+SMALLEST_MAX_DATAGRAM_SIZE = 1200
 PACKET_MAX_SIZE = 1280
+MTU_PROBE_SIZES = [1350, 1452]
 
 PACKET_LENGTH_SEND_SIZE = 2
 PACKET_NUMBER_SEND_SIZE = 2
@@ -112,6 +114,7 @@ class QuicPacketBuilder:
         peer_cid: bytes,
         version: int,
         is_client: bool,
+        max_datagram_size: int = PACKET_MAX_SIZE,
         packet_number: int = 0,
         peer_token: bytes = b"",
         quic_logger: QuicLoggerTrace | None = None,
@@ -147,9 +150,9 @@ class QuicPacketBuilder:
         self._packet_start = 0
         self._packet_type: QuicPacketType | None = None
 
-        self._buffer = Buffer(PACKET_MAX_SIZE)
-        self._buffer_capacity = PACKET_MAX_SIZE
-        self._flight_capacity = PACKET_MAX_SIZE
+        self._buffer = Buffer(max_datagram_size)
+        self._buffer_capacity = max_datagram_size
+        self._flight_capacity = max_datagram_size
 
     @property
     def packet_is_empty(self) -> bool:

@@ -11,7 +11,7 @@ use x509_parser::prelude::ReasonCode as InternalCode;
 use x509_parser::revocation_list::CertificateRevocationList as InternalCrl;
 use x509_parser::time::ASN1Time;
 
-#[pyclass(module = "qh3._hazmat")]
+#[pyclass(module = "qh3._hazmat", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RevokedCertificate {
     serial_number: String,
@@ -44,7 +44,7 @@ impl RevokedCertificate {
     }
 }
 
-#[pyclass(module = "qh3._hazmat")]
+#[pyclass(module = "qh3._hazmat", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CertificateRevocationList {
     container: Vec<RevokedCertificate>,

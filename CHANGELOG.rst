@@ -1,3 +1,16 @@
+1.6.0 (2026-03-01)
+====================
+
+**Added**
+- Client side MTU discovery to probe for max datagram size.
+- Setting UDP datagram size at configuration level. (#69)
+- SBOM artifact (cyclonedx) for the Rust side is now generated and integrated into the pre-built wheel.
+
+**Changed**
+- Updated aws-lc-rs v1.14.0 to v1.16.0
+- Minor performance improvement in hot code paths.
+- Remove default Reno congestion algorithm in favor to the Cubic implementation (RFC 9438).
+
 1.5.6 (2025-11-09)
 ====================
 
