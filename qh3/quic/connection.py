@@ -346,6 +346,7 @@ class QuicConnection:
         "_mtu_probe_sizes",
         "_mtu_probe_pending",
         "_initial_source_connection_id",
+        "_ech_retry_configs",
     )
 
     def __init__(
@@ -459,6 +460,7 @@ class QuicConnection:
         self._remote_version_information: QuicVersionInformation | None = None
         self._retry_count = 0
         self._retry_source_connection_id = retry_source_connection_id
+        self._ech_retry_configs: bytes | None = None
         self._spaces: dict[tls.Epoch, QuicPacketSpace] = {}
         self._spin_bit = False
         self._spin_highest_pn = 0
@@ -578,6 +580,26 @@ class QuicConnection:
     @property
     def original_destination_connection_id(self) -> bytes:
         return self._original_destination_connection_id
+
+    @property
+    def ech_retry_configs(self) -> bytes | None:
+        """
+        ECH retry configurations from the server, if ECH was rejected.
+
+        When the server rejects ECH and provides updated configurations,
+        they are stored here. The application can use these to retry
+        the connection with updated ECH configs.
+        """
+        return self._ech_retry_configs
+
+    @property
+    def ech_accepted(self) -> bool:
+        """
+        Whether ECH was offered and accepted by the server.
+        """
+        if hasattr(self, "tls") and self.tls is not None:
+            return self.tls.ech_accepted
+        return False
 
     def change_connection_id(self) -> None:
         """
@@ -1562,6 +1584,7 @@ class QuicConnection:
             hostname_checks_common_name=self._configuration.hostname_checks_common_name,
             assert_fingerprint=self._configuration.assert_fingerprint,
             verify_hostname=self._configuration.verify_hostname,
+            ech_config_list=self._configuration.ech_config_list,
         )
         if self._configuration.certificate is not None and not isinstance(
             self._configuration.certificate, X509Certificate
@@ -1798,6 +1821,15 @@ class QuicConnection:
             try:
                 self.tls.handle_message(event.data, self._crypto_buffers)
                 self._push_crypto_data()
+            except tls.AlertECHRequired as exc:
+                # ECH was offered but rejected. Store retry_configs before
+                # propagating the error so the caller can retry.
+                self._ech_retry_configs = self.tls.ech_retry_configs
+                raise QuicConnectionError(
+                    error_code=QuicErrorCode.CRYPTO_ERROR + int(exc.description),
+                    frame_type=frame_type,
+                    reason_phrase=str(exc),
+                )
             except tls.Alert as exc:
                 raise QuicConnectionError(
                     error_code=QuicErrorCode.CRYPTO_ERROR + int(exc.description),

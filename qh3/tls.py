@@ -27,6 +27,7 @@ from ._hazmat import (
     EcPrivateKey,
     Ed25519PrivateKey,
     ExpiredCertificateError,
+    HpkeContext,
     InvalidNameCertificateError,
     KeyType,
     PrivateKeyInfo,
@@ -51,6 +52,8 @@ _HASHED_CERT_FILENAME_RE = re.compile(r"^[0-9a-fA-F]{8}\.[0-9]$")
 TLS_VERSION_GREASE = 0x0A0A
 TLS_VERSION_1_2 = 0x0303
 TLS_VERSION_1_3 = 0x0304
+
+ECH_VERSION = 0xFE0D
 
 T = TypeVar("T")
 
@@ -99,6 +102,7 @@ class AlertDescription(IntEnum):
     unknown_psk_identity = 115
     certificate_required = 116
     no_application_protocol = 120
+    ech_required = 121
 
 
 class Alert(Exception):
@@ -135,6 +139,14 @@ class AlertProtocolVersion(Alert):
 
 class AlertUnexpectedMessage(Alert):
     description = AlertDescription.unexpected_message
+
+
+class AlertUnsupportedExtension(Alert):
+    description = AlertDescription.unsupported_extension
+
+
+class AlertECHRequired(Alert):
+    description = AlertDescription.ech_required
 
 
 class Direction(IntEnum):
@@ -482,6 +494,8 @@ class ExtensionType(IntEnum):
     KEY_SHARE = 51
     QUIC_TRANSPORT_PARAMETERS = 0x0039
     ENCRYPTED_SERVER_NAME = 65486
+    ECH_OUTER_EXTENSIONS = 0xFD00
+    ENCRYPTED_CLIENT_HELLO = 0xFE0D
     GREASE = 0x0A0A
 
 
@@ -664,6 +678,174 @@ def pull_psk_binder(buf: Buffer) -> bytes:
 
 def push_psk_binder(buf: Buffer, binder: bytes) -> None:
     push_opaque(buf, 1, binder)
+
+
+# ECH CONFIG
+
+
+@dataclass
+class ECHCipherSuite:
+    """HPKE cipher suite: KDF + AEAD identifiers."""
+
+    kdf_id: int
+    aead_id: int
+
+
+@dataclass
+class ECHConfig:
+    """
+    Parsed ECHConfig structure (RFC 9849 Section 4).
+
+    version: Must be 0xFE0D
+    config_id: 1-byte config identifier
+    kem_id: HPKE KEM identifier (e.g. 0x0020 for DHKEM(X25519, HKDF-SHA256))
+    public_key: KEM public key bytes
+    cipher_suites: List of supported HPKE cipher suites
+    maximum_name_length: Max length of the SNI name
+    public_name: Public-facing server name (used in outer ClientHello)
+    extensions: Raw extension bytes
+    raw: The raw bytes of this single ECHConfig (version + length + contents)
+    """
+
+    version: int
+    config_id: int
+    kem_id: int
+    public_key: bytes
+    cipher_suites: list[ECHCipherSuite]
+    maximum_name_length: int
+    public_name: str
+    extensions: bytes
+    raw: bytes
+
+
+def parse_ech_config_list(data: bytes) -> list[ECHConfig]:
+    """
+    Parse an ECHConfigList (RFC 9849 Section 4).
+
+    Format:
+        ECHConfigList = uint16 length || ECHConfig...
+        ECHConfig = uint16 version || uint16 length || contents
+
+    For version 0xFE0D:
+        contents = uint8 config_id || uint16 kem_id ||
+                   HpkePublicKey(uint16 len || bytes) ||
+                   cipher_suites(uint16 len || (uint16 kdf_id, uint16 aead_id)...) ||
+                   uint8 maximum_name_length ||
+                   opaque public_name(uint16 len || bytes) ||
+                   extensions(uint16 len || bytes)
+    """
+    configs: list[ECHConfig] = []
+    buf = Buffer(data=data)
+
+    with pull_block(buf, 2) as list_length:
+        list_end = buf.tell() + list_length
+        while buf.tell() < list_end:
+            config_start = buf.tell()
+            version = buf.pull_uint16()
+            with pull_block(buf, 2) as contents_length:
+                contents_end = buf.tell() + contents_length
+                if version != ECH_VERSION:
+                    # Skip unknown versions
+                    buf.pull_bytes(contents_length)
+                    continue
+
+                config_id = buf.pull_uint8()
+                kem_id = buf.pull_uint16()
+                public_key = pull_opaque(buf, 2)
+
+                # cipher suites
+                cipher_suites: list[ECHCipherSuite] = []
+                with pull_block(buf, 2) as cs_length:
+                    cs_end = buf.tell() + cs_length
+                    while buf.tell() < cs_end:
+                        kdf_id = buf.pull_uint16()
+                        aead_id = buf.pull_uint16()
+                        cipher_suites.append(
+                            ECHCipherSuite(kdf_id=kdf_id, aead_id=aead_id)
+                        )
+
+                maximum_name_length = buf.pull_uint8()
+                public_name = pull_opaque(buf, 1).decode("ascii")
+                extensions = pull_opaque(buf, 2)
+
+                assert buf.tell() == contents_end
+
+                # raw includes version(2) + length(2) + contents
+                config_end = buf.tell()
+                raw = data[config_start:config_end]
+
+                configs.append(
+                    ECHConfig(
+                        version=version,
+                        config_id=config_id,
+                        kem_id=kem_id,
+                        public_key=public_key,
+                        cipher_suites=cipher_suites,
+                        maximum_name_length=maximum_name_length,
+                        public_name=public_name,
+                        extensions=extensions,
+                        raw=raw,
+                    )
+                )
+
+    return configs
+
+
+# Supported HPKE parameters for ECH
+_ECH_SUPPORTED_KEM = 0x0020  # DHKEM(X25519, HKDF-SHA256)
+_ECH_SUPPORTED_KDF = 0x0001  # HKDF-SHA256
+_ECH_SUPPORTED_AEADS = {
+    0x0001,
+    0x0002,
+    0x0003,
+}  # AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305
+
+
+def select_ech_config(
+    configs: list[ECHConfig],
+) -> tuple[ECHConfig, ECHCipherSuite] | None:
+    """
+    Select the first usable ECHConfig from a list.
+
+    Returns (config, cipher_suite) or None if no config is usable.
+
+    Selection criteria (RFC 9849 Section 6.1):
+    - Version must be 0xFE0D
+    - KEM must be DHKEM(X25519, HKDF-SHA256) (0x0020)
+    - At least one cipher suite must use HKDF-SHA256 (0x0001)
+      with a supported AEAD
+    - No mandatory extensions (we don't support any)
+    """
+    for config in configs:
+        if config.version != ECH_VERSION:
+            continue
+        if config.kem_id != _ECH_SUPPORTED_KEM:
+            continue
+
+        # Check for mandatory extensions we don't understand
+        if config.extensions:
+            # Parse extensions to check for mandatory ones
+            ext_buf = Buffer(data=config.extensions)
+            has_mandatory = False
+            try:
+                while not ext_buf.eof():
+                    ext_type = ext_buf.pull_uint16()
+                    pull_opaque(ext_buf, 2)
+                    # High bit set means mandatory
+                    if ext_type & 0x8000:
+                        has_mandatory = True
+                        break
+            except BufferReadError:
+                continue
+            if has_mandatory:
+                continue
+
+        # Find first supported cipher suite
+        for cs in config.cipher_suites:
+            if cs.kdf_id == _ECH_SUPPORTED_KDF and cs.aead_id in _ECH_SUPPORTED_AEADS:
+                return config, cs
+
+    return None
 
 
 # MESSAGES
@@ -970,6 +1152,7 @@ def push_new_session_ticket(buf: Buffer, new_session_ticket: NewSessionTicket) -
 class EncryptedExtensions:
     alpn_protocol: str | None = None
     early_data: bool = False
+    retry_configs: bytes | None = None
 
     other_extensions: list[tuple[int, bytes]] = field(default_factory=list)
 
@@ -989,6 +1172,9 @@ def pull_encrypted_extensions(buf: Buffer) -> EncryptedExtensions:
                 )[0]
             elif extension_type == ExtensionType.EARLY_DATA:
                 extensions.early_data = True
+            elif extension_type == ExtensionType.ENCRYPTED_CLIENT_HELLO:
+                # Server sends retry_configs when ECH is rejected
+                extensions.retry_configs = buf.pull_bytes(extension_length)
             else:
                 extensions.other_extensions.append(
                     (extension_type, buf.pull_bytes(extension_length))
@@ -1309,6 +1495,50 @@ SessionTicketFetcher = Callable[[bytes], Optional[SessionTicket]]
 SessionTicketHandler = Callable[[SessionTicket], None]
 
 
+def _build_grease_ech_extension() -> bytes:
+    """
+    Build a GREASE ECH extension payload for the outer ClientHello.
+
+    RFC 9849 Section 6.2: When ECH is not being offered, the client
+    SHOULD include a GREASE ECH extension to make ECH usage indistinguishable.
+
+    Format (ECHClientHello outer):
+        type(1) = 0x00
+        cipher_suite(4) = kdf_id(2) + aead_id(2)
+        config_id(1) = random
+        enc_len(2) + enc(32) = valid X25519 KEM output
+        payload_len(2) + payload = random (sized to be realistic)
+    """
+    # Use a real X25519 key exchange to get a valid enc value
+    # (GREASE spec says enc MUST be a valid KEM output, not random bytes)
+    kx = X25519KeyExchange()
+    enc = kx.public_key()  # 32 bytes, valid X25519 point
+
+    config_id = os.urandom(1)[0]
+
+    # HKDF-SHA256 + AES-128-GCM (mandatory suite)
+    kdf_id = 0x0001
+    aead_id = 0x0001
+
+    # Payload: random bytes, sized to match a realistic ECH payload.
+    # A real inner ClientHello is typically ~200-300 bytes after encryption.
+    # AES-128-GCM adds 16-byte tag. We target ~224 bytes total.
+    payload_len = 224
+    payload = os.urandom(payload_len)
+
+    buf = Buffer(capacity=1 + 4 + 1 + 2 + len(enc) + 2 + payload_len)
+    buf.push_uint8(0)  # type = outer
+    buf.push_uint16(kdf_id)
+    buf.push_uint16(aead_id)
+    buf.push_uint8(config_id)
+    buf.push_uint16(len(enc))
+    buf.push_bytes(enc)
+    buf.push_uint16(payload_len)
+    buf.push_bytes(payload)
+
+    return buf.data
+
+
 class Context:
     def __init__(
         self,
@@ -1325,6 +1555,7 @@ class Context:
         hostname_checks_common_name: bool = False,
         assert_fingerprint: str | None = None,
         verify_hostname: bool = True,
+        ech_config_list: bytes | None = None,
     ):
         # configuration
         self._alpn_protocols = alpn_protocols
@@ -1421,6 +1652,20 @@ class Context:
         self._x25519_private_key: X25519KeyExchange | None = None
         self._x25519_kyber_768_private_key: X25519ML768KeyExchange | None = None
 
+        # ECH (Encrypted Client Hello)
+        self._ech_config_list = ech_config_list
+        self._ech_config: ECHConfig | None = None
+        self._ech_cipher_suite: ECHCipherSuite | None = None
+        self._ech_hpke_context: HpkeContext | None = None
+        self._ech_offered: bool = False
+        self._ech_accepted: bool = False
+        self._ech_inner_random: bytes | None = None
+        self._ech_retry_configs: bytes | None = None
+        self._ech_inner_ch_hash: hashlib._Hash | None = None  # transcript for inner CH
+        self._ech_inner_ch_bytes: bytes | None = (
+            None  # serialized inner CH for transcript
+        )
+
         if is_client:
             self.client_random = os.urandom(32)
             self.legacy_session_id = b""
@@ -1444,6 +1689,21 @@ class Context:
         Returns True if session resumption was successfully used.
         """
         return self._session_resumed
+
+    @property
+    def ech_accepted(self) -> bool:
+        """
+        Returns True if ECH was offered and accepted by the server.
+        """
+        return self._ech_accepted
+
+    @property
+    def ech_retry_configs(self) -> bytes | None:
+        """
+        Returns retry_configs from server's EncryptedExtensions if ECH
+        was rejected. Can be used to retry with updated configs.
+        """
+        return self._ech_retry_configs
 
     def handle_message(
         self, input_data: bytes, output_buf: dict[Epoch, Buffer]
@@ -1598,6 +1858,61 @@ class Context:
 
         assert len(key_share), "no key share entries"
 
+        # Determine if we should offer real ECH
+        ech_config_selected = False
+        if self._ech_config_list is not None:
+            try:
+                configs = parse_ech_config_list(self._ech_config_list)
+                result = select_ech_config(configs)
+                if result is not None:
+                    self._ech_config, self._ech_cipher_suite = result
+                    ech_config_selected = True
+                    if self.__logger is not None:
+                        self.__logger.debug(
+                            "ECH: Selected config_id=%d, KEM=0x%04X, "
+                            "KDF=0x%04X, AEAD=0x%04X, public_name=%s",
+                            self._ech_config.config_id,
+                            self._ech_config.kem_id,
+                            self._ech_cipher_suite.kdf_id,
+                            self._ech_cipher_suite.aead_id,
+                            self._ech_config.public_name,
+                        )
+                else:
+                    if self.__logger is not None:
+                        self.__logger.debug(
+                            "ECH: No usable config found, falling back to GREASE"
+                        )
+            except Exception:
+                if self.__logger is not None:
+                    self.__logger.debug(
+                        "ECH: Failed to parse ECHConfigList, falling back to GREASE"
+                    )
+
+        # Build the outer ClientHello
+        extensions = list(self.handshake_extensions)
+
+        if ech_config_selected:
+            # Real ECH: build the full ECH extension
+            self._ech_offered = True
+            ech_extension_data = self._build_ech_extension(
+                key_share=key_share,
+                supported_groups=supported_groups,
+            )
+            extensions.append(
+                (ExtensionType.ENCRYPTED_CLIENT_HELLO, ech_extension_data)
+            )
+            # Outer CH uses the ECH config's public_name as SNI
+            outer_server_name = self._ech_config.public_name
+        else:
+            # GREASE ECH
+            ech_extension_data = _build_grease_ech_extension()
+            extensions.append(
+                (ExtensionType.ENCRYPTED_CLIENT_HELLO, ech_extension_data)
+            )
+            outer_server_name = self._server_name
+            if self.__logger is not None:
+                self.__logger.debug("ECH: GREASE extension added to ClientHello")
+
         hello = ClientHello(
             random=self.client_random,
             legacy_session_id=self.legacy_session_id,
@@ -1610,11 +1925,11 @@ class Context:
                 if (self.session_ticket or self.new_session_ticket_cb is not None)
                 else None
             ),
-            server_name=self._server_name,
+            server_name=outer_server_name,
             signature_algorithms=self._signature_algorithms,
             supported_groups=supported_groups,
             supported_versions=self._supported_versions,
-            other_extensions=self.handshake_extensions,
+            other_extensions=extensions,
         )
 
         # PSK
@@ -1667,8 +1982,382 @@ class Context:
 
         self._set_state(State.CLIENT_EXPECT_SERVER_HELLO)
 
+    def _build_ech_extension(
+        self,
+        key_share: list[KeyShareEntry],
+        supported_groups: list[int],
+    ) -> bytes:
+        """
+        Build a real ECH extension for the outer ClientHello.
+
+        This constructs the inner ClientHello (EncodedClientHelloInner),
+        encrypts it with HPKE, and returns the outer ECH extension payload.
+
+        The inner CH contains the real SNI (server_name), while the outer
+        CH will have its SNI replaced with the ECH config's public_name.
+
+        RFC 9849 Section 5.1:
+        EncodedClientHelloInner = inner CH without Handshake header,
+          with legacy_session_id = empty, padded to hide true SNI length.
+
+        The AAD is the complete outer ClientHello (serialized with Handshake
+        header) with the ECH payload field replaced by zeros.
+        """
+        assert self._ech_config is not None
+        assert self._ech_cipher_suite is not None
+
+        # Save the inner random for acceptance confirmation check later
+        self._ech_inner_random = os.urandom(32)
+
+        # Set up HPKE context first so we know enc
+        info = b"tls ech\x00" + self._ech_config.raw
+        self._ech_hpke_context = HpkeContext(
+            kem_id=self._ech_config.kem_id,
+            kdf_id=self._ech_cipher_suite.kdf_id,
+            aead_id=self._ech_cipher_suite.aead_id,
+            public_key=self._ech_config.public_key,
+            info=info,
+        )
+        enc = self._ech_hpke_context.enc()
+
+        # Determine which outer extensions to compress via ech_outer_extensions
+        compressed_types: list[int] = [
+            ExtensionType.KEY_SHARE,
+            ExtensionType.SUPPORTED_VERSIONS,
+            ExtensionType.SIGNATURE_ALGORITHMS,
+            ExtensionType.SUPPORTED_GROUPS,
+        ]
+        if self.session_ticket or self.new_session_ticket_cb is not None:
+            compressed_types.append(ExtensionType.PSK_KEY_EXCHANGE_MODES)
+        if self._alpn_protocols is not None:
+            compressed_types.append(ExtensionType.ALPN)
+        for ext_type, _ in self.handshake_extensions:
+            compressed_types.append(ext_type)
+
+        # Build ech_outer_extensions value: uint8 len + list of uint16 extension types
+        outer_ext_buf = Buffer(capacity=1 + len(compressed_types) * 2)
+        with push_block(outer_ext_buf, 1):
+            for ext_type in compressed_types:
+                outer_ext_buf.push_uint16(ext_type)
+
+        # Serialize EncodedClientHelloInner (inner CH body without Handshake header)
+        inner_buf = Buffer(capacity=4096)
+        inner_buf.push_uint16(TLS_VERSION_1_2)
+        inner_buf.push_bytes(self._ech_inner_random)
+        push_opaque(inner_buf, 1, b"")  # legacy_session_id MUST be empty
+        push_list(
+            inner_buf,
+            2,
+            inner_buf.push_uint16,
+            [int(x) for x in self._cipher_suites],
+        )
+        push_list(inner_buf, 1, inner_buf.push_uint8, self._legacy_compression_methods)
+
+        # Inner extensions
+        with push_block(inner_buf, 2):
+            # SERVER_NAME with real SNI
+            if self._server_name is not None:
+                with push_extension(inner_buf, ExtensionType.SERVER_NAME):
+                    with push_block(inner_buf, 2):
+                        inner_buf.push_uint8(0)
+                        push_opaque(inner_buf, 2, self._server_name.encode("ascii"))
+
+            # ECH inner indicator (type=0xFE0D, value=0x01 = inner type byte)
+            with push_extension(inner_buf, ExtensionType.ENCRYPTED_CLIENT_HELLO):
+                inner_buf.push_uint8(1)  # type = inner
+
+            # ech_outer_extensions to compress duplicated extensions
+            with push_extension(inner_buf, ExtensionType.ECH_OUTER_EXTENSIONS):
+                inner_buf.push_bytes(outer_ext_buf.data)
+
+        encoded_inner = inner_buf.data
+
+        # Pad to hide SNI length (RFC 9849 Section 6.1.3)
+        server_name_len = (
+            len(self._server_name.encode("ascii")) if self._server_name else 0
+        )
+        padding_needed = max(0, self._ech_config.maximum_name_length - server_name_len)
+        total_len = len(encoded_inner) + padding_needed
+        remainder = total_len % 32
+        if remainder != 0:
+            padding_needed += 32 - remainder
+        if padding_needed > 0:
+            encoded_inner += b"\x00" * padding_needed
+
+        # Compute ciphertext length (plaintext + AEAD tag)
+        aead_tag_len = 16
+        payload_len = len(encoded_inner) + aead_tag_len
+
+        # Build the ECH extension with zeroed payload for AAD computation
+        def _build_ech_header(payload: bytes) -> bytes:
+            """Build ECH extension structure with given payload."""
+            buf = Buffer(capacity=1 + 4 + 1 + 2 + len(enc) + 2 + len(payload))
+            buf.push_uint8(0)  # type = outer
+            buf.push_uint16(self._ech_cipher_suite.kdf_id)
+            buf.push_uint16(self._ech_cipher_suite.aead_id)
+            buf.push_uint8(self._ech_config.config_id)
+            buf.push_uint16(len(enc))
+            buf.push_bytes(enc)
+            buf.push_uint16(len(payload))
+            buf.push_bytes(payload)
+            return buf.data
+
+        # ECH extension with zeroed payload (for AAD)
+        ech_placeholder = _build_ech_header(b"\x00" * payload_len)
+
+        # Build the outer ClientHello with placeholder ECH for AAD
+        aad_extensions = list(self.handshake_extensions)
+        aad_extensions.append((ExtensionType.ENCRYPTED_CLIENT_HELLO, ech_placeholder))
+
+        aad_hello = ClientHello(
+            random=self.client_random,
+            legacy_session_id=self.legacy_session_id,
+            cipher_suites=[int(x) for x in self._cipher_suites],
+            legacy_compression_methods=self._legacy_compression_methods,
+            alpn_protocols=self._alpn_protocols,
+            key_share=key_share,
+            psk_key_exchange_modes=(
+                self._psk_key_exchange_modes
+                if (self.session_ticket or self.new_session_ticket_cb is not None)
+                else None
+            ),
+            server_name=self._ech_config.public_name,
+            signature_algorithms=self._signature_algorithms,
+            supported_groups=supported_groups,
+            supported_versions=self._supported_versions,
+            other_extensions=aad_extensions,
+        )
+
+        # Serialize AAD: outer ClientHello body WITHOUT the 4-byte Handshake header.
+        # RFC 9849 Section 5.2: "ClientHelloOuterAAD ... does not include the
+        # Handshake structure's four-byte header."
+        # push_client_hello() writes: msg_type(1) + length(3) + CH body
+        # We must skip those first 4 bytes.
+        aad_buf = Buffer(capacity=8192)
+        push_client_hello(aad_buf, aad_hello)
+        aad = aad_buf.data[4:]
+
+        # Encrypt the inner ClientHello
+        ciphertext = self._ech_hpke_context.seal(aad=aad, plaintext=encoded_inner)
+
+        # Build the final ECH extension with real ciphertext
+        result = _build_ech_header(ciphertext)
+
+        # Build the reconstructed inner ClientHello for transcript purposes.
+        # This MUST match what the server reconstructs from the
+        # EncodedClientHelloInner after decryption (RFC 9849 Section 5.1):
+        #   1. Start with the inner CH body from EncodedClientHelloInner
+        #   2. Replace empty legacy_session_id with outer CH's legacy_session_id
+        #   3. Replace ech_outer_extensions IN-PLACE with the referenced
+        #      outer CH extensions, in the ORDER they appear in the outer CH
+        #
+        # We CANNOT use push_client_hello() here because it uses a fixed
+        # extension order (GREASE, KEY_SHARE, etc.) that differs from the
+        # server's reconstruction order.
+        #
+        # The inner CH extension order is:
+        #   - Extensions before ech_outer_extensions (SERVER_NAME, ECH indicator)
+        #   - The outer extensions referenced by ech_outer_extensions
+        #     (in outer CH order: KEY_SHARE, SUPPORTED_VERSIONS,
+        #      SIGNATURE_ALGORITHMS, SUPPORTED_GROUPS, ...)
+        #
+        # Serialized WITH the Handshake header, since TLS transcript hashes
+        # always include Handshake headers.
+
+        inner_ch_buf = Buffer(capacity=8192)
+        inner_ch_buf.push_uint8(HandshakeType.CLIENT_HELLO)
+        with push_block(inner_ch_buf, 3):
+            inner_ch_buf.push_uint16(TLS_VERSION_1_2)
+            inner_ch_buf.push_bytes(self._ech_inner_random)
+            push_opaque(inner_ch_buf, 1, self.legacy_session_id)  # restored from outer
+            push_list(
+                inner_ch_buf,
+                2,
+                inner_ch_buf.push_uint16,
+                [int(x) for x in self._cipher_suites],
+            )
+            push_list(
+                inner_ch_buf,
+                1,
+                inner_ch_buf.push_uint8,
+                self._legacy_compression_methods,
+            )
+
+            # Extensions — must match the server's reconstruction order
+            with push_block(inner_ch_buf, 2):
+                # 1. Extensions from inner CH that come before ech_outer_extensions
+                # SERVER_NAME with real SNI
+                if self._server_name is not None:
+                    with push_extension(inner_ch_buf, ExtensionType.SERVER_NAME):
+                        with push_block(inner_ch_buf, 2):
+                            inner_ch_buf.push_uint8(0)
+                            push_opaque(
+                                inner_ch_buf,
+                                2,
+                                self._server_name.encode("ascii"),
+                            )
+
+                # ECH inner indicator (type=0xFE0D, value=0x01)
+                with push_extension(inner_ch_buf, ExtensionType.ENCRYPTED_CLIENT_HELLO):
+                    inner_ch_buf.push_uint8(1)  # type = inner
+
+                # 2. Extensions from outer CH, replacing ech_outer_extensions
+                # These are in the ORDER they appear in the outer ClientHello
+                # (which is the push_client_hello serialization order):
+                #   KEY_SHARE, SUPPORTED_VERSIONS, SIGNATURE_ALGORITHMS,
+                #   SUPPORTED_GROUPS, PSK_KEY_EXCHANGE_MODES, ALPN,
+                #   handshake_extensions...
+
+                with push_extension(inner_ch_buf, ExtensionType.KEY_SHARE):
+                    push_list(
+                        inner_ch_buf,
+                        2,
+                        partial(push_key_share, inner_ch_buf),
+                        key_share,
+                    )
+
+                with push_extension(inner_ch_buf, ExtensionType.SUPPORTED_VERSIONS):
+                    push_list(
+                        inner_ch_buf,
+                        1,
+                        inner_ch_buf.push_uint16,
+                        self._supported_versions,
+                    )
+
+                with push_extension(inner_ch_buf, ExtensionType.SIGNATURE_ALGORITHMS):
+                    push_list(
+                        inner_ch_buf,
+                        2,
+                        inner_ch_buf.push_uint16,
+                        self._signature_algorithms,
+                    )
+
+                with push_extension(inner_ch_buf, ExtensionType.SUPPORTED_GROUPS):
+                    push_list(
+                        inner_ch_buf,
+                        2,
+                        inner_ch_buf.push_uint16,
+                        supported_groups,
+                    )
+
+                if self.session_ticket or self.new_session_ticket_cb is not None:
+                    with push_extension(
+                        inner_ch_buf, ExtensionType.PSK_KEY_EXCHANGE_MODES
+                    ):
+                        push_list(
+                            inner_ch_buf,
+                            1,
+                            inner_ch_buf.push_uint8,
+                            self._psk_key_exchange_modes,
+                        )
+
+                if self._alpn_protocols is not None:
+                    with push_extension(inner_ch_buf, ExtensionType.ALPN):
+                        push_list(
+                            inner_ch_buf,
+                            2,
+                            partial(push_alpn_protocol, inner_ch_buf),
+                            self._alpn_protocols,
+                        )
+
+                # handshake_extensions (from outer CH's other_extensions)
+                for ext_type, ext_value in self.handshake_extensions:
+                    with push_extension(inner_ch_buf, ext_type):
+                        inner_ch_buf.push_bytes(ext_value)
+
+        self._ech_inner_ch_bytes = inner_ch_buf.data
+
+        if self.__logger is not None:
+            self.__logger.debug(
+                "ECH: Built real ECH extension (config_id=%d, enc=%d bytes, "
+                "payload=%d bytes, inner_ch=%d bytes)",
+                self._ech_config.config_id,
+                len(enc),
+                len(ciphertext),
+                len(encoded_inner),
+            )
+
+        return result
+
+    def _check_ech_acceptance(
+        self,
+        peer_hello: ServerHello,
+        cipher_suite: CipherSuite,
+        raw_server_hello: bytes,
+    ) -> bool:
+        """
+        Check ECH acceptance confirmation per RFC 9849 Section 7.2.
+
+        The server signals ECH acceptance by embedding a confirmation value
+        in the last 8 bytes of ServerHello.random. To verify:
+        1. Zero the last 8 bytes of ServerHello.random in the raw wire bytes
+        2. Compute transcript hash over inner_CH + modified_ServerHello
+        3. Compute accept_confirmation = HKDF-Expand-Label(
+               HKDF-Extract(0, inner_random),
+               "ech accept confirmation",
+               transcript_hash, 8)
+        4. Compare with original last 8 bytes of ServerHello.random
+
+        IMPORTANT: We must use the original wire bytes (raw_server_hello) and
+        modify them directly, rather than re-serializing with push_server_hello(),
+        because push_server_hello() may reorder extensions differently from the
+        original wire format.
+        """
+        assert self._ech_inner_random is not None
+        assert self._ech_inner_ch_bytes is not None
+
+        # Extract the candidate confirmation from ServerHello.random
+        candidate = peer_hello.random[24:32]
+
+        # Modify the raw wire bytes: zero the last 8 bytes of random.
+        # ServerHello wire format:
+        #   Byte 0: HandshakeType (0x02)
+        #   Bytes 1-3: length (3 bytes)
+        #   Bytes 4-5: version (0x0303)
+        #   Bytes 6-37: random (32 bytes)
+        # Last 8 bytes of random are at offset 30-37 (inclusive).
+        modified_sh = bytearray(raw_server_hello)
+        modified_sh[30:38] = b"\x00" * 8
+
+        # Compute transcript hash: H(inner_CH || modified_SH)
+        algorithm = cipher_suite_hash(cipher_suite)
+        transcript_hash = hashlib.new(f"sha{algorithm}")
+        transcript_hash.update(self._ech_inner_ch_bytes)
+        transcript_hash.update(bytes(modified_sh))
+        transcript_ech_conf = transcript_hash.digest()
+
+        # Compute accept_confirmation:
+        #   HKDF-Expand-Label(
+        #       HKDF-Extract(0, ClientHelloInner.random),
+        #       "ech accept confirmation",
+        #       transcript_ech_conf, 8)
+        digest_size = int(algorithm / 8)
+        prk = hkdf_extract(
+            algorithm=algorithm,
+            salt=bytes(digest_size),
+            key_material=self._ech_inner_random,
+        )
+        accept_confirmation = hkdf_expand_label(
+            algorithm=algorithm,
+            secret=prk,
+            label=b"ech accept confirmation",
+            hash_value=transcript_ech_conf,
+            length=8,
+        )
+
+        if self.__logger is not None:
+            self.__logger.debug(
+                "ECH acceptance check: match=%s",
+                accept_confirmation == candidate,
+            )
+
+        return accept_confirmation == candidate
+
     def _client_handle_hello(self, input_buf: Buffer, output_buf: Buffer) -> None:
         peer_hello = pull_server_hello(input_buf)
+        # Capture raw wire bytes AFTER parsing so that pos has advanced
+        # (Buffer.data returns data[0..pos]).
+        raw_server_hello = input_buf.data
 
         cipher_suite = negotiate(
             self._cipher_suites,
@@ -1678,6 +2367,20 @@ class Context:
         )
         assert peer_hello.compression_method in self._legacy_compression_methods
         assert peer_hello.supported_version in self._supported_versions
+
+        # ECH acceptance detection (RFC 9849 Section 6.1.4 / 7.2)
+        # If we offered real ECH, check if the server accepted it by
+        # verifying the confirmation signal in the last 8 bytes of
+        # ServerHello.random.
+        if self._ech_offered and self._ech_inner_random is not None:
+            self._ech_accepted = self._check_ech_acceptance(
+                peer_hello, cipher_suite, raw_server_hello
+            )
+            if self.__logger is not None:
+                self.__logger.debug(
+                    "ECH: Server %s ECH",
+                    "accepted" if self._ech_accepted else "rejected",
+                )
 
         # select key schedule
         if peer_hello.pre_shared_key is not None:
@@ -1727,6 +2430,13 @@ class Context:
 
         assert shared_key is not None
 
+        if self._ech_accepted:
+            # When ECH is accepted, the transcript uses the inner ClientHello.
+            # Replace the outer CH transcript with the inner CH transcript.
+            assert self._ech_inner_ch_bytes is not None
+            self.key_schedule.hash = hashlib.new(f"sha{self.key_schedule.algorithm}")
+            self.key_schedule.hash.update(self._ech_inner_ch_bytes)
+
         self.key_schedule.update_hash(input_buf.data)
         self.key_schedule.extract(shared_key)
 
@@ -1744,6 +2454,22 @@ class Context:
         self.received_extensions = encrypted_extensions.other_extensions
         if self.alpn_cb:
             self.alpn_cb(self.alpn_negotiated)
+
+        # ECH rejection handling (RFC 9849 Section 6.1.6)
+        if encrypted_extensions.retry_configs is not None:
+            if self._ech_accepted:
+                # Server sent retry_configs in response to the inner variant —
+                # this is forbidden (RFC 9849 Section 5)
+                raise AlertUnsupportedExtension
+            if self._ech_offered:
+                # ECH was offered but rejected. Store retry_configs for the
+                # connection layer to use for automatic retry.
+                self._ech_retry_configs = encrypted_extensions.retry_configs
+                if self.__logger is not None:
+                    self.__logger.debug(
+                        "ECH: Server rejected ECH, provided %d bytes of retry_configs",
+                        len(encrypted_extensions.retry_configs),
+                    )
 
         self._setup_traffic_protection(
             Direction.ENCRYPT, Epoch.HANDSHAKE, b"c hs traffic"
@@ -1818,13 +2544,24 @@ class Context:
 
         # check certificate
         if self._verify_mode != ssl.CERT_NONE:
+            # When ECH was offered but rejected, RFC 9849 Section 7.1.1 requires
+            # the client to verify the certificate against the public_name
+            # (from the ECHConfig), not the original server_name.
+            if (
+                self._ech_offered
+                and not self._ech_accepted
+                and self._ech_config is not None
+            ):
+                cert_server_name = self._ech_config.public_name
+            else:
+                cert_server_name = self._server_name
             verify_certificate(
                 cadata=self._cadata,
                 cafile=self._cafile,
                 capath=self._capath,
                 certificate=self._peer_certificate,
                 chain=self._peer_certificate_chain,
-                server_name=self._server_name,
+                server_name=cert_server_name,
                 assert_server_name=self._verify_hostname,
                 ocsp_response=self._ocsp_response,
             )
@@ -1949,6 +2686,18 @@ class Context:
         )
 
         self._set_state(State.CLIENT_POST_HANDSHAKE)
+
+        # ECH rejection: after completing the outer handshake (authenticating
+        # for public_name), abort with ech_required alert per RFC 9849 Section 6.1.6.
+        # The caller (QUIC connection) should catch this, read ech_retry_configs,
+        # and optionally retry with updated configs.
+        if self._ech_offered and not self._ech_accepted:
+            if self.__logger is not None:
+                self.__logger.debug(
+                    "ECH: Handshake completed for outer (public_name), "
+                    "raising ech_required alert"
+                )
+            raise AlertECHRequired("ECH was offered but rejected by the server")
 
     def _client_handle_new_session_ticket(self, input_buf: Buffer) -> None:
         new_session_ticket = pull_new_session_ticket(input_buf)
