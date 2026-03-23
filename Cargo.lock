@@ -690,9 +690,9 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "ls-qpack-rs"
-version = "0.2.3"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60d7e97d87c84da45459a83655bffaa97e47e5289eadb6da4a1752c6527518d0"
+checksum = "dc8d4c5fdac4605bae648df97e25fa4febe6fd73f179cb40c1d84c3ad239aa74"
 dependencies = [
  "libc",
  "ls-qpack-rs-sys",
@@ -700,9 +700,9 @@ dependencies = [
 
 [[package]]
 name = "ls-qpack-rs-sys"
-version = "0.2.3"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90f629dfb83a8aac7ca8e736da0e9eb6b1eda439e57637c20e82b2752dd602a6"
+checksum = "6aa24f71119540e6dfe671981a0ebcb6e5376514cb451cc33c1e9cd925d69afd"
 dependencies = [
  "bindgen 0.71.1",
  "cmake",
