@@ -616,25 +616,17 @@ jobs:
       - name: Collected dists
         run: |
           tree dist
-      - name: Fix wheels with trailing zip data
+      - name: Repack wheels to fix trailing zip data
         run: |
           python3 -c "
-          import glob, os
-
+          import glob, os, zipfile
           for whl in glob.glob('dist/*.whl'):
-              file_size = os.path.getsize(whl)
-              with open(whl, 'rb') as f:
-                  content = f.read()
-              eocd_pos = content.rfind(b'\x50\x4b\x05\x06')
-              if eocd_pos < 0:
-                  continue
-              comment_len = int.from_bytes(content[eocd_pos+20:eocd_pos+22], 'little')
-              expected = eocd_pos + 22 + comment_len
-              if expected >= file_size:
-                  continue
-              print(f'Truncating {whl}: {file_size} -> {expected} bytes (removing {file_size - expected} trailing bytes)')
-              with open(whl, 'r+b') as f:
-                  f.truncate(expected)
+              tmp = whl + '.tmp'
+              with zipfile.ZipFile(whl, 'r') as src, zipfile.ZipFile(tmp, 'w') as dst:
+                  for item in src.infolist():
+                      dst.writestr(item, src.read(item.filename), compress_type=item.compress_type, compresslevel=9)
+              os.replace(tmp, whl)
+              print(f'Repacked {os.path.basename(whl)}')
           "
       - name: Generate hashes
         id: compute  #  needs.checksum.outputs.hashes
@@ -673,25 +665,17 @@ jobs:
           pattern: wheels-*
           path: dist
           merge-multiple: true
-      - name: Fix wheels with trailing zip data
+      - name: Repack wheels to fix trailing zip data
         run: |
           python3 -c "
-          import glob, os
-
+          import glob, os, zipfile
           for whl in glob.glob('dist/*.whl'):
-              file_size = os.path.getsize(whl)
-              with open(whl, 'rb') as f:
-                  content = f.read()
-              eocd_pos = content.rfind(b'\x50\x4b\x05\x06')
-              if eocd_pos < 0:
-                  continue
-              comment_len = int.from_bytes(content[eocd_pos+20:eocd_pos+22], 'little')
-              expected = eocd_pos + 22 + comment_len
-              if expected >= file_size:
-                  continue
-              print(f'Truncating {whl}: {file_size} -> {expected} bytes (removing {file_size - expected} trailing bytes)')
-              with open(whl, 'r+b') as f:
-                  f.truncate(expected)
+              tmp = whl + '.tmp'
+              with zipfile.ZipFile(whl, 'r') as src, zipfile.ZipFile(tmp, 'w') as dst:
+                  for item in src.infolist():
+                      dst.writestr(item, src.read(item.filename), compress_type=item.compress_type, compresslevel=9)
+              os.replace(tmp, whl)
+              print(f'Repacked {os.path.basename(whl)}')
           "
       - name: "Upload dists to GitHub Release"
         env:
