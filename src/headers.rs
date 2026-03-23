@@ -53,12 +53,9 @@ impl QpackEncoder {
     }
 
     pub fn feed_decoder<'a>(&mut self, py: Python<'a>, data: Bound<'_, PyBytes>) -> PyResult<()> {
-
         let input_data = data.as_bytes();
 
-        let res = py.detach(|| {
-            self.encoder.feed(input_data)
-        });
+        let res = py.detach(|| self.encoder.feed(input_data));
 
         match res {
             Ok(_) => Ok(()),
@@ -87,8 +84,7 @@ impl QpackEncoder {
         }
 
         let res = py.detach(|| {
-            self
-                .encoder
+            self.encoder
                 .encode_all(StreamId::new(stream_id), decoded_vec)
         });
 
@@ -120,9 +116,7 @@ impl QpackDecoder {
     pub fn feed_encoder<'a>(&mut self, py: Python<'a>, data: Bound<'_, PyBytes>) -> PyResult<()> {
         let input_data = data.as_bytes();
 
-        let res = py.detach(|| {
-            self.decoder.feed(input_data)
-        });
+        let res = py.detach(|| self.decoder.feed(input_data));
 
         match res {
             Ok(_) => Ok(()),
@@ -138,14 +132,9 @@ impl QpackDecoder {
         stream_id: u64,
         data: Bound<'_, PyBytes>,
     ) -> PyResult<Bound<'a, PyTuple>> {
-
         let input_data = data.as_bytes();
 
-        let output = py.detach(|| {
-            self
-                .decoder
-                .decode(StreamId::new(stream_id), input_data)
-        });
+        let output = py.detach(|| self.decoder.decode(StreamId::new(stream_id), input_data));
 
         match output {
             Ok(DecoderOutput::Done(ref buffer)) => {
@@ -193,9 +182,7 @@ impl QpackDecoder {
         py: Python<'a>,
         stream_id: u64,
     ) -> PyResult<Bound<'a, PyTuple>> {
-        let output = py.detach(|| {
-            self.decoder.unblocked(StreamId::new(stream_id))
-        });
+        let output = py.detach(|| self.decoder.unblocked(StreamId::new(stream_id)));
 
         if output.is_none() {
             return Err(DecoderStreamError::new_err("stream id is unknown"));
