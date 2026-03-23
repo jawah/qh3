@@ -9,6 +9,7 @@ mod chain;
 mod crl;
 mod headers;
 mod hpk;
+mod hpke;
 mod intldomain;
 mod ocsp;
 mod pkcs8;
@@ -36,6 +37,7 @@ pub use self::headers::{
     StreamBlocked,
 };
 pub use self::hpk::QUICHeaderProtection;
+pub use self::hpke::HpkeContext;
 pub use self::intldomain::{idna_decode, idna_encode};
 pub use self::ocsp::{OCSPCertStatus, OCSPRequest, OCSPResponse, OCSPResponseStatus, ReasonFlags};
 pub use self::pkcs8::{KeyType, PrivateKeyInfo};
@@ -113,6 +115,8 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ECDHP384KeyExchange>()?;
     m.add_class::<ECDHP521KeyExchange>()?;
     m.add_class::<X25519ML768KeyExchange>()?;
+    // HPKE for Encrypted Client Hello (ECH)
+    m.add_class::<HpkeContext>()?;
     // General Crypto Error
     m.add("CryptoError", py.get_type::<CryptoError>())?;
     // Niquests OCSP helper

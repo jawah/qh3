@@ -122,6 +122,18 @@ class QuicConfiguration:
     )
     verify_mode: int | None = None
 
+    ech_config_list: bytes | None = None
+    """
+    An ECHConfigList (wire format) for Encrypted Client Hello.
+
+    When set, the client will attempt real ECH with the server. When not set
+    (default), the client will send a GREASE ECH extension instead.
+
+    The user is responsible for obtaining this value from DNS HTTPS/SVCB records.
+
+    .. note:: Client side only!
+    """
+
     def load_cert_chain(
         self,
         certfile: str | bytes | PathLike,

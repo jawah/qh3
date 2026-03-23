@@ -1,3 +1,24 @@
+1.7.0 (2026-03-23)
+====================
+
+**Added**
+- Encrypted Hello (ECH) support based on RFC 9849 specifications.
+  We do not support ECH for the server-side. Only intended for client-side usage.
+
+**Changed**
+- Updated aws-lc-rs v1.16.0 to v1.16.2 (aws-lc-sys/aws-lc relicensed to Apache-2.0)
+- Updated lsqpack implementation v2.6.1 (e33719e) to v2.6.2 (1e9c5b8) via ls-qpack-rs v0.3.0.
+
+**Fixed**
+- True GREASE following RFC 8701.
+
+**Security**
+- Fixed AWS-LC X.509 Name Constraints Bypass via Wildcard/Unicode CN (GHSA-394x-vwmw-crm3)
+- Fixed CRL Distribution Point Scope Check Logic Error in AWS-LC (GHSA-9f94-5g5w-gf6r)
+
+**Misc**
+- Release the GIL during qpack encode and decode operations.
+
 1.6.0 (2026-03-01)
 ====================
 

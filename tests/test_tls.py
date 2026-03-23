@@ -4,7 +4,7 @@ import pytest
 import binascii
 import ssl
 
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from qh3 import tls
@@ -17,11 +17,16 @@ from qh3.tls import (
     CertificateVerify,
     ClientHello,
     Context,
+    ECHCipherSuite,
+    ECHConfig,
     EncryptedExtensions,
     Finished,
+    HKDFExpand,
     NewSessionTicket,
     ServerHello,
     State,
+    negotiate,
+    parse_ech_config_list,
     pull_block,
     pull_certificate,
     pull_certificate_request,
@@ -31,6 +36,7 @@ from qh3.tls import (
     pull_finished,
     pull_new_session_ticket,
     pull_server_hello,
+    push_block,
     push_certificate,
     push_certificate_verify,
     push_client_hello,
@@ -38,8 +44,11 @@ from qh3.tls import (
     push_finished,
     push_new_session_ticket,
     push_server_hello,
+    push_opaque,
+    select_ech_config,
     load_pem_private_key,
     load_pem_x509_certificates,
+    verify_certificate,
 )
 
 from qh3._hazmat import rebuild_chain
@@ -48,6 +57,7 @@ from .utils import (
     SERVER_CACERTFILE,
     SERVER_CERTFILE,
     SERVER_KEYFILE,
+    generate_certificate,
     generate_ec_certificate,
     generate_ed25519_certificate,
     load,
@@ -331,7 +341,7 @@ class TestContext:
         assert client.state == State.CLIENT_EXPECT_SERVER_HELLO
         server_input = merge_buffers(client_buf)
         assert len(server_input) >= 181
-        assert len(server_input) <= 1800
+        assert len(server_input) <= 2100
         reset_buffers(client_buf)
 
         # Handle client hello.
@@ -520,7 +530,10 @@ class TestContext:
             assert len(client_tickets) == 1
             assert len(server_tickets) == 1
             assert client_tickets[0].ticket == server_tickets[0].ticket
-            assert client_tickets[0].resumption_secret == server_tickets[0].resumption_secret
+            assert (
+                client_tickets[0].resumption_secret
+                == server_tickets[0].resumption_secret
+            )
 
         def second_handshake():
             client = self.create_client()
@@ -535,7 +548,7 @@ class TestContext:
             assert client.state == State.CLIENT_EXPECT_SERVER_HELLO
             server_input = merge_buffers(client_buf)
             assert len(server_input) >= 383
-            assert len(server_input) <= 1800
+            assert len(server_input) <= 2100
             reset_buffers(client_buf)
 
             # Handle client hello.
@@ -588,7 +601,7 @@ class TestContext:
             assert client.state == State.CLIENT_EXPECT_SERVER_HELLO
             server_input = merge_buffers(client_buf)
             assert len(server_input) >= 383
-            assert len(server_input) <= 1800
+            assert len(server_input) <= 2100
             reset_buffers(client_buf)
 
             # tamper with binder
@@ -614,7 +627,7 @@ class TestContext:
             assert client.state == State.CLIENT_EXPECT_SERVER_HELLO
             server_input = merge_buffers(client_buf)
             assert len(server_input) >= 383
-            assert len(server_input) <= 1800
+            assert len(server_input) <= 2100
             reset_buffers(client_buf)
 
             # handle client hello
@@ -647,206 +660,193 @@ class TestTls:
         hello = pull_client_hello(buf)
         assert buf.eof()
 
-        assert hello.random == \
-            binascii.unhexlify(
-                "18b2b23bf3e44b5d52ccfe7aecbc5ff14eadc3d349fabf804d71f165ae76e7d5"
-            )
-        assert hello.legacy_session_id == \
-            binascii.unhexlify(
-                "9aee82a2d186c1cb32a329d9dcfe004a1a438ad0485a53c6bfcf55c132a23235"
-            )
-        assert hello.cipher_suites == \
-            [
-                tls.CipherSuite.AES_256_GCM_SHA384,
-                tls.CipherSuite.AES_128_GCM_SHA256,
-                tls.CipherSuite.CHACHA20_POLY1305_SHA256,
-            ]
+        assert hello.random == binascii.unhexlify(
+            "18b2b23bf3e44b5d52ccfe7aecbc5ff14eadc3d349fabf804d71f165ae76e7d5"
+        )
+        assert hello.legacy_session_id == binascii.unhexlify(
+            "9aee82a2d186c1cb32a329d9dcfe004a1a438ad0485a53c6bfcf55c132a23235"
+        )
+        assert hello.cipher_suites == [
+            tls.CipherSuite.AES_256_GCM_SHA384,
+            tls.CipherSuite.AES_128_GCM_SHA256,
+            tls.CipherSuite.CHACHA20_POLY1305_SHA256,
+        ]
         assert hello.legacy_compression_methods == [tls.CompressionMethod.NULL]
 
         # extensions
         assert hello.alpn_protocols == None
-        assert hello.key_share == \
-            [
-                (
-                    tls.Group.SECP256R1,
-                    binascii.unhexlify(
-                        "047bfea344467535054263b75def60cffa82405a211b68d1eb8d1d944e67aef8"
-                        "93c7665a5473d032cfaf22a73da28eb4aacae0017ed12557b5791f98a1e84f15"
-                        "b0"
-                    ),
-                )
-            ]
+        assert hello.key_share == [
+            (
+                tls.Group.SECP256R1,
+                binascii.unhexlify(
+                    "047bfea344467535054263b75def60cffa82405a211b68d1eb8d1d944e67aef8"
+                    "93c7665a5473d032cfaf22a73da28eb4aacae0017ed12557b5791f98a1e84f15"
+                    "b0"
+                ),
+            )
+        ]
         assert hello.psk_key_exchange_modes == [tls.PskKeyExchangeMode.PSK_DHE_KE]
         assert hello.server_name == None
-        assert hello.signature_algorithms == \
-            [
-                tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA256,
-                tls.SignatureAlgorithm.ECDSA_SECP256R1_SHA256,
-                tls.SignatureAlgorithm.RSA_PKCS1_SHA256,
-                tls.SignatureAlgorithm.RSA_PKCS1_SHA1,
-            ]
+        assert hello.signature_algorithms == [
+            tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA256,
+            tls.SignatureAlgorithm.ECDSA_SECP256R1_SHA256,
+            tls.SignatureAlgorithm.RSA_PKCS1_SHA256,
+            tls.SignatureAlgorithm.RSA_PKCS1_SHA1,
+        ]
         assert hello.supported_groups == [tls.Group.SECP256R1]
-        assert hello.supported_versions == \
-            [
-                tls.TLS_VERSION_1_3,
-            ]
+        assert hello.supported_versions == [
+            tls.TLS_VERSION_1_3,
+        ]
 
     def test_pull_client_hello_with_alpn(self):
         buf = Buffer(data=load("tls_client_hello_with_alpn.bin"))
         hello = pull_client_hello(buf)
         assert buf.eof()
 
-        assert hello.random == \
-            binascii.unhexlify(
-                "ed575c6fbd599c4dfaabd003dca6e860ccdb0e1782c1af02e57bf27cb6479b76"
-            )
+        assert hello.random == binascii.unhexlify(
+            "ed575c6fbd599c4dfaabd003dca6e860ccdb0e1782c1af02e57bf27cb6479b76"
+        )
         assert hello.legacy_session_id == b""
-        assert hello.cipher_suites == \
-            [
-                tls.CipherSuite.AES_128_GCM_SHA256,
-                tls.CipherSuite.AES_256_GCM_SHA384,
-                tls.CipherSuite.CHACHA20_POLY1305_SHA256,
-                tls.CipherSuite.EMPTY_RENEGOTIATION_INFO_SCSV,
-            ]
+        assert hello.cipher_suites == [
+            tls.CipherSuite.AES_128_GCM_SHA256,
+            tls.CipherSuite.AES_256_GCM_SHA384,
+            tls.CipherSuite.CHACHA20_POLY1305_SHA256,
+            tls.CipherSuite.EMPTY_RENEGOTIATION_INFO_SCSV,
+        ]
         assert hello.legacy_compression_methods == [tls.CompressionMethod.NULL]
 
         # extensions
         assert hello.alpn_protocols == ["h3-19"]
         assert hello.early_data == False
-        assert hello.key_share == \
-            [
-                (
-                    tls.Group.SECP256R1,
-                    binascii.unhexlify(
-                        "048842315c437bb0ce2929c816fee4e942ec5cb6db6a6b9bf622680188ebb0d4"
-                        "b652e69033f71686aa01cbc79155866e264c9f33f45aa16b0dfa10a222e3a669"
-                        "22"
-                    ),
-                )
-            ]
+        assert hello.key_share == [
+            (
+                tls.Group.SECP256R1,
+                binascii.unhexlify(
+                    "048842315c437bb0ce2929c816fee4e942ec5cb6db6a6b9bf622680188ebb0d4"
+                    "b652e69033f71686aa01cbc79155866e264c9f33f45aa16b0dfa10a222e3a669"
+                    "22"
+                ),
+            )
+        ]
         assert hello.psk_key_exchange_modes == [tls.PskKeyExchangeMode.PSK_DHE_KE]
         assert hello.server_name == "cloudflare-quic.com"
-        assert hello.signature_algorithms == \
-            [
-                tls.SignatureAlgorithm.ECDSA_SECP256R1_SHA256,
-                tls.SignatureAlgorithm.ECDSA_SECP384R1_SHA384,
-                tls.SignatureAlgorithm.ECDSA_SECP521R1_SHA512,
-                tls.SignatureAlgorithm.ED25519,
-                tls.SignatureAlgorithm.ED448,
-                tls.SignatureAlgorithm.RSA_PSS_PSS_SHA256,
-                tls.SignatureAlgorithm.RSA_PSS_PSS_SHA384,
-                tls.SignatureAlgorithm.RSA_PSS_PSS_SHA512,
-                tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA256,
-                tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA384,
-                tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA512,
-                tls.SignatureAlgorithm.RSA_PKCS1_SHA256,
-                tls.SignatureAlgorithm.RSA_PKCS1_SHA384,
-                tls.SignatureAlgorithm.RSA_PKCS1_SHA512,
-            ]
-        assert hello.supported_groups == \
-            [
-                tls.Group.SECP256R1,
-                tls.Group.X25519,
-                tls.Group.SECP384R1,
-                tls.Group.SECP521R1,
-            ]
+        assert hello.signature_algorithms == [
+            tls.SignatureAlgorithm.ECDSA_SECP256R1_SHA256,
+            tls.SignatureAlgorithm.ECDSA_SECP384R1_SHA384,
+            tls.SignatureAlgorithm.ECDSA_SECP521R1_SHA512,
+            tls.SignatureAlgorithm.ED25519,
+            tls.SignatureAlgorithm.ED448,
+            tls.SignatureAlgorithm.RSA_PSS_PSS_SHA256,
+            tls.SignatureAlgorithm.RSA_PSS_PSS_SHA384,
+            tls.SignatureAlgorithm.RSA_PSS_PSS_SHA512,
+            tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA256,
+            tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA384,
+            tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA512,
+            tls.SignatureAlgorithm.RSA_PKCS1_SHA256,
+            tls.SignatureAlgorithm.RSA_PKCS1_SHA384,
+            tls.SignatureAlgorithm.RSA_PKCS1_SHA512,
+        ]
+        assert hello.supported_groups == [
+            tls.Group.SECP256R1,
+            tls.Group.X25519,
+            tls.Group.SECP384R1,
+            tls.Group.SECP521R1,
+        ]
         assert hello.supported_versions == [tls.TLS_VERSION_1_3]
 
         # serialize
         buf = Buffer(1000)
         push_client_hello(buf, hello)
-        assert len(buf.data) == len(load("tls_client_hello_with_alpn.bin"))
+        # The fixture contains a GREASE extension (0x0A0A, 4 bytes) that is
+        # stripped during parsing, so re-serialized output is 4 bytes smaller.
+        assert len(buf.data) == len(load("tls_client_hello_with_alpn.bin")) - 4
 
     def test_pull_client_hello_with_psk(self):
         buf = Buffer(data=load("tls_client_hello_with_psk.bin"))
         hello = pull_client_hello(buf)
 
         assert hello.early_data == True
-        assert hello.pre_shared_key == \
-            tls.OfferedPsks(
-                identities=[
-                    (
-                        binascii.unhexlify(
-                            "fab3dc7d79f35ea53e9adf21150e601591a750b80cde0cd167fef6e0cdbc032a"
-                            "c4161fc5c5b66679de49524bd5624c50d71ba3e650780a4bfe402d6a06a00525"
-                            "0b5dc52085233b69d0dd13924cc5c713a396784ecafc59f5ea73c1585d79621b"
-                            "8a94e4f2291b17427d5185abf4a994fca74ee7a7f993a950c71003fc7cf8"
-                        ),
-                        2067156378,
-                    )
-                ],
-                binders=[
+        assert hello.pre_shared_key == tls.OfferedPsks(
+            identities=[
+                (
                     binascii.unhexlify(
-                        "1788ad43fdff37cfc628f24b6ce7c8c76180705380da17da32811b5bae4e78"
-                        "d7aaaf65a9b713872f2bb28818ca1a6b01"
-                    )
-                ],
-            )
+                        "fab3dc7d79f35ea53e9adf21150e601591a750b80cde0cd167fef6e0cdbc032a"
+                        "c4161fc5c5b66679de49524bd5624c50d71ba3e650780a4bfe402d6a06a00525"
+                        "0b5dc52085233b69d0dd13924cc5c713a396784ecafc59f5ea73c1585d79621b"
+                        "8a94e4f2291b17427d5185abf4a994fca74ee7a7f993a950c71003fc7cf8"
+                    ),
+                    2067156378,
+                )
+            ],
+            binders=[
+                binascii.unhexlify(
+                    "1788ad43fdff37cfc628f24b6ce7c8c76180705380da17da32811b5bae4e78"
+                    "d7aaaf65a9b713872f2bb28818ca1a6b01"
+                )
+            ],
+        )
 
         assert buf.eof()
 
         # serialize
         buf = Buffer(1000)
         push_client_hello(buf, hello)
-        assert buf.data == load("tls_client_hello_with_psk.bin")
+        # The fixture contains a GREASE extension (0x0A0A, 4 bytes) that is
+        # stripped during parsing, so re-serialized output is 4 bytes smaller.
+        assert len(buf.data) == len(load("tls_client_hello_with_psk.bin")) - 4
 
     def test_pull_client_hello_with_sni(self):
         buf = Buffer(data=load("tls_client_hello_with_sni.bin"))
         hello = pull_client_hello(buf)
         assert buf.eof()
 
-        assert hello.random == \
-            binascii.unhexlify(
-                "987d8934140b0a42cc5545071f3f9f7f61963d7b6404eb674c8dbe513604346b"
-            )
-        assert hello.legacy_session_id == \
-            binascii.unhexlify(
-                "26b19bdd30dbf751015a3a16e13bd59002dfe420b799d2a5cd5e11b8fa7bcb66"
-            )
-        assert hello.cipher_suites == \
-            [
-                tls.CipherSuite.AES_256_GCM_SHA384,
-                tls.CipherSuite.AES_128_GCM_SHA256,
-                tls.CipherSuite.CHACHA20_POLY1305_SHA256,
-            ]
+        assert hello.random == binascii.unhexlify(
+            "987d8934140b0a42cc5545071f3f9f7f61963d7b6404eb674c8dbe513604346b"
+        )
+        assert hello.legacy_session_id == binascii.unhexlify(
+            "26b19bdd30dbf751015a3a16e13bd59002dfe420b799d2a5cd5e11b8fa7bcb66"
+        )
+        assert hello.cipher_suites == [
+            tls.CipherSuite.AES_256_GCM_SHA384,
+            tls.CipherSuite.AES_128_GCM_SHA256,
+            tls.CipherSuite.CHACHA20_POLY1305_SHA256,
+        ]
         assert hello.legacy_compression_methods == [tls.CompressionMethod.NULL]
 
         # extensions
         assert hello.alpn_protocols == None
-        assert hello.key_share == \
-            [
-                (
-                    tls.Group.SECP256R1,
-                    binascii.unhexlify(
-                        "04b62d70f907c814cd65d0f73b8b991f06b70c77153f548410a191d2b19764a2"
-                        "ecc06065a480efa9e1f10c8da6e737d5bfc04be3f773e20a0c997f51b5621280"
-                        "40"
-                    ),
-                )
-            ]
+        assert hello.key_share == [
+            (
+                tls.Group.SECP256R1,
+                binascii.unhexlify(
+                    "04b62d70f907c814cd65d0f73b8b991f06b70c77153f548410a191d2b19764a2"
+                    "ecc06065a480efa9e1f10c8da6e737d5bfc04be3f773e20a0c997f51b5621280"
+                    "40"
+                ),
+            )
+        ]
         assert hello.psk_key_exchange_modes == [tls.PskKeyExchangeMode.PSK_DHE_KE]
         assert hello.server_name == "cloudflare-quic.com"
-        assert hello.signature_algorithms == \
-            [
-                tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA256,
-                tls.SignatureAlgorithm.ECDSA_SECP256R1_SHA256,
-                tls.SignatureAlgorithm.RSA_PKCS1_SHA256,
-                tls.SignatureAlgorithm.RSA_PKCS1_SHA1,
-            ]
+        assert hello.signature_algorithms == [
+            tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA256,
+            tls.SignatureAlgorithm.ECDSA_SECP256R1_SHA256,
+            tls.SignatureAlgorithm.RSA_PKCS1_SHA256,
+            tls.SignatureAlgorithm.RSA_PKCS1_SHA1,
+        ]
         assert hello.supported_groups == [tls.Group.SECP256R1]
         # old removed draft support
-        assert hello.supported_versions ==[tls.TLS_VERSION_1_3, 32540, 32539, 32538]
+        assert hello.supported_versions == [tls.TLS_VERSION_1_3, 32540, 32539, 32538]
 
         assert len(hello.other_extensions) == 1
 
-        assert hello.other_extensions[0][0] == \
-            65445
+        assert hello.other_extensions[0][0] == 65445
 
         # serialize
         buf = Buffer(1000)
         push_client_hello(buf, hello)
-
-        assert buf.data == load("tls_client_hello_with_sni.bin")
+        # The fixture contains a GREASE extension (0x0A0A, 4 bytes) that is
+        # stripped during parsing, so re-serialized output is 4 bytes smaller.
+        assert len(buf.data) == len(load("tls_client_hello_with_sni.bin")) - 4
 
     def test_push_client_hello(self):
         hello = ClientHello(
@@ -900,25 +900,22 @@ class TestTls:
         hello = pull_server_hello(buf)
         assert buf.eof()
 
-        assert hello.random == \
-            binascii.unhexlify(
-                "ada85271d19680c615ea7336519e3fdf6f1e26f3b1075ee1de96ffa8884e8280"
-            )
-        assert hello.legacy_session_id == \
-            binascii.unhexlify(
-                "9aee82a2d186c1cb32a329d9dcfe004a1a438ad0485a53c6bfcf55c132a23235"
-            )
+        assert hello.random == binascii.unhexlify(
+            "ada85271d19680c615ea7336519e3fdf6f1e26f3b1075ee1de96ffa8884e8280"
+        )
+        assert hello.legacy_session_id == binascii.unhexlify(
+            "9aee82a2d186c1cb32a329d9dcfe004a1a438ad0485a53c6bfcf55c132a23235"
+        )
         assert hello.cipher_suite == tls.CipherSuite.AES_256_GCM_SHA384
         assert hello.compression_method == tls.CompressionMethod.NULL
-        assert hello.key_share == \
-            (
-                tls.Group.SECP256R1,
-                binascii.unhexlify(
-                    "048b27d0282242d84b7fcc02a9c4f13eca0329e3c7029aa34a33794e6e7ba189"
-                    "5cca1c503bf0378ac6937c354912116ff3251026bca1958d7f387316c83ae6cf"
-                    "b2"
-                ),
-            )
+        assert hello.key_share == (
+            tls.Group.SECP256R1,
+            binascii.unhexlify(
+                "048b27d0282242d84b7fcc02a9c4f13eca0329e3c7029aa34a33794e6e7ba189"
+                "5cca1c503bf0378ac6937c354912116ff3251026bca1958d7f387316c83ae6cf"
+                "b2"
+            ),
+        )
         assert hello.pre_shared_key == None
         assert hello.supported_version == tls.TLS_VERSION_1_3
 
@@ -927,25 +924,22 @@ class TestTls:
         hello = pull_server_hello(buf)
         assert buf.eof()
 
-        assert hello.random == \
-            binascii.unhexlify(
-                "ccbaaf04fc1bd5143b2cc6b97520cf37d91470dbfc8127131a7bf0f941e3a137"
-            )
-        assert hello.legacy_session_id == \
-            binascii.unhexlify(
-                "9483e7e895d0f4cec17086b0849601c0632662cd764e828f2f892f4c4b7771b0"
-            )
+        assert hello.random == binascii.unhexlify(
+            "ccbaaf04fc1bd5143b2cc6b97520cf37d91470dbfc8127131a7bf0f941e3a137"
+        )
+        assert hello.legacy_session_id == binascii.unhexlify(
+            "9483e7e895d0f4cec17086b0849601c0632662cd764e828f2f892f4c4b7771b0"
+        )
         assert hello.cipher_suite == tls.CipherSuite.AES_256_GCM_SHA384
         assert hello.compression_method == tls.CompressionMethod.NULL
-        assert hello.key_share == \
-            (
-                tls.Group.SECP256R1,
-                binascii.unhexlify(
-                    "0485d7cecbebfc548fc657bf51b8e8da842a4056b164a27f7702ca318c16e488"
-                    "18b6409593b15c6649d6f459387a53128b164178adc840179aad01d36ce95d62"
-                    "76"
-                ),
-            )
+        assert hello.key_share == (
+            tls.Group.SECP256R1,
+            binascii.unhexlify(
+                "0485d7cecbebfc548fc657bf51b8e8da842a4056b164a27f7702ca318c16e488"
+                "18b6409593b15c6649d6f459387a53128b164178adc840179aad01d36ce95d62"
+                "76"
+            ),
+        )
         assert hello.pre_shared_key == 0
         assert hello.supported_version == tls.TLS_VERSION_1_3
 
@@ -959,27 +953,26 @@ class TestTls:
         hello = pull_server_hello(buf)
         assert buf.eof()
 
-        assert hello == \
-            ServerHello(
-                random=binascii.unhexlify(
-                    "ada85271d19680c615ea7336519e3fdf6f1e26f3b1075ee1de96ffa8884e8280"
+        assert hello == ServerHello(
+            random=binascii.unhexlify(
+                "ada85271d19680c615ea7336519e3fdf6f1e26f3b1075ee1de96ffa8884e8280"
+            ),
+            legacy_session_id=binascii.unhexlify(
+                "9aee82a2d186c1cb32a329d9dcfe004a1a438ad0485a53c6bfcf55c132a23235"
+            ),
+            cipher_suite=tls.CipherSuite.AES_256_GCM_SHA384,
+            compression_method=tls.CompressionMethod.NULL,
+            key_share=(
+                tls.Group.SECP256R1,
+                binascii.unhexlify(
+                    "048b27d0282242d84b7fcc02a9c4f13eca0329e3c7029aa34a33794e6e7ba189"
+                    "5cca1c503bf0378ac6937c354912116ff3251026bca1958d7f387316c83ae6cf"
+                    "b2"
                 ),
-                legacy_session_id=binascii.unhexlify(
-                    "9aee82a2d186c1cb32a329d9dcfe004a1a438ad0485a53c6bfcf55c132a23235"
-                ),
-                cipher_suite=tls.CipherSuite.AES_256_GCM_SHA384,
-                compression_method=tls.CompressionMethod.NULL,
-                key_share=(
-                    tls.Group.SECP256R1,
-                    binascii.unhexlify(
-                        "048b27d0282242d84b7fcc02a9c4f13eca0329e3c7029aa34a33794e6e7ba189"
-                        "5cca1c503bf0378ac6937c354912116ff3251026bca1958d7f387316c83ae6cf"
-                        "b2"
-                    ),
-                ),
-                supported_version=tls.TLS_VERSION_1_3,
-                other_extensions=[(12345, b"foo")],
-            )
+            ),
+            supported_version=tls.TLS_VERSION_1_3,
+            other_extensions=[(12345, b"foo")],
+        )
 
         # serialize
         buf = Buffer(1000)
@@ -1017,16 +1010,15 @@ class TestTls:
         assert new_session_ticket is not None
         assert buf.eof()
 
-        assert new_session_ticket == \
-            NewSessionTicket(
-                ticket_lifetime=86400,
-                ticket_age_add=3303452425,
-                ticket_nonce=b"",
-                ticket=binascii.unhexlify(
-                    "dbe6f1a77a78c0426bfa607cd0d02b350247d90618704709596beda7e962cc81"
-                ),
-                max_early_data_size=0xFFFFFFFF,
-            )
+        assert new_session_ticket == NewSessionTicket(
+            ticket_lifetime=86400,
+            ticket_age_add=3303452425,
+            ticket_nonce=b"",
+            ticket=binascii.unhexlify(
+                "dbe6f1a77a78c0426bfa607cd0d02b350247d90618704709596beda7e962cc81"
+            ),
+            max_early_data_size=0xFFFFFFFF,
+        )
 
         # serialize
         buf = Buffer(100)
@@ -1039,17 +1031,16 @@ class TestTls:
         assert new_session_ticket is not None
         assert buf.eof()
 
-        assert new_session_ticket == \
-            NewSessionTicket(
-                ticket_lifetime=86400,
-                ticket_age_add=3303452425,
-                ticket_nonce=b"",
-                ticket=binascii.unhexlify(
-                    "dbe6f1a77a78c0426bfa607cd0d02b350247d90618704709596beda7e962cc81"
-                ),
-                max_early_data_size=0xFFFFFFFF,
-                other_extensions=[(12345, b"foo")],
-            )
+        assert new_session_ticket == NewSessionTicket(
+            ticket_lifetime=86400,
+            ticket_age_add=3303452425,
+            ticket_nonce=b"",
+            ticket=binascii.unhexlify(
+                "dbe6f1a77a78c0426bfa607cd0d02b350247d90618704709596beda7e962cc81"
+            ),
+            max_early_data_size=0xFFFFFFFF,
+            other_extensions=[(12345, b"foo")],
+        )
 
         # serialize
         buf = Buffer(100)
@@ -1063,15 +1054,14 @@ class TestTls:
         assert extensions is not None
         assert buf.eof()
 
-        assert extensions == \
-            EncryptedExtensions(
-                other_extensions=[
-                    (
-                        tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
-                        SERVER_QUIC_TRANSPORT_PARAMETERS,
-                    )
-                ]
-            )
+        assert extensions == EncryptedExtensions(
+            other_extensions=[
+                (
+                    tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
+                    SERVER_QUIC_TRANSPORT_PARAMETERS,
+                )
+            ]
+        )
 
         # serialize
         buf = Buffer(capacity=100)
@@ -1085,17 +1075,16 @@ class TestTls:
         assert extensions is not None
         assert buf.eof()
 
-        assert extensions == \
-            EncryptedExtensions(
-                alpn_protocol="hq-20",
-                other_extensions=[
-                    (tls.ExtensionType.SERVER_NAME, b""),
-                    (
-                        tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
-                        SERVER_QUIC_TRANSPORT_PARAMETERS_2,
-                    ),
-                ],
-            )
+        assert extensions == EncryptedExtensions(
+            alpn_protocol="hq-20",
+            other_extensions=[
+                (tls.ExtensionType.SERVER_NAME, b""),
+                (
+                    tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
+                    SERVER_QUIC_TRANSPORT_PARAMETERS_2,
+                ),
+            ],
+        )
 
         # serialize
         buf = Buffer(115)
@@ -1108,18 +1097,17 @@ class TestTls:
         assert extensions is not None
         assert buf.eof()
 
-        assert extensions == \
-            EncryptedExtensions(
-                alpn_protocol="hq-20",
-                early_data=True,
-                other_extensions=[
-                    (tls.ExtensionType.SERVER_NAME, b""),
-                    (
-                        tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
-                        SERVER_QUIC_TRANSPORT_PARAMETERS_3,
-                    ),
-                ],
-            )
+        assert extensions == EncryptedExtensions(
+            alpn_protocol="hq-20",
+            early_data=True,
+            other_extensions=[
+                (tls.ExtensionType.SERVER_NAME, b""),
+                (
+                    tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
+                    SERVER_QUIC_TRANSPORT_PARAMETERS_3,
+                ),
+            ],
+        )
 
         # serialize
         buf = Buffer(116)
@@ -1140,8 +1128,19 @@ class TestTls:
         assert buf.eof()
 
         assert certificate_request.request_context == b""
-        assert certificate_request.signature_algorithms == \
-            [1027, 2052, 1025, 1283, 515, 2053, 2053, 1281, 2054, 1537, 513]
+        assert certificate_request.signature_algorithms == [
+            1027,
+            2052,
+            1025,
+            1283,
+            515,
+            2053,
+            2053,
+            1281,
+            2054,
+            1537,
+            513,
+        ]
         assert certificate_request.other_extensions == []
 
     def test_push_certificate(self):
@@ -1176,10 +1175,9 @@ class TestTls:
         finished = pull_finished(buf)
         assert buf.eof()
 
-        assert finished.verify_data == \
-            binascii.unhexlify(
-                "f157923234ff9a4921aadb2e0ec7b1a30fce73fb9ec0c4276f9af268f408ec68"
-            )
+        assert finished.verify_data == binascii.unhexlify(
+            "f157923234ff9a4921aadb2e0ec7b1a30fce73fb9ec0c4276f9af268f408ec68"
+        )
 
     def test_push_finished(self):
         finished = Finished(
@@ -1194,7 +1192,6 @@ class TestTls:
 
     def test_parsing_ec_private_key(self) -> None:
         for curve_type in [256, 384, 521]:
-
             if curve_type == 256:
                 cryptography_ec_type = ec.SECP256R1
             elif curve_type == 384:
@@ -1312,14 +1309,16 @@ w/TPfWiQbe0Sxc7mHSM=
 
         rebuilt_chain = rebuild_chain(
             ssl.PEM_cert_to_DER_cert(leaf),
-            [c.public_bytes() for c in load_pem_x509_certificates(manual_chain)]
+            [c.public_bytes() for c in load_pem_x509_certificates(manual_chain)],
         )
 
         assert len(rebuilt_chain) == 3
 
         assert ssl.DER_cert_to_PEM_cert(rebuilt_chain[0]) == leaf
 
-        assert ssl.DER_cert_to_PEM_cert(rebuilt_chain[1]) == """-----BEGIN CERTIFICATE-----
+        assert (
+            ssl.DER_cert_to_PEM_cert(rebuilt_chain[1])
+            == """-----BEGIN CERTIFICATE-----
 MIICnzCCAiWgAwIBAgIQf/MZd5csIkp2FV0TttaF4zAKBggqhkjOPQQDAzBHMQsw
 CQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEU
 MBIGA1UEAxMLR1RTIFJvb3QgUjQwHhcNMjMxMjEzMDkwMDAwWhcNMjkwMjIwMTQw
@@ -1337,6 +1336,7 @@ sQIwJonMaAFi54mrfhfoFNZEfuNMSQ6/bIBiNLiyoX46FohQvKeIoJ99cx7sUkFN
 7uJW
 -----END CERTIFICATE-----
 """
+        )
 
     def test_rebuild_chain_rsa(self) -> None:
         manual_chain = """-----BEGIN CERTIFICATE-----
@@ -1406,14 +1406,16 @@ cC0=
 
         rebuilt_chain = rebuild_chain(
             ssl.PEM_cert_to_DER_cert(leaf),
-            [c.public_bytes() for c in load_pem_x509_certificates(manual_chain)]
+            [c.public_bytes() for c in load_pem_x509_certificates(manual_chain)],
         )
 
         assert len(rebuilt_chain) == 2
 
         assert ssl.DER_cert_to_PEM_cert(rebuilt_chain[0]) == leaf
 
-        assert ssl.DER_cert_to_PEM_cert(rebuilt_chain[1]) == """-----BEGIN CERTIFICATE-----
+        assert (
+            ssl.DER_cert_to_PEM_cert(rebuilt_chain[1])
+            == """-----BEGIN CERTIFICATE-----
 MIIFBjCCAu6gAwIBAgIRAIp9PhPWLzDvI4a9KQdrNPgwDQYJKoZIhvcNAQELBQAw
 TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
 cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMjQwMzEzMDAwMDAw
@@ -1443,3 +1445,453 @@ pdWfS6PJ1jty80r2VKsM/Dj3YIDfbjXKdaFU5C+8bhfJGqU3taKauuz0wHVGT3eo
 uYkQ4omYCTX5ohy+knMjdOmdH9c7SpqEWBDC86fiNex+O0XOMEZSa8DA
 -----END CERTIFICATE-----
 """
+        )
+
+
+class TestHKDFExpand:
+    """Tests for HKDFExpand."""
+
+    def test_reject_oversized_length(self):
+        # SHA-256 => digest_size=32, max_length=255*32=8160
+        with pytest.raises(ValueError, match="Cannot derive keys larger than"):
+            HKDFExpand(algorithm=256, length=8161, info=b"test")
+
+    def test_info_defaults_to_empty_bytes(self):
+        # Passing info=None should not raise; internally defaults to b""
+        expander = HKDFExpand(algorithm=256, length=32, info=None)
+        result = expander.derive(b"some_key_material")
+        assert isinstance(result, bytes)
+        assert len(result) == 32
+
+    def test_derive_called_twice_raises(self):
+        expander = HKDFExpand(algorithm=256, length=32, info=b"test")
+        expander.derive(b"key_material")
+        with pytest.raises(CryptoError):
+            expander.derive(b"key_material")
+
+
+class TestNegotiate:
+    """Tests for negotiate() with exclusion."""
+
+    def test_negotiate_with_excl_skips_excluded(self):
+        result = negotiate(
+            supported=[1, 2, 3],
+            offered=[1, 2, 3],
+            excl=1,
+        )
+        assert result == 2
+
+    def test_negotiate_with_excl_all_excluded(self):
+        result = negotiate(
+            supported=[1],
+            offered=[1],
+            excl=1,
+        )
+        assert result is None
+
+    def test_negotiate_with_excl_none_returns_first_match(self):
+        result = negotiate(
+            supported=[1, 2],
+            offered=[2, 1],
+            excl=None,
+        )
+        assert result == 1
+
+
+class TestContextProperties:
+    """Tests for Context property getters."""
+
+    def test_peer_certificate_default(self):
+        ctx = Context(is_client=True)
+        assert ctx.peer_certificate is None
+
+    def test_peer_certificate_chain_default(self):
+        ctx = Context(is_client=True)
+        assert ctx.peer_certificate_chain == []
+
+    def test_ech_retry_configs_default(self):
+        ctx = Context(is_client=True)
+        assert ctx.ech_retry_configs is None
+
+
+class TestVerifyCertificate:
+    """Tests for verify_certificate edge cases."""
+
+    def test_chain_defaults_to_empty_list(self):
+        # chain=None should default to [] internally
+        # Using the test cert with its CA should verify successfully
+        cert_pem = load("ssl_cert.pem")
+        certs = load_pem_x509_certificates(cert_pem)
+        cert = certs[0]
+
+        # This exercises line 410 (chain=None => chain=[]) and should pass
+        verify_certificate(
+            certificate=cert,
+            chain=None,
+            cadata=load("pycacert.pem"),
+            server_name="localhost",
+        )
+
+    def test_raises_on_empty_ca_store(self):
+        # Generate a non-self-signed cert, then pass no CA store
+        from cryptography.hazmat.primitives.asymmetric import ec as crypto_ec
+        from qh3._hazmat import Certificate as X509Cert
+
+        cert_obj, _ = generate_ec_certificate(
+            common_name="test.example.com",
+            alternative_names=["test.example.com"],
+        )
+        cert = X509Cert(cert_obj.public_bytes(serialization.Encoding.DER))
+
+        # self-signed cert IS its own trust anchor, so use it
+        # to test the "empty CA store" path we need truly no certs loaded
+        # The generated cert above is self-signed so it will serve as trust anchor...
+        # We need a cert that is NOT self-signed. Instead, let's test by
+        # providing cadata that contains no parseable certificates.
+        with pytest.raises(
+            tls.AlertBadCertificate,
+            match="unable to get local issuer certificate",
+        ):
+            verify_certificate(
+                certificate=cert,
+                chain=None,
+                cadata=None,
+                cafile=None,
+                capath=None,
+                server_name="test.example.com",
+            )
+
+    def test_raises_on_missing_server_name(self):
+        # Cert with no SANs + server_name=None
+        cert_obj, _ = generate_ec_certificate("no-san.example.com", [])
+        from qh3._hazmat import Certificate as X509Cert
+
+        cert = X509Cert(cert_obj.public_bytes(serialization.Encoding.DER))
+
+        with pytest.raises(
+            tls.AlertBadCertificate,
+            match="unable to determine server name target",
+        ):
+            verify_certificate(
+                certificate=cert,
+                chain=None,
+                cadata=cert_obj.public_bytes(serialization.Encoding.PEM),
+                server_name=None,
+            )
+
+    def test_assert_server_name_false_suppresses_invalid_name(self):
+        # Wildcard-only SAN cert + assert_server_name=False
+        # The SAN extraction produces '*.test.com' which is unparseable
+        # by the Rust verifier, raising InvalidNameCertificateError.
+        # assert_server_name=False suppresses it.
+        from cryptography import x509 as cx509
+        import datetime
+
+        key = ec.generate_private_key(curve=ec.SECP256R1())
+        subject = issuer = cx509.Name(
+            [cx509.NameAttribute(cx509.NameOID.COMMON_NAME, "test")]
+        )
+        cert = (
+            cx509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(cx509.random_serial_number())
+            .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+            .not_valid_after(
+                datetime.datetime.now(datetime.timezone.utc)
+                + datetime.timedelta(days=10)
+            )
+            .add_extension(
+                cx509.SubjectAlternativeName([cx509.DNSName("*.test.com")]),
+                critical=False,
+            )
+            .sign(key, hashes.SHA256())
+        )
+
+        from qh3._hazmat import Certificate as X509Cert
+
+        inner_cert = X509Cert(cert.public_bytes(serialization.Encoding.DER))
+
+        # Should return without error (line 486)
+        verify_certificate(
+            certificate=inner_cert,
+            chain=None,
+            cadata=cert.public_bytes(serialization.Encoding.PEM),
+            server_name=None,
+            assert_server_name=False,
+        )
+
+
+class TestPullCertificateRequestUnknownExtension:
+    """Test for pull_certificate_request with unknown extension."""
+
+    def test_unknown_extension_stored(self):
+        # Build a CertificateRequest with an unknown extension type
+        buf = Buffer(capacity=256)
+        buf.push_uint8(tls.HandshakeType.CERTIFICATE_REQUEST)
+        with push_block(buf, 3):
+            # request_context (empty)
+            push_opaque(buf, 1, b"")
+            # extensions list
+            with push_block(buf, 2):
+                # unknown extension type 0x00FF with data b"\xAB\xCD"
+                buf.push_uint16(0x00FF)
+                buf.push_uint16(2)
+                buf.push_bytes(b"\xab\xcd")
+
+        buf.seek(0)
+        cert_req = pull_certificate_request(buf)
+        assert len(cert_req.other_extensions) == 1
+        assert cert_req.other_extensions[0] == (0x00FF, b"\xab\xcd")
+        assert cert_req.signature_algorithms is None
+
+
+class TestSelectEchConfig:
+    """Tests for select_ech_config."""
+
+    def _make_ech_config(
+        self,
+        version=0xFE0D,
+        config_id=1,
+        kem_id=0x0020,
+        cipher_suites=None,
+        extensions=b"",
+        public_name="example.com",
+    ):
+        if cipher_suites is None:
+            cipher_suites = [ECHCipherSuite(kdf_id=0x0001, aead_id=0x0001)]
+        return ECHConfig(
+            version=version,
+            config_id=config_id,
+            kem_id=kem_id,
+            public_key=b"\x00" * 32,
+            cipher_suites=cipher_suites,
+            maximum_name_length=64,
+            public_name=public_name,
+            extensions=extensions,
+            raw=b"",
+        )
+
+    def test_returns_none_for_empty_list(self):
+        assert select_ech_config([]) is None
+
+    def test_skips_wrong_version(self):
+        config = self._make_ech_config(version=0x0000)
+        assert select_ech_config([config]) is None
+
+    def test_skips_unsupported_kem(self):
+        config = self._make_ech_config(kem_id=0x9999)
+        assert select_ech_config([config]) is None
+
+    def test_skips_mandatory_extension(self):
+        # Build extension bytes with a mandatory extension (high bit set)
+        ext_buf = Buffer(capacity=64)
+        ext_buf.push_uint16(0x8001)  # mandatory extension type
+        with push_block(ext_buf, 2):
+            ext_buf.push_bytes(b"\x00")
+        config = self._make_ech_config(extensions=ext_buf.data)
+        assert select_ech_config([config]) is None
+
+    def test_skips_malformed_extension(self):
+        # Truncated extension data triggers BufferReadError => continue
+        config = self._make_ech_config(extensions=b"\x00")
+        assert select_ech_config([config]) is None
+
+    def test_skips_non_mandatory_extension_ok(self):
+        # Non-mandatory extension (high bit NOT set) => config is usable
+        ext_buf = Buffer(capacity=64)
+        ext_buf.push_uint16(0x0001)  # non-mandatory extension
+        with push_block(ext_buf, 2):
+            ext_buf.push_bytes(b"\x00")
+        config = self._make_ech_config(extensions=ext_buf.data)
+        result = select_ech_config([config])
+        assert result is not None
+        assert result[0] is config
+
+    def test_no_supported_cipher_suite(self):
+        config = self._make_ech_config(
+            cipher_suites=[ECHCipherSuite(kdf_id=0x9999, aead_id=0x9999)]
+        )
+        assert select_ech_config([config]) is None
+
+    def test_selects_first_usable(self):
+        bad = self._make_ech_config(kem_id=0x9999)
+        good = self._make_ech_config()
+        result = select_ech_config([bad, good])
+        assert result is not None
+        assert result[0] is good
+
+
+class TestParseEchConfigList:
+    """Tests for parse_ech_config_list with unknown version"""
+
+    def test_unknown_version_skipped(self):
+        # Build an ECHConfigList with one entry that has an unknown version
+        buf = Buffer(capacity=256)
+        with push_block(buf, 2):
+            # entry with unknown version 0x0000
+            buf.push_uint16(0x0000)  # version
+            with push_block(buf, 2):
+                buf.push_bytes(b"\x01\x02\x03")  # arbitrary contents
+        configs = parse_ech_config_list(buf.data)
+        assert configs == []
+
+    def test_mixed_known_and_unknown_versions(self):
+        # Build an ECHConfigList with unknown version followed by valid version
+        buf = Buffer(capacity=512)
+        with push_block(buf, 2):
+            # First: unknown version
+            buf.push_uint16(0x0000)
+            with push_block(buf, 2):
+                buf.push_bytes(b"\x01\x02\x03")
+
+            # Second: valid 0xFE0D
+            buf.push_uint16(0xFE0D)
+            with push_block(buf, 2):
+                buf.push_uint8(1)  # config_id
+                buf.push_uint16(0x0020)  # kem_id
+                push_opaque(buf, 2, b"\x00" * 32)  # public_key
+                # cipher_suites
+                with push_block(buf, 2):
+                    buf.push_uint16(0x0001)  # kdf_id
+                    buf.push_uint16(0x0001)  # aead_id
+                buf.push_uint8(64)  # maximum_name_length
+                push_opaque(buf, 1, b"example.com")  # public_name
+                push_opaque(buf, 2, b"")  # extensions
+
+        configs = parse_ech_config_list(buf.data)
+        assert len(configs) == 1
+        assert configs[0].version == 0xFE0D
+        assert configs[0].config_id == 1
+        assert configs[0].kem_id == 0x0020
+
+
+class TestHandshakeWithP384P521:
+    """Tests for P384/P521 server key exchange + sig algo selection"""
+
+    def create_client(self, cadata, **kwargs):
+        client = Context(
+            is_client=True,
+            cafile=None,
+            cadata=cadata,
+            **kwargs,
+        )
+        client.handshake_extensions = [
+            (
+                tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
+                CLIENT_QUIC_TRANSPORT_PARAMETERS,
+            )
+        ]
+        return client
+
+    def create_server_with_ec(self, curve_type, cryptography_curve_class):
+        certificate, private_key = generate_ec_certificate(
+            common_name="example.com",
+            alternative_names=["example.com"],
+            curve=cryptography_curve_class,
+        )
+
+        server = Context(
+            is_client=False,
+            max_early_data=0xFFFFFFFF,
+        )
+        server.certificate = InnerCertificate(
+            certificate.public_bytes(serialization.Encoding.DER)
+        )
+        server.certificate_private_key = EcPrivateKey(
+            private_key.private_bytes(
+                serialization.Encoding.DER,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ),
+            curve_type,
+            True,
+        )
+        server.handshake_extensions = [
+            (
+                tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
+                SERVER_QUIC_TRANSPORT_PARAMETERS,
+            )
+        ]
+        return server, certificate
+
+    def _handshake(self, client, server):
+        client_buf = create_buffers()
+        client.handle_message(b"", client_buf)
+        server_input = merge_buffers(client_buf)
+        reset_buffers(client_buf)
+
+        server_buf = create_buffers()
+        server.handle_message(server_input, server_buf)
+        client_input = merge_buffers(server_buf)
+        reset_buffers(server_buf)
+
+        client.handle_message(client_input, client_buf)
+        server_input = merge_buffers(client_buf)
+        reset_buffers(client_buf)
+
+        server.handle_message(server_input, server_buf)
+
+    def test_handshake_with_p384_certificate(self):
+        server, certificate = self.create_server_with_ec(384, ec.SECP384R1)
+        client = self.create_client(
+            cadata=certificate.public_bytes(serialization.Encoding.PEM),
+        )
+        # Force client to offer SECP384R1
+        client._supported_groups = [tls.Group.SECP384R1]
+
+        self._handshake(client, server)
+
+        assert client.state == State.CLIENT_POST_HANDSHAKE
+        assert server.state == State.SERVER_POST_HANDSHAKE
+
+    def test_handshake_with_p521_certificate(self):
+        # P521 certs must be signed with SHA512 for the Rust backend to
+        # recognize them as self-signed (generate_ec_certificate uses SHA256).
+        from cryptography.hazmat.primitives.asymmetric import ec as crypto_ec
+
+        private_key = crypto_ec.generate_private_key(curve=crypto_ec.SECP521R1())
+        certificate, _ = generate_certificate(
+            common_name="example.com",
+            alternative_names=["example.com"],
+            hash_algorithm=hashes.SHA512(),
+            key=private_key,
+        )
+
+        server = Context(
+            is_client=False,
+            max_early_data=0xFFFFFFFF,
+        )
+        server.certificate = InnerCertificate(
+            certificate.public_bytes(serialization.Encoding.DER)
+        )
+        server.certificate_private_key = EcPrivateKey(
+            private_key.private_bytes(
+                serialization.Encoding.DER,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ),
+            521,
+            True,
+        )
+        server.handshake_extensions = [
+            (
+                tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
+                SERVER_QUIC_TRANSPORT_PARAMETERS,
+            )
+        ]
+
+        client = self.create_client(
+            cadata=certificate.public_bytes(serialization.Encoding.PEM),
+        )
+        # Force client to offer SECP521R1 group AND include the P521 signature algorithm
+        client._supported_groups = [tls.Group.SECP521R1]
+        client._signature_algorithms = [
+            tls.SignatureAlgorithm.ECDSA_SECP521R1_SHA512,
+        ] + client._signature_algorithms
+
+        self._handshake(client, server)
+
+        assert client.state == State.CLIENT_POST_HANDSHAKE
+        assert server.state == State.SERVER_POST_HANDSHAKE

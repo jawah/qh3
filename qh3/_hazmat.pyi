@@ -184,6 +184,24 @@ class ECDHP521KeyExchange:
     def public_key(self) -> bytes: ...
     def exchange(self, peer_public_key: bytes) -> bytes: ...
 
+class HpkeContext:
+    """
+    HPKE sender context for Encrypted Client Hello (ECH).
+    Wraps rustls HPKE implementation backed by aws-lc-rs.
+    Uses SetupBaseS to create a context that can seal multiple messages.
+    """
+
+    def __init__(
+        self,
+        kem_id: int,
+        kdf_id: int,
+        aead_id: int,
+        public_key: bytes,
+        info: bytes,
+    ) -> None: ...
+    def enc(self) -> bytes: ...
+    def seal(self, aad: bytes, plaintext: bytes) -> bytes: ...
+
 class CryptoError(Exception): ...
 
 class KeyType(Enum):

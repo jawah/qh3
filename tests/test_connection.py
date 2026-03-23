@@ -40,7 +40,11 @@ from qh3.quic.packet import (
     encode_quic_version_negotiation,
     push_quic_transport_parameters,
 )
-from qh3.quic.packet_builder import PACKET_MAX_SIZE, QuicDeliveryState, QuicPacketBuilder
+from qh3.quic.packet_builder import (
+    PACKET_MAX_SIZE,
+    QuicDeliveryState,
+    QuicPacketBuilder,
+)
 from qh3.quic.recovery import K_SECOND, K_MICRO_SECOND
 
 from .utils import (
@@ -405,13 +409,12 @@ class TestQuicConnection:
             labels = []
             for line in client_log.splitlines():
                 labels.append(line.split()[0])
-            assert labels == \
-                [
-                    "SERVER_HANDSHAKE_TRAFFIC_SECRET",
-                    "CLIENT_HANDSHAKE_TRAFFIC_SECRET",
-                    "SERVER_TRAFFIC_SECRET_0",
-                    "CLIENT_TRAFFIC_SECRET_0",
-                ]
+            assert labels == [
+                "SERVER_HANDSHAKE_TRAFFIC_SECRET",
+                "CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+                "SERVER_TRAFFIC_SECRET_0",
+                "CLIENT_TRAFFIC_SECRET_0",
+            ]
 
     def test_connect_with_cert_chain(self):
         with client_and_server(server_certfile=SERVER_CERTFILE_WITH_CHAIN) as (
@@ -429,8 +432,14 @@ class TestQuicConnection:
             self.check_handshake(client=client, server=server)
 
             # check selected cipher suite
-            assert client.tls.key_schedule.cipher_suite == tls.CipherSuite.AES_128_GCM_SHA256
-            assert server.tls.key_schedule.cipher_suite == tls.CipherSuite.AES_128_GCM_SHA256
+            assert (
+                client.tls.key_schedule.cipher_suite
+                == tls.CipherSuite.AES_128_GCM_SHA256
+            )
+            assert (
+                server.tls.key_schedule.cipher_suite
+                == tls.CipherSuite.AES_128_GCM_SHA256
+            )
 
     def test_connect_with_cipher_suite_aes256(self):
         with client_and_server(
@@ -440,8 +449,14 @@ class TestQuicConnection:
             self.check_handshake(client=client, server=server)
 
             # check selected cipher suite
-            assert client.tls.key_schedule.cipher_suite == tls.CipherSuite.AES_256_GCM_SHA384
-            assert server.tls.key_schedule.cipher_suite == tls.CipherSuite.AES_256_GCM_SHA384
+            assert (
+                client.tls.key_schedule.cipher_suite
+                == tls.CipherSuite.AES_256_GCM_SHA384
+            )
+            assert (
+                server.tls.key_schedule.cipher_suite
+                == tls.CipherSuite.AES_256_GCM_SHA384
+            )
 
     @pytest.mark.skipif("chacha20" in SKIP_TESTS, reason="Skipping chacha20 tests")
     def test_connect_with_cipher_suite_chacha20(self):
@@ -452,10 +467,14 @@ class TestQuicConnection:
             self.check_handshake(client=client, server=server)
 
             # check selected cipher suite
-            assert client.tls.key_schedule.cipher_suite == \
-                tls.CipherSuite.CHACHA20_POLY1305_SHA256
-            assert server.tls.key_schedule.cipher_suite == \
-                tls.CipherSuite.CHACHA20_POLY1305_SHA256
+            assert (
+                client.tls.key_schedule.cipher_suite
+                == tls.CipherSuite.CHACHA20_POLY1305_SHA256
+            )
+            assert (
+                server.tls.key_schedule.cipher_suite
+                == tls.CipherSuite.CHACHA20_POLY1305_SHA256
+            )
 
     def test_connect_without_loss(self):
         """
@@ -510,7 +529,7 @@ class TestQuicConnection:
             assert client.get_timer() == pytest.approx(60.2)
             self.assertSentPackets(client, [0, 0, 1])
             self.assertEvents(client, [])
-    
+
     def test_connect_with_loss_1(self):
         """
         Check connection is established even in the client's INITIAL is lost.
@@ -929,8 +948,10 @@ class TestQuicConnection:
 
         try:
             with client_and_server() as (client, server):
-                assert server._close_event.reason_phrase == \
-                       "No QUIC transport parameters received"
+                assert (
+                    server._close_event.reason_phrase
+                    == "No QUIC transport parameters received"
+                )
         finally:
             QuicConnection._initialize = real_initialize
 
@@ -941,9 +962,9 @@ class TestQuicConnection:
         The server sets the Negotiated Version to version 1.
         """
         with client_and_server(
-                client_options={
-                    "supported_versions": [QuicProtocolVersion.VERSION_1],
-                },
+            client_options={
+                "supported_versions": [QuicProtocolVersion.VERSION_1],
+            },
         ) as (client, server):
             # check handshake completed
             self.check_handshake(client=client, server=server)
@@ -957,13 +978,13 @@ class TestQuicConnection:
         The server sets the Negotiated Version to version 2.
         """
         with client_and_server(
-                client_options={
-                    "original_version": QuicProtocolVersion.VERSION_1,
-                    "supported_versions": [
-                        QuicProtocolVersion.VERSION_2,
-                        QuicProtocolVersion.VERSION_1,
-                    ],
-                },
+            client_options={
+                "original_version": QuicProtocolVersion.VERSION_1,
+                "supported_versions": [
+                    QuicProtocolVersion.VERSION_2,
+                    QuicProtocolVersion.VERSION_1,
+                ],
+            },
         ) as (client, server):
             # check handshake completed
             self.check_handshake(client=client, server=server)
@@ -977,9 +998,9 @@ class TestQuicConnection:
         The server sets the Negotiated Version to version 2.
         """
         with client_and_server(
-                client_options={
-                    "supported_versions": [QuicProtocolVersion.VERSION_2],
-                },
+            client_options={
+                "supported_versions": [QuicProtocolVersion.VERSION_2],
+            },
         ) as (client, server):
             # check handshake completed
             self.check_handshake(client=client, server=server)
@@ -993,13 +1014,13 @@ class TestQuicConnection:
         The server sets the Negotiated Version to version 1.
         """
         with client_and_server(
-                client_options={
-                    "original_version": QuicProtocolVersion.VERSION_2,
-                    "supported_versions": [
-                        QuicProtocolVersion.VERSION_1,
-                        QuicProtocolVersion.VERSION_2,
-                    ],
-                },
+            client_options={
+                "original_version": QuicProtocolVersion.VERSION_2,
+                "supported_versions": [
+                    QuicProtocolVersion.VERSION_1,
+                    QuicProtocolVersion.VERSION_2,
+                ],
+            },
         ) as (client, server):
             # check handshake completed
             self.check_handshake(client=client, server=server)
@@ -1077,8 +1098,8 @@ class TestQuicConnection:
 
         try:
             with client_and_server(
-                    client_kwargs={"session_ticket_handler": save_session_ticket},
-                    server_kwargs={"session_ticket_handler": ticket_store.add},
+                client_kwargs={"session_ticket_handler": save_session_ticket},
+                server_kwargs={"session_ticket_handler": ticket_store.add},
             ) as (client, server):
                 # check handshake failed
                 event = client.next_event()
@@ -1295,12 +1316,11 @@ class TestQuicConnection:
         for datagram in builder.flush()[0]:
             client.receive_datagram(datagram, SERVER_ADDR, now=time.time())
         assert drop(client) == 1
-        assert client._close_event == \
-            events.ConnectionTerminated(
-                error_code=QuicErrorCode.PROTOCOL_VIOLATION,
-                frame_type=QuicFrameType.PADDING,
-                reason_phrase="Reserved bits must be zero",
-            )
+        assert client._close_event == events.ConnectionTerminated(
+            error_code=QuicErrorCode.PROTOCOL_VIOLATION,
+            frame_type=QuicFrameType.PADDING,
+            reason_phrase="Reserved bits must be zero",
+        )
 
         CryptoPair.encrypt_packet = CryptoPair.encrypt_packet_real
         del CryptoPair.encrypt_packet_real
@@ -1396,24 +1416,22 @@ class TestQuicConnection:
             )
             assert roundtrip(server, client) == (1, 0)
 
-            assert client._close_event == \
-                events.ConnectionTerminated(
-                    error_code=QuicErrorCode.PROTOCOL_VIOLATION,
-                    frame_type=QuicFrameType.ACK,
-                    reason_phrase="illegal ACK frame",
-                )
+            assert client._close_event == events.ConnectionTerminated(
+                error_code=QuicErrorCode.PROTOCOL_VIOLATION,
+                frame_type=QuicFrameType.ACK,
+                reason_phrase="illegal ACK frame",
+            )
 
     def test_handle_connection_close_frame_app(self):
         with client_and_server() as (client, server):
             server.close(error_code=QuicErrorCode.NO_ERROR, reason_phrase="goodbye")
             assert roundtrip(server, client) == (1, 0)
 
-            assert client._close_event == \
-                events.ConnectionTerminated(
-                    error_code=QuicErrorCode.NO_ERROR,
-                    frame_type=None,
-                    reason_phrase="goodbye",
-                )
+            assert client._close_event == events.ConnectionTerminated(
+                error_code=QuicErrorCode.NO_ERROR,
+                frame_type=None,
+                reason_phrase="goodbye",
+            )
 
     def test_handle_connection_close_frame_app_not_utf8(self):
         client = create_standalone_client(self)
@@ -1424,12 +1442,11 @@ class TestQuicConnection:
             Buffer(data=binascii.unhexlify("0008676f6f6462798200")),
         )
 
-        assert client._close_event == \
-            events.ConnectionTerminated(
-                error_code=QuicErrorCode.NO_ERROR,
-                frame_type=None,
-                reason_phrase="",
-            )
+        assert client._close_event == events.ConnectionTerminated(
+            error_code=QuicErrorCode.NO_ERROR,
+            frame_type=None,
+            reason_phrase="",
+        )
 
     def test_handle_crypto_frame_over_largest_offset(self):
         with client_and_server() as (client, server):
@@ -1538,8 +1555,9 @@ class TestQuicConnection:
                 )
             assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
             assert cm.value.frame_type == QuicFrameType.HANDSHAKE_DONE
-            assert cm.value.reason_phrase == \
-                "Clients must not send HANDSHAKE_DONE frames"
+            assert (
+                cm.value.reason_phrase == "Clients must not send HANDSHAKE_DONE frames"
+            )
 
     def test_handle_max_data_frame(self):
         with client_and_server() as (client, server):
@@ -1618,8 +1636,7 @@ class TestQuicConnection:
                     QuicFrameType.MAX_STREAMS_BIDI,
                     Buffer(data=encode_uint_var(STREAM_COUNT_MAX + 1)),
                 )
-            assert cm.value.error_code == \
-                QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.error_code == QuicErrorCode.FRAME_ENCODING_ERROR
             assert cm.value.frame_type == QuicFrameType.MAX_STREAMS_BIDI
             assert cm.value.reason_phrase == "Maximum Streams cannot exceed 2^60"
 
@@ -1650,8 +1667,7 @@ class TestQuicConnection:
                     QuicFrameType.MAX_STREAMS_UNI,
                     Buffer(data=encode_uint_var(STREAM_COUNT_MAX + 1)),
                 )
-            assert cm.value.error_code == \
-                QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.error_code == QuicErrorCode.FRAME_ENCODING_ERROR
             assert cm.value.frame_type == QuicFrameType.MAX_STREAMS_UNI
             assert cm.value.reason_phrase == "Maximum Streams cannot exceed 2^60"
 
@@ -1763,11 +1779,12 @@ class TestQuicConnection:
                     QuicFrameType.NEW_CONNECTION_ID,
                     buf,
                 )
-            assert cm.value.error_code == \
-                QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.error_code == QuicErrorCode.FRAME_ENCODING_ERROR
             assert cm.value.frame_type == QuicFrameType.NEW_CONNECTION_ID
-            assert cm.value.reason_phrase == \
-                "Length must be greater than 0 and less than 20"
+            assert (
+                cm.value.reason_phrase
+                == "Length must be greater than 0 and less than 20"
+            )
 
     def test_handle_new_connection_id_with_retire_prior_to_invalid(self):
         with client_and_server() as (client, server):
@@ -1780,11 +1797,12 @@ class TestQuicConnection:
                     QuicFrameType.NEW_CONNECTION_ID,
                     buf,
                 )
-            assert cm.value.error_code == \
-                QuicErrorCode.PROTOCOL_VIOLATION
+            assert cm.value.error_code == QuicErrorCode.PROTOCOL_VIOLATION
             assert cm.value.frame_type == QuicFrameType.NEW_CONNECTION_ID
-            assert cm.value.reason_phrase == \
-                "Retire Prior To is greater than Sequence Number"
+            assert (
+                cm.value.reason_phrase
+                == "Retire Prior To is greater than Sequence Number"
+            )
 
     def test_handle_new_token_frame(self):
         with client_and_server() as (client, server):
@@ -1867,8 +1885,10 @@ class TestQuicConnection:
                 )
             assert len(server._local_challenges) == MAX_LOCAL_CHALLENGES
             for i in range(2, MAX_LOCAL_CHALLENGES + 2):
-                assert server._local_challenges[int.to_bytes(i, 8, "big")].addr == \
-                    f"1.2.3.{i}"
+                assert (
+                    server._local_challenges[int.to_bytes(i, 8, "big")].addr
+                    == f"1.2.3.{i}"
+                )
 
     def test_remote_path_challenges_are_bounded(self):
         with client_and_server() as (client, server):
@@ -1881,7 +1901,10 @@ class TestQuicConnection:
                     Buffer(data=challenge),
                 )
 
-            assert list(client._network_paths[0].remote_challenges) == challenges[0:MAX_REMOTE_CHALLENGES]
+            assert (
+                list(client._network_paths[0].remote_challenges)
+                == challenges[0:MAX_REMOTE_CHALLENGES]
+            )
 
     def test_handle_path_response_frame_bad(self):
         with client_and_server() as (client, server):
@@ -2346,8 +2369,7 @@ class TestQuicConnection:
                     QuicFrameType.STREAMS_BLOCKED_UNI,
                     Buffer(data=encode_uint_var(STREAM_COUNT_MAX + 1)),
                 )
-            assert cm.value.error_code == \
-                QuicErrorCode.FRAME_ENCODING_ERROR
+            assert cm.value.error_code == QuicErrorCode.FRAME_ENCODING_ERROR
             assert cm.value.frame_type == QuicFrameType.STREAMS_BLOCKED_UNI
             assert cm.value.reason_phrase == "Maximum Streams cannot exceed 2^60"
 
@@ -2399,8 +2421,10 @@ class TestQuicConnection:
                 client._parse_transport_parameters(data)
             assert cm.value.error_code == QuicErrorCode.TRANSPORT_PARAMETER_ERROR
             assert cm.value.frame_type == QuicFrameType.CRYPTO
-            assert cm.value.reason_phrase == \
-                "active_connection_id_limit must be no less than 2"
+            assert (
+                cm.value.reason_phrase
+                == "active_connection_id_limit must be no less than 2"
+            )
 
     def test_parse_transport_parameters_with_bad_max_ack_delay(self):
         client = create_standalone_client(self)
@@ -2462,9 +2486,11 @@ class TestQuicConnection:
             server._parse_transport_parameters(data)
         assert cm.value.error_code == QuicErrorCode.TRANSPORT_PARAMETER_ERROR
         assert cm.value.frame_type == QuicFrameType.CRYPTO
-        assert cm.value.reason_phrase == \
-            "version_information's chosen_version is not included in " \
+        assert (
+            cm.value.reason_phrase
+            == "version_information's chosen_version is not included in "
             "available_versions"
+        )
 
     def test_parse_transport_parameters_with_bad_version_information_2(self):
         server = create_standalone_server(self)
@@ -2484,8 +2510,10 @@ class TestQuicConnection:
             server._parse_transport_parameters(data)
         assert cm.value.error_code == QuicErrorCode.VERSION_NEGOTIATION_ERROR
         assert cm.value.frame_type == QuicFrameType.CRYPTO
-        assert cm.value.reason_phrase == \
-            "version_information's chosen_version does not match the version in use"
+        assert (
+            cm.value.reason_phrase
+            == "version_information's chosen_version does not match the version in use"
+        )
 
     def test_payload_received_empty(self):
         with client_and_server() as (client, server):
@@ -2726,8 +2754,10 @@ class TestQuicConnection:
             # client sends STOP_SENDING frame
             with pytest.raises(ValueError) as cm:
                 client.stop_stream(2, QuicErrorCode.NO_ERROR)
-            assert str(cm.value) == \
-                "Cannot stop receiving on a local-initiated unidirectional stream"
+            assert (
+                str(cm.value)
+                == "Cannot stop receiving on a local-initiated unidirectional stream"
+            )
 
     def test_send_stop_sending_unknown_stream(self):
         with client_and_server() as (client, server):
@@ -2818,8 +2848,10 @@ class TestQuicConnection:
             # client tries to reset server-initiated unidirectional stream
             with pytest.raises(ValueError) as cm:
                 client.reset_stream(3, QuicErrorCode.NO_ERROR)
-            assert str(cm.value) == \
-                "Cannot send data on peer-initiated unidirectional stream"
+            assert (
+                str(cm.value)
+                == "Cannot send data on peer-initiated unidirectional stream"
+            )
 
             # client tries to reset unknown server-initiated bidirectional stream
             with pytest.raises(ValueError) as cm:
@@ -2829,8 +2861,10 @@ class TestQuicConnection:
             # client tries to send data on server-initiated unidirectional stream
             with pytest.raises(ValueError) as cm:
                 client.send_stream_data(3, b"hello")
-            assert str(cm.value) == \
-                "Cannot send data on peer-initiated unidirectional stream"
+            assert (
+                str(cm.value)
+                == "Cannot send data on peer-initiated unidirectional stream"
+            )
 
             # client tries to send data on unknown server-initiated bidirectional stream
             with pytest.raises(ValueError) as cm:
@@ -2848,11 +2882,11 @@ class TestQuicConnection:
                 assert check_stream_id_for_sending(False, off)
 
                 # Server-Initiated, Bidirectional
-                assert check_stream_id_for_receiving(True, off+1)
-                assert check_stream_id_for_sending(True, off+1)
+                assert check_stream_id_for_receiving(True, off + 1)
+                assert check_stream_id_for_sending(True, off + 1)
 
-                assert check_stream_id_for_receiving(False, off+1)
-                assert check_stream_id_for_sending(False, off+1)
+                assert check_stream_id_for_receiving(False, off + 1)
+                assert check_stream_id_for_sending(False, off + 1)
 
                 # Client-Initiated, Unidirectional
                 assert not check_stream_id_for_receiving(True, off + 2)
@@ -2932,7 +2966,7 @@ class TestQuicConnection:
             SERVER_ADDR,
             now=time.time(),
         )
-        assert drop(client) == 0# todo: investigate!
+        assert drop(client) == 0  # todo: investigate!
 
     def test_write_connection_close_early(self):
         client = create_standalone_client(self)
@@ -2954,17 +2988,16 @@ class TestQuicConnection:
             reason_phrase="some reason",
         )
 
-        assert builder.quic_logger_frames == \
-            [
-                {
-                    "error_code": QuicErrorCode.APPLICATION_ERROR,
-                    "error_space": "transport",
-                    "frame_type": "connection_close",
-                    "raw_error_code": QuicErrorCode.APPLICATION_ERROR,
-                    "reason": "",
-                    "trigger_frame_type": QuicFrameType.PADDING,
-                } \
-            ]
+        assert builder.quic_logger_frames == [
+            {
+                "error_code": QuicErrorCode.APPLICATION_ERROR,
+                "error_space": "transport",
+                "frame_type": "connection_close",
+                "raw_error_code": QuicErrorCode.APPLICATION_ERROR,
+                "reason": "",
+                "trigger_frame_type": QuicFrameType.PADDING,
+            }
+        ]
 
     def test_excessive_crypto_buffering(self):
         with client_and_server() as (client, server):
@@ -2995,9 +3028,10 @@ class TestQuicConnection:
 
 class TestMtuProbe:
     def test_mtu_probe_success(self):
-        with client_and_server(
-            client_options={"probe_datagram_size": True}
-        ) as (client, server):
+        with client_and_server(client_options={"probe_datagram_size": True}) as (
+            client,
+            server,
+        ):
             # first probe (1350) was sent and ACK'd during handshake roundtrips
             assert client._max_datagram_size == 1350
             assert client._mtu_probe_pending is None
@@ -3027,9 +3061,10 @@ class TestMtuProbe:
             assert client._mtu_probe_sizes == []
 
     def test_mtu_probe_disabled(self):
-        with client_and_server(
-            client_options={"probe_datagram_size": False}
-        ) as (client, server):
+        with client_and_server(client_options={"probe_datagram_size": False}) as (
+            client,
+            server,
+        ):
             consume_events(client)
             consume_events(server)
 
@@ -3042,9 +3077,10 @@ class TestMtuProbe:
                 assert len(data) <= PACKET_MAX_SIZE
 
     def test_mtu_probe_lost(self):
-        with client_and_server(
-            client_options={"probe_datagram_size": True}
-        ) as (client, server):
+        with client_and_server(client_options={"probe_datagram_size": True}) as (
+            client,
+            server,
+        ):
             consume_events(client)
             consume_events(server)
 

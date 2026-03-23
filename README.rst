@@ -68,6 +68,7 @@ Features
 - HTTP/3 server push support
 - Post-Quantum (KEM) Key-Exchange (NIST FIPS 203 ML-KEM-768)
 - OCSP Stapling (Client Only)
+- Encrypted Client Hello conforming with `RFC 9849`_
 
 Requirements
 ------------
@@ -92,5 +93,6 @@ License
 .. _RFC 9000: https://datatracker.ietf.org/doc/html/rfc9000
 .. _RFC 9114: https://datatracker.ietf.org/doc/html/rfc9114
 .. _RFC 9369: https://datatracker.ietf.org/doc/html/rfc9369
+.. _RFC 9849: https://datatracker.ietf.org/doc/html/rfc9849
 .. _niquests: https://github.com/jawah/niquests
 .. _urllib3.future: https://github.com/jawah/urllib3.future

@@ -13,9 +13,11 @@ from qh3.quic.packet import (
     encode_quic_retry,
     encode_quic_version_negotiation,
     get_retry_integrity_tag,
+    pretty_protocol_version,
     pull_quic_header,
     pull_quic_preferred_address,
     pull_quic_transport_parameters,
+    pull_quic_version_information,
     push_quic_preferred_address,
     push_quic_transport_parameters,
 )
@@ -123,14 +125,18 @@ class TestPacket:
         assert header.destination_cid == b""
         assert header.source_cid == binascii.unhexlify("f067a5502a4262b5")
         assert header.token == b"token"
-        assert header.integrity_tag == binascii.unhexlify("04a265ba2eff4d829058fb3f0f2496ba")
+        assert header.integrity_tag == binascii.unhexlify(
+            "04a265ba2eff4d829058fb3f0f2496ba"
+        )
         assert buf.tell() == 36
 
         # check integrity
-        assert get_retry_integrity_tag(
-                buf.data_slice(0, 20), original_destination_cid, version=header.version \
-            ) == \
-            header.integrity_tag
+        assert (
+            get_retry_integrity_tag(
+                buf.data_slice(0, 20), original_destination_cid, version=header.version
+            )
+            == header.integrity_tag
+        )
 
         # serialize
         encoded = encode_quic_retry(
@@ -161,14 +167,18 @@ class TestPacket:
         assert header.destination_cid == b""
         assert header.source_cid == binascii.unhexlify("f067a5502a4262b5")
         assert header.token == b"token"
-        assert header.integrity_tag == binascii.unhexlify("c8646ce8bfe33952d955543665dcc7b6")
+        assert header.integrity_tag == binascii.unhexlify(
+            "c8646ce8bfe33952d955543665dcc7b6"
+        )
         assert buf.tell() == 36
 
         # check integrity
-        assert get_retry_integrity_tag(
-                buf.data_slice(0, 20), original_destination_cid, version=header.version \
-            ) == \
-            header.integrity_tag
+        assert (
+            get_retry_integrity_tag(
+                buf.data_slice(0, 20), original_destination_cid, version=header.version
+            )
+            == header.integrity_tag
+        )
 
         # serialize
         encoded = encode_quic_retry(
@@ -275,20 +285,19 @@ class TestParams:
         # parse
         buf = Buffer(data=data)
         params = pull_quic_transport_parameters(buf)
-        assert params == \
-            QuicTransportParameters(
-                max_idle_timeout=10000,
-                stateless_reset_token=b"\xcc/\xd6\xe7\xd9zS\xab[\xe8[(\xd7\\\x80\x08",
-                max_udp_payload_size=2020,
-                initial_max_data=393210,
-                initial_max_stream_data_bidi_local=65535,
-                initial_max_stream_data_bidi_remote=65535,
-                initial_max_stream_data_uni=None,
-                initial_max_streams_bidi=6,
-                initial_max_streams_uni=None,
-                ack_delay_exponent=3,
-                max_ack_delay=25,
-            )
+        assert params == QuicTransportParameters(
+            max_idle_timeout=10000,
+            stateless_reset_token=b"\xcc/\xd6\xe7\xd9zS\xab[\xe8[(\xd7\\\x80\x08",
+            max_udp_payload_size=2020,
+            initial_max_data=393210,
+            initial_max_stream_data_bidi_local=65535,
+            initial_max_stream_data_bidi_remote=65535,
+            initial_max_stream_data_uni=None,
+            initial_max_streams_bidi=6,
+            initial_max_streams_uni=None,
+            ack_delay_exponent=3,
+            max_ack_delay=25,
+        )
 
         # serialize
         buf = Buffer(capacity=len(data))
@@ -308,6 +317,48 @@ class TestParams:
         push_quic_transport_parameters(buf, params)
         assert buf.data == data
 
+
+class TestPrettyProtocolVersion:
+    """Tests for pretty_protocol_version."""
+
+    def test_known_version(self):
+        result = pretty_protocol_version(QuicProtocolVersion.VERSION_1)
+        assert "VERSION_1" in result
+
+    def test_unknown_version(self):
+        result = pretty_protocol_version(0xDEADBEEF)
+        assert "UNKNOWN" in result
+        assert "0xdeadbeef" in result
+
+
+class TestPullQuicVersionInformation:
+    """Tests for pull_quic_version_information."""
+
+    def test_chosen_version_zero_raises(self):
+        buf = Buffer(capacity=12)
+        buf.push_uint32(0)  # chosen_version = 0
+        buf.push_uint32(1)  # one available version
+        buf.seek(0)
+        with pytest.raises(ValueError, match="must not contain version 0"):
+            pull_quic_version_information(buf, 8)
+
+    def test_available_version_zero_raises(self):
+        buf = Buffer(capacity=12)
+        buf.push_uint32(1)  # chosen_version = 1
+        buf.push_uint32(0)  # available version = 0
+        buf.seek(0)
+        with pytest.raises(ValueError, match="must not contain version 0"):
+            pull_quic_version_information(buf, 8)
+
+    def test_valid_version_info(self):
+        buf = Buffer(capacity=12)
+        buf.push_uint32(1)  # chosen_version
+        buf.push_uint32(1)  # available version
+        buf.seek(0)
+        info = pull_quic_version_information(buf, 8)
+        assert info.chosen_version == 1
+        assert info.available_versions == [1]
+
     def test_params_preferred_address(self):
         data = binascii.unhexlify(
             "0d3b8ba27b8611532400890200000000f03c91fffe69a45411531262c4518d6"
@@ -317,15 +368,14 @@ class TestParams:
         # parse
         buf = Buffer(data=data)
         params = pull_quic_transport_parameters(buf)
-        assert params == \
-            QuicTransportParameters(
-                preferred_address=QuicPreferredAddress(
-                    ipv4_address=("139.162.123.134", 4435),
-                    ipv6_address=("2400:8902::f03c:91ff:fe69:a454", 4435),
-                    connection_id=b"b\xc4Q\x8dc\x01?\x0c(~\xd3W>\xfa\x90\x95`7",
-                    stateless_reset_token=b"F\xb2\xe0-EH\x0b\xa6d>\\n}H\xec\xb4",
-                ),
-            )
+        assert params == QuicTransportParameters(
+            preferred_address=QuicPreferredAddress(
+                ipv4_address=("139.162.123.134", 4435),
+                ipv6_address=("2400:8902::f03c:91ff:fe69:a454", 4435),
+                connection_id=b"b\xc4Q\x8dc\x01?\x0c(~\xd3W>\xfa\x90\x95`7",
+                stateless_reset_token=b"F\xb2\xe0-EH\x0b\xa6d>\\n}H\xec\xb4",
+            ),
+        )
 
         # serialize
         buf = Buffer(capacity=1000)
@@ -349,13 +399,12 @@ class TestParams:
         # parse
         buf = Buffer(data=data)
         preferred_address = pull_quic_preferred_address(buf)
-        assert preferred_address == \
-            QuicPreferredAddress(
-                ipv4_address=("139.162.123.134", 4435),
-                ipv6_address=None,
-                connection_id=b"b\xc4Q\x8dc\x01?\x0c(~\xd3W>\xfa\x90\x95`7",
-                stateless_reset_token=b"F\xb2\xe0-EH\x0b\xa6d>\\n}H\xec\xb4",
-            )
+        assert preferred_address == QuicPreferredAddress(
+            ipv4_address=("139.162.123.134", 4435),
+            ipv6_address=None,
+            connection_id=b"b\xc4Q\x8dc\x01?\x0c(~\xd3W>\xfa\x90\x95`7",
+            stateless_reset_token=b"F\xb2\xe0-EH\x0b\xa6d>\\n}H\xec\xb4",
+        )
 
         # serialize
         buf = Buffer(capacity=len(data))
@@ -371,13 +420,12 @@ class TestParams:
         # parse
         buf = Buffer(data=data)
         preferred_address = pull_quic_preferred_address(buf)
-        assert preferred_address == \
-            QuicPreferredAddress(
-                ipv4_address=None,
-                ipv6_address=("2400:8902::f03c:91ff:fe69:a454", 4435),
-                connection_id=b"b\xc4Q\x8dc\x01?\x0c(~\xd3W>\xfa\x90\x95`7",
-                stateless_reset_token=b"F\xb2\xe0-EH\x0b\xa6d>\\n}H\xec\xb4",
-            )
+        assert preferred_address == QuicPreferredAddress(
+            ipv4_address=None,
+            ipv6_address=("2400:8902::f03c:91ff:fe69:a454", 4435),
+            connection_id=b"b\xc4Q\x8dc\x01?\x0c(~\xd3W>\xfa\x90\x95`7",
+            stateless_reset_token=b"F\xb2\xe0-EH\x0b\xa6d>\\n}H\xec\xb4",
+        )
 
         # serialize
         buf = Buffer(capacity=len(data))

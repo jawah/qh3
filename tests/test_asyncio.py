@@ -225,10 +225,12 @@ class TestHighLevel:
     @pytest.mark.asyncio
     async def test_idna_sni(self):
         async with self.run_server() as server_port:
-            configuration = QuicConfiguration(is_client=True, server_name="ドメイン.テスト", verify_hostname=False)
+            configuration = QuicConfiguration(
+                is_client=True, server_name="ドメイン.テスト", verify_hostname=False
+            )
             configuration.load_verify_locations(cafile=SERVER_CACERTFILE)
             async with connect(
-                    self.server_host, server_port, configuration=configuration
+                self.server_host, server_port, configuration=configuration
             ) as client:
                 reader, writer = await client.create_stream()
                 assert writer.can_write_eof() is True
@@ -240,7 +242,6 @@ class TestHighLevel:
                 assert response == b"5432109876543210"
 
                 assert client._quic.tls._server_name == "xn--eckwd4c7c.xn--zckzah"
-
 
     @pytest.mark.skipif("loss" in SKIP_TESTS, reason="Skipping loss tests")
     @patch("socket.socket.sendto", new_callable=lambda: sendto_with_loss)
@@ -341,7 +342,9 @@ class TestHighLevel:
 
     @pytest.mark.asyncio
     async def test_connect_and_serve_with_retry_bad_token(self, mocker):
-        mock_validate = mocker.patch("qh3.quic.retry.QuicRetryTokenHandler.validate_token")
+        mock_validate = mocker.patch(
+            "qh3.quic.retry.QuicRetryTokenHandler.validate_token"
+        )
         mock_validate.side_effect = ValueError("Decryption failed.")
 
         async with self.run_server(retry=True) as server_port:
@@ -462,15 +465,48 @@ class TestHighLevel:
         config1.load_cert_chain(SERVER_CERTFILE, SERVER_KEYFILE)
         config2.load_cert_chain(SERVER_COMBINEDFILE)
         with open(SERVER_CERTFILE) as fp1, open(SERVER_KEYFILE) as fp2:
-            config3.load_cert_chain(
-                fp1.read(), fp2.read()
-            )
+            config3.load_cert_chain(fp1.read(), fp2.read())
 
         with open(SERVER_CERTFILE, "rb") as fp1, open(SERVER_KEYFILE, "rb") as fp2:
-            config4.load_cert_chain(
-                fp1.read(), fp2.read()
-            )
+            config4.load_cert_chain(fp1.read(), fp2.read())
 
         assert config1.certificate == config2.certificate
         assert config1.certificate == config3.certificate
         assert config1.certificate == config4.certificate
+
+
+class TestQuicStreamAdapter:
+    """Tests for QuicStreamAdapter.write_eof idempotency + close."""
+
+    def test_write_eof_idempotent(self):
+        """Calling write_eof twice should only send data once."""
+        from qh3.asyncio.protocol import QuicStreamAdapter
+        from unittest.mock import MagicMock
+
+        protocol = MagicMock()
+        adapter = QuicStreamAdapter(protocol=protocol, stream_id=0)
+        assert not adapter._closing
+
+        adapter.write_eof()
+        assert adapter._closing
+        protocol._quic.send_stream_data.assert_called_once_with(0, b"", end_stream=True)
+        protocol._transmit_soon.assert_called_once()
+
+        # Reset to track second call
+        protocol.reset_mock()
+        adapter.write_eof()
+        # Should not call again
+        protocol._quic.send_stream_data.assert_not_called()
+        protocol._transmit_soon.assert_not_called()
+
+    def test_close_delegates_to_write_eof(self):
+        """close() should call write_eof()."""
+        from qh3.asyncio.protocol import QuicStreamAdapter
+        from unittest.mock import MagicMock
+
+        protocol = MagicMock()
+        adapter = QuicStreamAdapter(protocol=protocol, stream_id=4)
+
+        adapter.close()
+        assert adapter._closing
+        protocol._quic.send_stream_data.assert_called_once_with(4, b"", end_stream=True)

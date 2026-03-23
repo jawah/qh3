@@ -24,11 +24,6 @@ pub struct QpackEncoder {
     encoder: Encoder,
 }
 
-unsafe impl Send for QpackDecoder {}
-unsafe impl Send for QpackEncoder {}
-unsafe impl Sync for QpackDecoder {}
-unsafe impl Sync for QpackEncoder {}
-
 #[pymethods]
 impl QpackEncoder {
     #[new]
@@ -57,8 +52,10 @@ impl QpackEncoder {
         Ok(PyBytes::new(py, r.data()))
     }
 
-    pub fn feed_decoder(&mut self, data: Bound<'_, PyBytes>) -> PyResult<()> {
-        let res = self.encoder.feed(data.as_bytes());
+    pub fn feed_decoder<'a>(&mut self, py: Python<'a>, data: Bound<'_, PyBytes>) -> PyResult<()> {
+        let input_data = data.as_bytes();
+
+        let res = py.detach(|| self.encoder.feed(input_data));
 
         match res {
             Ok(_) => Ok(()),
@@ -86,9 +83,10 @@ impl QpackEncoder {
             decoded_vec.push((header_str, value_str));
         }
 
-        let res = self
-            .encoder
-            .encode_all(StreamId::new(stream_id), decoded_vec);
+        let res = py.detach(|| {
+            self.encoder
+                .encode_all(StreamId::new(stream_id), decoded_vec)
+        });
 
         match res {
             Ok(buffer) => {
@@ -115,8 +113,10 @@ impl QpackDecoder {
         }
     }
 
-    pub fn feed_encoder(&mut self, data: Bound<'_, PyBytes>) -> PyResult<()> {
-        let res = self.decoder.feed(data.as_bytes());
+    pub fn feed_encoder<'a>(&mut self, py: Python<'a>, data: Bound<'_, PyBytes>) -> PyResult<()> {
+        let input_data = data.as_bytes();
+
+        let res = py.detach(|| self.decoder.feed(input_data));
 
         match res {
             Ok(_) => Ok(()),
@@ -132,9 +132,9 @@ impl QpackDecoder {
         stream_id: u64,
         data: Bound<'_, PyBytes>,
     ) -> PyResult<Bound<'a, PyTuple>> {
-        let output = self
-            .decoder
-            .decode(StreamId::new(stream_id), data.as_bytes());
+        let input_data = data.as_bytes();
+
+        let output = py.detach(|| self.decoder.decode(StreamId::new(stream_id), input_data));
 
         match output {
             Ok(DecoderOutput::Done(ref buffer)) => {
@@ -182,7 +182,7 @@ impl QpackDecoder {
         py: Python<'a>,
         stream_id: u64,
     ) -> PyResult<Bound<'a, PyTuple>> {
-        let output = self.decoder.unblocked(StreamId::new(stream_id));
+        let output = py.detach(|| self.decoder.unblocked(StreamId::new(stream_id)));
 
         if output.is_none() {
             return Err(DecoderStreamError::new_err("stream id is unknown"));
