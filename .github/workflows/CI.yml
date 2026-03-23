@@ -604,6 +604,9 @@ jobs:
       hashes: ${{ steps.compute.outputs.hashes }}
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v4.0.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.14
       - name: Download distributions
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -613,6 +616,26 @@ jobs:
       - name: Collected dists
         run: |
           tree dist
+      - name: Fix wheels with trailing zip data
+        run: |
+          python3 -c "
+          import glob, os
+
+          for whl in glob.glob('dist/*.whl'):
+              file_size = os.path.getsize(whl)
+              with open(whl, 'rb') as f:
+                  content = f.read()
+              eocd_pos = content.rfind(b'\x50\x4b\x05\x06')
+              if eocd_pos < 0:
+                  continue
+              comment_len = int.from_bytes(content[eocd_pos+20:eocd_pos+22], 'little')
+              expected = eocd_pos + 22 + comment_len
+              if expected >= file_size:
+                  continue
+              print(f'Truncating {whl}: {file_size} -> {expected} bytes (removing {file_size - expected} trailing bytes)')
+              with open(whl, 'r+b') as f:
+                  f.truncate(expected)
+          "
       - name: Generate hashes
         id: compute  #  needs.checksum.outputs.hashes
         working-directory: ./dist
@@ -641,12 +664,35 @@ jobs:
       id-token: write
       contents: write
     steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.14
       - name: Download distributions
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: wheels-*
           path: dist
           merge-multiple: true
+      - name: Fix wheels with trailing zip data
+        run: |
+          python3 -c "
+          import glob, os
+
+          for whl in glob.glob('dist/*.whl'):
+              file_size = os.path.getsize(whl)
+              with open(whl, 'rb') as f:
+                  content = f.read()
+              eocd_pos = content.rfind(b'\x50\x4b\x05\x06')
+              if eocd_pos < 0:
+                  continue
+              comment_len = int.from_bytes(content[eocd_pos+20:eocd_pos+22], 'little')
+              expected = eocd_pos + 22 + comment_len
+              if expected >= file_size:
+                  continue
+              print(f'Truncating {whl}: {file_size} -> {expected} bytes (removing {file_size - expected} trailing bytes)')
+              with open(whl, 'r+b') as f:
+                  f.truncate(expected)
+          "
       - name: "Upload dists to GitHub Release"
         env:
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
