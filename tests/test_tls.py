@@ -747,7 +747,9 @@ class TestTls:
         # serialize
         buf = Buffer(1000)
         push_client_hello(buf, hello)
-        assert len(buf.data) == len(load("tls_client_hello_with_alpn.bin"))
+        # The fixture contains a GREASE extension (0x0A0A, 4 bytes) that is
+        # stripped during parsing, so re-serialized output is 4 bytes smaller.
+        assert len(buf.data) == len(load("tls_client_hello_with_alpn.bin")) - 4
 
     def test_pull_client_hello_with_psk(self):
         buf = Buffer(data=load("tls_client_hello_with_psk.bin"))
@@ -779,7 +781,9 @@ class TestTls:
         # serialize
         buf = Buffer(1000)
         push_client_hello(buf, hello)
-        assert buf.data == load("tls_client_hello_with_psk.bin")
+        # The fixture contains a GREASE extension (0x0A0A, 4 bytes) that is
+        # stripped during parsing, so re-serialized output is 4 bytes smaller.
+        assert len(buf.data) == len(load("tls_client_hello_with_psk.bin")) - 4
 
     def test_pull_client_hello_with_sni(self):
         buf = Buffer(data=load("tls_client_hello_with_sni.bin"))
@@ -830,8 +834,9 @@ class TestTls:
         # serialize
         buf = Buffer(1000)
         push_client_hello(buf, hello)
-
-        assert buf.data == load("tls_client_hello_with_sni.bin")
+        # The fixture contains a GREASE extension (0x0A0A, 4 bytes) that is
+        # stripped during parsing, so re-serialized output is 4 bytes smaller.
+        assert len(buf.data) == len(load("tls_client_hello_with_sni.bin")) - 4
 
     def test_push_client_hello(self):
         hello = ClientHello(

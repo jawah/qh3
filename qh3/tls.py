@@ -49,11 +49,31 @@ from ._hazmat import (
 
 _HASHED_CERT_FILENAME_RE = re.compile(r"^[0-9a-fA-F]{8}\.[0-9]$")
 
-TLS_VERSION_GREASE = 0x0A0A
 TLS_VERSION_1_2 = 0x0303
 TLS_VERSION_1_3 = 0x0304
 
 ECH_VERSION = 0xFE0D
+
+
+def _generate_grease_value() -> int:
+    """Generate a random GREASE value of the form 0xNaNa (RFC 8701).
+
+    GREASE values are: 0x0A0A, 0x1A1A, 0x2A2A, ..., 0xFAFA (16 possible).
+    This matches BoringSSL/Chrome's grease_index_to_value().
+    """
+    seed = os.urandom(1)[0]
+    lo = (seed & 0xF0) | 0x0A
+    return (lo << 8) | lo
+
+
+def _is_grease_value(v: int) -> bool:
+    """Check if a value is a GREASE value (0xNaNa form per RFC 8701).
+
+    A GREASE value has both bytes equal and of the form 0xNa,
+    i.e. low nibble is 0x0A: 0x0A0A, 0x1A1A, ..., 0xFAFA.
+    """
+    return (v >> 8) == (v & 0xFF) and (v & 0x0F) == 0x0A
+
 
 T = TypeVar("T")
 
@@ -879,6 +899,13 @@ class ClientHello:
 
     other_extensions: list[Extension] = field(default_factory=list)
 
+    # Per-connection GREASE extension types (RFC 8701).
+    # grease_extension1 is emitted first (empty body),
+    # grease_extension2 is emitted last before PSK (1-byte \x00 body).
+    # When None, no GREASE extension is emitted at that position.
+    grease_extension1: int | None = None
+    grease_extension2: int | None = None
+
 
 def pull_client_hello(buf: Buffer) -> ClientHello:
     assert buf.pull_uint8() == HandshakeType.CLIENT_HELLO
@@ -932,8 +959,8 @@ def pull_client_hello(buf: Buffer) -> ClientHello:
                 buf.pull_bytes(
                     extension_length
                 )  # we don't implement it for the server...
-            elif extension_type == ExtensionType.GREASE:
-                pass  # simply ignore it!
+            elif _is_grease_value(extension_type):
+                buf.pull_bytes(extension_length)  # skip GREASE extensions
             else:
                 hello.other_extensions.append(
                     (extension_type, buf.pull_bytes(extension_length))
@@ -955,8 +982,10 @@ def push_client_hello(buf: Buffer, hello: ClientHello) -> None:
 
         # extensions
         with push_block(buf, 2):
-            with push_extension(buf, ExtensionType.GREASE):
-                pass
+            # GREASE extension 1: first extension, empty body
+            if hello.grease_extension1 is not None:
+                with push_extension(buf, hello.grease_extension1):
+                    pass
 
             with push_extension(buf, ExtensionType.KEY_SHARE):
                 push_list(buf, 2, partial(push_key_share, buf), hello.key_share)
@@ -1000,6 +1029,11 @@ def push_client_hello(buf: Buffer, hello: ClientHello) -> None:
                     pass
                 with push_block(buf, 2):  # empty extensions
                     pass
+
+            # GREASE extension 2: last before PSK, 1-byte body (\x00)
+            if hello.grease_extension2 is not None:
+                with push_extension(buf, hello.grease_extension2):
+                    buf.push_uint8(0)
 
             # pre_shared_key MUST be last
             if hello.pre_shared_key is not None:
@@ -1422,11 +1456,14 @@ def negotiate(
     offered: list[Any] | None,
     exc: Alert | None = None,
     excl: T | None = None,
+    excl_fn: Callable[[Any], bool] | None = None,
 ) -> T:
     if offered is not None:
         for c in supported:
             if c in offered:
                 if excl is not None and excl == c:
+                    continue
+                if excl_fn is not None and excl_fn(c):
                     continue
                 return c
 
@@ -1593,12 +1630,24 @@ class Context:
             [Direction, Epoch, CipherSuite, bytes], None
         ] = lambda d, e, c, s: None
 
+        # Generate per-connection GREASE values (RFC 8701).
+        # Chrome/BoringSSL draws all GREASE seeds at handshake init to keep
+        # them consistent within a connection (e.g. across HelloRetryRequest).
+        self._grease_extension1 = _generate_grease_value()
+        self._grease_extension2 = _generate_grease_value()
+        # The two extension GREASE values must differ (BoringSSL XORs 0x1010).
+        if self._grease_extension2 == self._grease_extension1:
+            self._grease_extension2 ^= 0x1010
+        self._grease_group = _generate_grease_value()
+        self._grease_cipher = _generate_grease_value()
+        self._grease_version = _generate_grease_value()
+
         # supported parameters
         if cipher_suites is not None:
             self._cipher_suites = cipher_suites
         else:
             self._cipher_suites = [
-                CipherSuite.GREASE,
+                self._grease_cipher,  # type: ignore[list-item]
                 CipherSuite.AES_128_GCM_SHA256,
                 CipherSuite.CHACHA20_POLY1305_SHA256,
                 CipherSuite.AES_256_GCM_SHA384,
@@ -1618,14 +1667,14 @@ class Context:
         ]
 
         self._supported_groups = [
-            Group.GREASE,
+            self._grease_group,
             Group.X25519ML768,
             Group.X25519,
             Group.SECP256R1,
             Group.SECP384R1,
         ]
 
-        self._supported_versions = [TLS_VERSION_GREASE, TLS_VERSION_1_3]
+        self._supported_versions = [self._grease_version, TLS_VERSION_1_3]
 
         # state
         self.alpn_negotiated: str | None = None
@@ -1852,9 +1901,9 @@ class Context:
                         "TLS: Advertising to peer post-quantum algorithm "
                         "using X25519ML768 (0x11EC)"
                     )
-            elif group == Group.GREASE:
-                key_share.append((Group.GREASE, b"\x00"))
-                supported_groups.append(Group.GREASE)
+            elif _is_grease_value(group):
+                key_share.append((group, b"\x00"))
+                supported_groups.append(group)
 
         assert len(key_share), "no key share entries"
 
@@ -1930,6 +1979,8 @@ class Context:
             supported_groups=supported_groups,
             supported_versions=self._supported_versions,
             other_extensions=extensions,
+            grease_extension1=self._grease_extension1,
+            grease_extension2=self._grease_extension2,
         )
 
         # PSK
@@ -1973,7 +2024,7 @@ class Context:
                 )
 
         self._key_schedule_proxy = KeyScheduleProxy(
-            [cs for cs in self._cipher_suites if cs != CipherSuite.GREASE]
+            [cs for cs in self._cipher_suites if not _is_grease_value(cs)]
         )
         self._key_schedule_proxy.extract(None)
 
@@ -2020,19 +2071,28 @@ class Context:
         )
         enc = self._ech_hpke_context.enc()
 
-        # Determine which outer extensions to compress via ech_outer_extensions
-        compressed_types: list[int] = [
-            ExtensionType.KEY_SHARE,
-            ExtensionType.SUPPORTED_VERSIONS,
-            ExtensionType.SIGNATURE_ALGORITHMS,
-            ExtensionType.SUPPORTED_GROUPS,
-        ]
+        # Determine which outer extensions to compress via ech_outer_extensions.
+        # Order must match the outer CH extension order from push_client_hello():
+        #   grease_ext1, KEY_SHARE, SUPPORTED_VERSIONS, SIGNATURE_ALGORITHMS,
+        #   SUPPORTED_GROUPS, PSK_KEY_EXCHANGE_MODES, ALPN, handshake_exts...,
+        #   STATUS_REQUEST, grease_ext2
+        compressed_types: list[int] = []
+        compressed_types.append(self._grease_extension1)
+        compressed_types.extend(
+            [
+                ExtensionType.KEY_SHARE,
+                ExtensionType.SUPPORTED_VERSIONS,
+                ExtensionType.SIGNATURE_ALGORITHMS,
+                ExtensionType.SUPPORTED_GROUPS,
+            ]
+        )
         if self.session_ticket or self.new_session_ticket_cb is not None:
             compressed_types.append(ExtensionType.PSK_KEY_EXCHANGE_MODES)
         if self._alpn_protocols is not None:
             compressed_types.append(ExtensionType.ALPN)
         for ext_type, _ in self.handshake_extensions:
             compressed_types.append(ext_type)
+        compressed_types.append(self._grease_extension2)
 
         # Build ech_outer_extensions value: uint8 len + list of uint16 extension types
         outer_ext_buf = Buffer(capacity=1 + len(compressed_types) * 2)
@@ -2126,6 +2186,8 @@ class Context:
             supported_groups=supported_groups,
             supported_versions=self._supported_versions,
             other_extensions=aad_extensions,
+            grease_extension1=self._grease_extension1,
+            grease_extension2=self._grease_extension2,
         )
 
         # Serialize AAD: outer ClientHello body WITHOUT the 4-byte Handshake header.
@@ -2204,9 +2266,14 @@ class Context:
                 # 2. Extensions from outer CH, replacing ech_outer_extensions
                 # These are in the ORDER they appear in the outer ClientHello
                 # (which is the push_client_hello serialization order):
-                #   KEY_SHARE, SUPPORTED_VERSIONS, SIGNATURE_ALGORITHMS,
-                #   SUPPORTED_GROUPS, PSK_KEY_EXCHANGE_MODES, ALPN,
-                #   handshake_extensions...
+                #   grease_ext1, KEY_SHARE, SUPPORTED_VERSIONS,
+                #   SIGNATURE_ALGORITHMS, SUPPORTED_GROUPS,
+                #   PSK_KEY_EXCHANGE_MODES, ALPN, handshake_extensions...,
+                #   grease_ext2
+
+                # GREASE extension 1 (empty body)
+                with push_extension(inner_ch_buf, self._grease_extension1):
+                    pass
 
                 with push_extension(inner_ch_buf, ExtensionType.KEY_SHARE):
                     push_list(
@@ -2264,6 +2331,11 @@ class Context:
                 for ext_type, ext_value in self.handshake_extensions:
                     with push_extension(inner_ch_buf, ext_type):
                         inner_ch_buf.push_bytes(ext_value)
+
+                # GREASE extension 2 (1-byte body \x00) mimic Chromium "extensions.cc"
+                # behavior.
+                with push_extension(inner_ch_buf, self._grease_extension2):
+                    inner_ch_buf.push_uint8(0)
 
         self._ech_inner_ch_bytes = inner_ch_buf.data
 
@@ -2363,7 +2435,7 @@ class Context:
             self._cipher_suites,
             [peer_hello.cipher_suite],
             AlertHandshakeFailure("Unsupported cipher suite"),
-            excl=CipherSuite.GREASE,
+            excl_fn=_is_grease_value,
         )
         assert peer_hello.compression_method in self._legacy_compression_methods
         assert peer_hello.supported_version in self._supported_versions
@@ -2741,7 +2813,7 @@ class Context:
             self._cipher_suites,
             peer_hello.cipher_suites,
             AlertHandshakeFailure("No supported cipher suite"),
-            excl=CipherSuite.GREASE,
+            excl_fn=_is_grease_value,
         )
         compression_method = negotiate(
             self._legacy_compression_methods,
