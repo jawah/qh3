@@ -626,7 +626,10 @@ jobs:
               try:
                   with zipfile.ZipFile(whl, 'r') as src, zipfile.ZipFile(tmp, 'w') as dst:
                       for item in src.infolist():
-                          dst.writestr(item, src.read(item.filename), compress_type=item.compress_type, compresslevel=9)
+                          with src.open(item) as f:
+                              f._expected_crc = None
+                              data = f.read()
+                          dst.writestr(item, data, compress_type=item.compress_type, compresslevel=9)
                   os.replace(tmp, whl)
                   print(f'Repacked {os.path.basename(whl)}')
               except Exception as e:
@@ -685,7 +688,10 @@ jobs:
               try:
                   with zipfile.ZipFile(whl, 'r') as src, zipfile.ZipFile(tmp, 'w') as dst:
                       for item in src.infolist():
-                          dst.writestr(item, src.read(item.filename), compress_type=item.compress_type, compresslevel=9)
+                          with src.open(item) as f:
+                              f._expected_crc = None
+                              data = f.read()
+                          dst.writestr(item, data, compress_type=item.compress_type, compresslevel=9)
                   os.replace(tmp, whl)
                   print(f'Repacked {os.path.basename(whl)}')
               except Exception as e:
