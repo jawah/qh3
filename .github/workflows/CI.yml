@@ -606,7 +606,7 @@ jobs:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v4.0.0
       - uses: actions/setup-python@v6
         with:
-          python-version: 3.14
+          python-version: '3.12'
       - name: Download distributions
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -619,14 +619,24 @@ jobs:
       - name: Repack wheels to fix trailing zip data
         run: |
           python3 -c "
-          import glob, os, zipfile
+          import glob, os, sys, zipfile
+          failed = []
           for whl in glob.glob('dist/*.whl'):
               tmp = whl + '.tmp'
-              with zipfile.ZipFile(whl, 'r') as src, zipfile.ZipFile(tmp, 'w') as dst:
-                  for item in src.infolist():
-                      dst.writestr(item, src.read(item.filename), compress_type=item.compress_type, compresslevel=9)
-              os.replace(tmp, whl)
-              print(f'Repacked {os.path.basename(whl)}')
+              try:
+                  with zipfile.ZipFile(whl, 'r') as src, zipfile.ZipFile(tmp, 'w') as dst:
+                      for item in src.infolist():
+                          dst.writestr(item, src.read(item.filename), compress_type=item.compress_type, compresslevel=9)
+                  os.replace(tmp, whl)
+                  print(f'Repacked {os.path.basename(whl)}')
+              except Exception as e:
+                  failed.append(os.path.basename(whl))
+                  print(f'FAILED to repack {os.path.basename(whl)}: {e}')
+                  if os.path.exists(tmp):
+                      os.unlink(tmp)
+          if failed:
+              print(f'ERROR: {len(failed)} wheel(s) could not be repacked: {failed}')
+              sys.exit(1)
           "
       - name: Generate hashes
         id: compute  #  needs.checksum.outputs.hashes
@@ -658,7 +668,7 @@ jobs:
     steps:
       - uses: actions/setup-python@v6
         with:
-          python-version: 3.14
+          python-version: '3.12'
       - name: Download distributions
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -668,14 +678,24 @@ jobs:
       - name: Repack wheels to fix trailing zip data
         run: |
           python3 -c "
-          import glob, os, zipfile
+          import glob, os, sys, zipfile
+          failed = []
           for whl in glob.glob('dist/*.whl'):
               tmp = whl + '.tmp'
-              with zipfile.ZipFile(whl, 'r') as src, zipfile.ZipFile(tmp, 'w') as dst:
-                  for item in src.infolist():
-                      dst.writestr(item, src.read(item.filename), compress_type=item.compress_type, compresslevel=9)
-              os.replace(tmp, whl)
-              print(f'Repacked {os.path.basename(whl)}')
+              try:
+                  with zipfile.ZipFile(whl, 'r') as src, zipfile.ZipFile(tmp, 'w') as dst:
+                      for item in src.infolist():
+                          dst.writestr(item, src.read(item.filename), compress_type=item.compress_type, compresslevel=9)
+                  os.replace(tmp, whl)
+                  print(f'Repacked {os.path.basename(whl)}')
+              except Exception as e:
+                  failed.append(os.path.basename(whl))
+                  print(f'FAILED to repack {os.path.basename(whl)}: {e}')
+                  if os.path.exists(tmp):
+                      os.unlink(tmp)
+          if failed:
+              print(f'ERROR: {len(failed)} wheel(s) could not be repacked: {failed}')
+              sys.exit(1)
           "
       - name: "Upload dists to GitHub Release"
         env:
