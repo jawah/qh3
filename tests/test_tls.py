@@ -4,7 +4,7 @@ import pytest
 import binascii
 import ssl
 
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from qh3 import tls
@@ -17,11 +17,16 @@ from qh3.tls import (
     CertificateVerify,
     ClientHello,
     Context,
+    ECHCipherSuite,
+    ECHConfig,
     EncryptedExtensions,
     Finished,
+    HKDFExpand,
     NewSessionTicket,
     ServerHello,
     State,
+    negotiate,
+    parse_ech_config_list,
     pull_block,
     pull_certificate,
     pull_certificate_request,
@@ -31,6 +36,7 @@ from qh3.tls import (
     pull_finished,
     pull_new_session_ticket,
     pull_server_hello,
+    push_block,
     push_certificate,
     push_certificate_verify,
     push_client_hello,
@@ -38,8 +44,11 @@ from qh3.tls import (
     push_finished,
     push_new_session_ticket,
     push_server_hello,
+    push_opaque,
+    select_ech_config,
     load_pem_private_key,
     load_pem_x509_certificates,
+    verify_certificate,
 )
 
 from qh3._hazmat import rebuild_chain
@@ -48,6 +57,7 @@ from .utils import (
     SERVER_CACERTFILE,
     SERVER_CERTFILE,
     SERVER_KEYFILE,
+    generate_certificate,
     generate_ec_certificate,
     generate_ed25519_certificate,
     load,
@@ -1436,3 +1446,452 @@ uYkQ4omYCTX5ohy+knMjdOmdH9c7SpqEWBDC86fiNex+O0XOMEZSa8DA
 -----END CERTIFICATE-----
 """
         )
+
+
+class TestHKDFExpand:
+    """Tests for HKDFExpand."""
+
+    def test_reject_oversized_length(self):
+        # SHA-256 => digest_size=32, max_length=255*32=8160
+        with pytest.raises(ValueError, match="Cannot derive keys larger than"):
+            HKDFExpand(algorithm=256, length=8161, info=b"test")
+
+    def test_info_defaults_to_empty_bytes(self):
+        # Passing info=None should not raise; internally defaults to b""
+        expander = HKDFExpand(algorithm=256, length=32, info=None)
+        result = expander.derive(b"some_key_material")
+        assert isinstance(result, bytes)
+        assert len(result) == 32
+
+    def test_derive_called_twice_raises(self):
+        expander = HKDFExpand(algorithm=256, length=32, info=b"test")
+        expander.derive(b"key_material")
+        with pytest.raises(CryptoError):
+            expander.derive(b"key_material")
+
+
+class TestNegotiate:
+    """Tests for negotiate() with exclusion."""
+
+    def test_negotiate_with_excl_skips_excluded(self):
+        result = negotiate(
+            supported=[1, 2, 3],
+            offered=[1, 2, 3],
+            excl=1,
+        )
+        assert result == 2
+
+    def test_negotiate_with_excl_all_excluded(self):
+        result = negotiate(
+            supported=[1],
+            offered=[1],
+            excl=1,
+        )
+        assert result is None
+
+    def test_negotiate_with_excl_none_returns_first_match(self):
+        result = negotiate(
+            supported=[1, 2],
+            offered=[2, 1],
+            excl=None,
+        )
+        assert result == 1
+
+
+class TestContextProperties:
+    """Tests for Context property getters."""
+
+    def test_peer_certificate_default(self):
+        ctx = Context(is_client=True)
+        assert ctx.peer_certificate is None
+
+    def test_peer_certificate_chain_default(self):
+        ctx = Context(is_client=True)
+        assert ctx.peer_certificate_chain == []
+
+    def test_ech_retry_configs_default(self):
+        ctx = Context(is_client=True)
+        assert ctx.ech_retry_configs is None
+
+
+class TestVerifyCertificate:
+    """Tests for verify_certificate edge cases."""
+
+    def test_chain_defaults_to_empty_list(self):
+        # chain=None should default to [] internally
+        # Using the test cert with its CA should verify successfully
+        cert_pem = load("ssl_cert.pem")
+        certs = load_pem_x509_certificates(cert_pem)
+        cert = certs[0]
+
+        # This exercises line 410 (chain=None => chain=[]) and should pass
+        verify_certificate(
+            certificate=cert,
+            chain=None,
+            cadata=load("pycacert.pem"),
+            server_name="localhost",
+        )
+
+    def test_raises_on_empty_ca_store(self):
+        # Generate a non-self-signed cert, then pass no CA store
+        from cryptography.hazmat.primitives.asymmetric import ec as crypto_ec
+        from qh3._hazmat import Certificate as X509Cert
+
+        cert_obj, _ = generate_ec_certificate(
+            common_name="test.example.com",
+            alternative_names=["test.example.com"],
+        )
+        cert = X509Cert(cert_obj.public_bytes(serialization.Encoding.DER))
+
+        # self-signed cert IS its own trust anchor, so use it
+        # to test the "empty CA store" path we need truly no certs loaded
+        # The generated cert above is self-signed so it will serve as trust anchor...
+        # We need a cert that is NOT self-signed. Instead, let's test by
+        # providing cadata that contains no parseable certificates.
+        with pytest.raises(
+            tls.AlertBadCertificate,
+            match="unable to get local issuer certificate",
+        ):
+            verify_certificate(
+                certificate=cert,
+                chain=None,
+                cadata=None,
+                cafile=None,
+                capath=None,
+                server_name="test.example.com",
+            )
+
+    def test_raises_on_missing_server_name(self):
+        # Cert with no SANs + server_name=None
+        cert_obj, _ = generate_ec_certificate("no-san.example.com", [])
+        from qh3._hazmat import Certificate as X509Cert
+
+        cert = X509Cert(cert_obj.public_bytes(serialization.Encoding.DER))
+
+        with pytest.raises(
+            tls.AlertBadCertificate,
+            match="unable to determine server name target",
+        ):
+            verify_certificate(
+                certificate=cert,
+                chain=None,
+                cadata=cert_obj.public_bytes(serialization.Encoding.PEM),
+                server_name=None,
+            )
+
+    def test_assert_server_name_false_suppresses_invalid_name(self):
+        # Wildcard-only SAN cert + assert_server_name=False
+        # The SAN extraction produces '*.test.com' which is unparseable
+        # by the Rust verifier, raising InvalidNameCertificateError.
+        # assert_server_name=False suppresses it.
+        from cryptography import x509 as cx509
+        import datetime
+
+        key = ec.generate_private_key(curve=ec.SECP256R1())
+        subject = issuer = cx509.Name(
+            [cx509.NameAttribute(cx509.NameOID.COMMON_NAME, "test")]
+        )
+        cert = (
+            cx509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(cx509.random_serial_number())
+            .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+            .not_valid_after(
+                datetime.datetime.now(datetime.timezone.utc)
+                + datetime.timedelta(days=10)
+            )
+            .add_extension(
+                cx509.SubjectAlternativeName([cx509.DNSName("*.test.com")]),
+                critical=False,
+            )
+            .sign(key, hashes.SHA256())
+        )
+
+        from qh3._hazmat import Certificate as X509Cert
+
+        inner_cert = X509Cert(cert.public_bytes(serialization.Encoding.DER))
+
+        # Should return without error (line 486)
+        verify_certificate(
+            certificate=inner_cert,
+            chain=None,
+            cadata=cert.public_bytes(serialization.Encoding.PEM),
+            server_name=None,
+            assert_server_name=False,
+        )
+
+
+class TestPullCertificateRequestUnknownExtension:
+    """Test for pull_certificate_request with unknown extension."""
+
+    def test_unknown_extension_stored(self):
+        # Build a CertificateRequest with an unknown extension type
+        buf = Buffer(capacity=256)
+        buf.push_uint8(tls.HandshakeType.CERTIFICATE_REQUEST)
+        with push_block(buf, 3):
+            # request_context (empty)
+            push_opaque(buf, 1, b"")
+            # extensions list
+            with push_block(buf, 2):
+                # unknown extension type 0x00FF with data b"\xAB\xCD"
+                buf.push_uint16(0x00FF)
+                buf.push_uint16(2)
+                buf.push_bytes(b"\xab\xcd")
+
+        buf.seek(0)
+        cert_req = pull_certificate_request(buf)
+        assert len(cert_req.other_extensions) == 1
+        assert cert_req.other_extensions[0] == (0x00FF, b"\xab\xcd")
+        assert cert_req.signature_algorithms is None
+
+
+class TestSelectEchConfig:
+    """Tests for select_ech_config."""
+
+    def _make_ech_config(
+        self,
+        version=0xFE0D,
+        config_id=1,
+        kem_id=0x0020,
+        cipher_suites=None,
+        extensions=b"",
+        public_name="example.com",
+    ):
+        if cipher_suites is None:
+            cipher_suites = [ECHCipherSuite(kdf_id=0x0001, aead_id=0x0001)]
+        return ECHConfig(
+            version=version,
+            config_id=config_id,
+            kem_id=kem_id,
+            public_key=b"\x00" * 32,
+            cipher_suites=cipher_suites,
+            maximum_name_length=64,
+            public_name=public_name,
+            extensions=extensions,
+            raw=b"",
+        )
+
+    def test_returns_none_for_empty_list(self):
+        assert select_ech_config([]) is None
+
+    def test_skips_wrong_version(self):
+        config = self._make_ech_config(version=0x0000)
+        assert select_ech_config([config]) is None
+
+    def test_skips_unsupported_kem(self):
+        config = self._make_ech_config(kem_id=0x9999)
+        assert select_ech_config([config]) is None
+
+    def test_skips_mandatory_extension(self):
+        # Build extension bytes with a mandatory extension (high bit set)
+        ext_buf = Buffer(capacity=64)
+        ext_buf.push_uint16(0x8001)  # mandatory extension type
+        with push_block(ext_buf, 2):
+            ext_buf.push_bytes(b"\x00")
+        config = self._make_ech_config(extensions=ext_buf.data)
+        assert select_ech_config([config]) is None
+
+    def test_skips_malformed_extension(self):
+        # Truncated extension data triggers BufferReadError => continue
+        config = self._make_ech_config(extensions=b"\x00")
+        assert select_ech_config([config]) is None
+
+    def test_skips_non_mandatory_extension_ok(self):
+        # Non-mandatory extension (high bit NOT set) => config is usable
+        ext_buf = Buffer(capacity=64)
+        ext_buf.push_uint16(0x0001)  # non-mandatory extension
+        with push_block(ext_buf, 2):
+            ext_buf.push_bytes(b"\x00")
+        config = self._make_ech_config(extensions=ext_buf.data)
+        result = select_ech_config([config])
+        assert result is not None
+        assert result[0] is config
+
+    def test_no_supported_cipher_suite(self):
+        config = self._make_ech_config(
+            cipher_suites=[ECHCipherSuite(kdf_id=0x9999, aead_id=0x9999)]
+        )
+        assert select_ech_config([config]) is None
+
+    def test_selects_first_usable(self):
+        bad = self._make_ech_config(kem_id=0x9999)
+        good = self._make_ech_config()
+        result = select_ech_config([bad, good])
+        assert result is not None
+        assert result[0] is good
+
+
+class TestParseEchConfigList:
+    """Tests for parse_ech_config_list with unknown version"""
+
+    def test_unknown_version_skipped(self):
+        # Build an ECHConfigList with one entry that has an unknown version
+        buf = Buffer(capacity=256)
+        with push_block(buf, 2):
+            # entry with unknown version 0x0000
+            buf.push_uint16(0x0000)  # version
+            with push_block(buf, 2):
+                buf.push_bytes(b"\x01\x02\x03")  # arbitrary contents
+        configs = parse_ech_config_list(buf.data)
+        assert configs == []
+
+    def test_mixed_known_and_unknown_versions(self):
+        # Build an ECHConfigList with unknown version followed by valid version
+        buf = Buffer(capacity=512)
+        with push_block(buf, 2):
+            # First: unknown version
+            buf.push_uint16(0x0000)
+            with push_block(buf, 2):
+                buf.push_bytes(b"\x01\x02\x03")
+
+            # Second: valid 0xFE0D
+            buf.push_uint16(0xFE0D)
+            with push_block(buf, 2):
+                buf.push_uint8(1)  # config_id
+                buf.push_uint16(0x0020)  # kem_id
+                push_opaque(buf, 2, b"\x00" * 32)  # public_key
+                # cipher_suites
+                with push_block(buf, 2):
+                    buf.push_uint16(0x0001)  # kdf_id
+                    buf.push_uint16(0x0001)  # aead_id
+                buf.push_uint8(64)  # maximum_name_length
+                push_opaque(buf, 1, b"example.com")  # public_name
+                push_opaque(buf, 2, b"")  # extensions
+
+        configs = parse_ech_config_list(buf.data)
+        assert len(configs) == 1
+        assert configs[0].version == 0xFE0D
+        assert configs[0].config_id == 1
+        assert configs[0].kem_id == 0x0020
+
+
+class TestHandshakeWithP384P521:
+    """Tests for P384/P521 server key exchange + sig algo selection"""
+
+    def create_client(self, cadata, **kwargs):
+        client = Context(
+            is_client=True,
+            cafile=None,
+            cadata=cadata,
+            **kwargs,
+        )
+        client.handshake_extensions = [
+            (
+                tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
+                CLIENT_QUIC_TRANSPORT_PARAMETERS,
+            )
+        ]
+        return client
+
+    def create_server_with_ec(self, curve_type, cryptography_curve_class):
+        certificate, private_key = generate_ec_certificate(
+            common_name="example.com",
+            alternative_names=["example.com"],
+            curve=cryptography_curve_class,
+        )
+
+        server = Context(
+            is_client=False,
+            max_early_data=0xFFFFFFFF,
+        )
+        server.certificate = InnerCertificate(
+            certificate.public_bytes(serialization.Encoding.DER)
+        )
+        server.certificate_private_key = EcPrivateKey(
+            private_key.private_bytes(
+                serialization.Encoding.DER,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ),
+            curve_type,
+            True,
+        )
+        server.handshake_extensions = [
+            (
+                tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
+                SERVER_QUIC_TRANSPORT_PARAMETERS,
+            )
+        ]
+        return server, certificate
+
+    def _handshake(self, client, server):
+        client_buf = create_buffers()
+        client.handle_message(b"", client_buf)
+        server_input = merge_buffers(client_buf)
+        reset_buffers(client_buf)
+
+        server_buf = create_buffers()
+        server.handle_message(server_input, server_buf)
+        client_input = merge_buffers(server_buf)
+        reset_buffers(server_buf)
+
+        client.handle_message(client_input, client_buf)
+        server_input = merge_buffers(client_buf)
+        reset_buffers(client_buf)
+
+        server.handle_message(server_input, server_buf)
+
+    def test_handshake_with_p384_certificate(self):
+        server, certificate = self.create_server_with_ec(384, ec.SECP384R1)
+        client = self.create_client(
+            cadata=certificate.public_bytes(serialization.Encoding.PEM),
+        )
+        # Force client to offer SECP384R1
+        client._supported_groups = [tls.Group.SECP384R1]
+
+        self._handshake(client, server)
+
+        assert client.state == State.CLIENT_POST_HANDSHAKE
+        assert server.state == State.SERVER_POST_HANDSHAKE
+
+    def test_handshake_with_p521_certificate(self):
+        # P521 certs must be signed with SHA512 for the Rust backend to
+        # recognize them as self-signed (generate_ec_certificate uses SHA256).
+        from cryptography.hazmat.primitives.asymmetric import ec as crypto_ec
+
+        private_key = crypto_ec.generate_private_key(curve=crypto_ec.SECP521R1())
+        certificate, _ = generate_certificate(
+            common_name="example.com",
+            alternative_names=["example.com"],
+            hash_algorithm=hashes.SHA512(),
+            key=private_key,
+        )
+
+        server = Context(
+            is_client=False,
+            max_early_data=0xFFFFFFFF,
+        )
+        server.certificate = InnerCertificate(
+            certificate.public_bytes(serialization.Encoding.DER)
+        )
+        server.certificate_private_key = EcPrivateKey(
+            private_key.private_bytes(
+                serialization.Encoding.DER,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ),
+            521,
+            True,
+        )
+        server.handshake_extensions = [
+            (
+                tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,
+                SERVER_QUIC_TRANSPORT_PARAMETERS,
+            )
+        ]
+
+        client = self.create_client(
+            cadata=certificate.public_bytes(serialization.Encoding.PEM),
+        )
+        # Force client to offer SECP521R1 group AND include the P521 signature algorithm
+        client._supported_groups = [tls.Group.SECP521R1]
+        client._signature_algorithms = [
+            tls.SignatureAlgorithm.ECDSA_SECP521R1_SHA512,
+        ] + client._signature_algorithms
+
+        self._handshake(client, server)
+
+        assert client.state == State.CLIENT_POST_HANDSHAKE
+        assert server.state == State.SERVER_POST_HANDSHAKE
