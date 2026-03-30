@@ -538,7 +538,7 @@ jobs:
           PYO3_CROSS: 1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist -i 3.13t
+          args: --release --out dist -i ${{ matrix.python_version }}
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
