@@ -1,3 +1,16 @@
+1.7.1 (2026-03-30)
+====================
+
+**Fixed**
+- ls-qpack-rs strict enforcement struct assert at build time. (https://github.com/jawah/qh3/issues/105)
+
+**Changed**
+- Updated aws-lc-sys v0.39.0 to v0.39.1.
+- Updated ls-qpack-rs v0.3.0 to v0.3.1.
+
+**Misc**
+- Missing ARM64 pre-built wheel for Windows non freethreaded build. (https://github.com/jawah/qh3/issues/106)
+
 1.7.0 (2026-03-23)
 ====================
 
