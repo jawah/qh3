@@ -682,7 +682,7 @@ class H3Connection:
 
         if frame_type == FrameType.DATA:
             # check DATA frame is allowed
-            if stream.headers_recv_state != HeadersState.AFTER_HEADERS:
+            if stream.headers_recv_state is not HeadersState.AFTER_HEADERS:
                 raise FrameUnexpected("DATA frame is not allowed in this state")
 
             if stream_ended or frame_data:
@@ -696,7 +696,7 @@ class H3Connection:
                 )
         elif frame_type == FrameType.HEADERS:
             # check HEADERS frame is allowed
-            if stream.headers_recv_state == HeadersState.AFTER_TRAILERS:
+            if stream.headers_recv_state is HeadersState.AFTER_TRAILERS:
                 raise FrameUnexpected("HEADERS frame is not allowed in this state")
 
             # try to decode HEADERS, may raise pylsqpack.StreamBlocked
@@ -705,7 +705,7 @@ class H3Connection:
             status_code: int | None = None
 
             # validate headers
-            if stream.headers_recv_state == HeadersState.INITIAL:
+            if stream.headers_recv_state is HeadersState.INITIAL:
                 if self._is_client:
                     status_code = validate_response_headers(headers)
                 else:
@@ -730,7 +730,7 @@ class H3Connection:
                 )
 
             # update state and emit headers
-            if stream.headers_recv_state == HeadersState.INITIAL:
+            if stream.headers_recv_state is HeadersState.INITIAL:
                 # Informational Response MUST be taken as-is without
                 # skipping the main response.
                 if status_code is None or status_code >= 200 or stream_ended:
@@ -739,7 +739,7 @@ class H3Connection:
                 stream.headers_recv_state = HeadersState.AFTER_TRAILERS
 
             if (
-                stream.headers_recv_state == HeadersState.INITIAL
+                stream.headers_recv_state is HeadersState.INITIAL
                 and status_code is not None
                 and status_code < 200
             ):
