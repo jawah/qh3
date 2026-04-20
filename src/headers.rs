@@ -71,7 +71,7 @@ impl QpackEncoder {
         stream_id: u64,
         headers: Vec<(Bound<'_, PyBytes>, Bound<'_, PyBytes>)>,
     ) -> PyResult<Bound<'a, PyTuple>> {
-        let mut decoded_vec: Vec<(&str, &str)> = Vec::new();
+        let mut decoded_vec: Vec<(&str, &str)> = Vec::with_capacity(headers.len());
 
         for (header, value) in headers.iter() {
             let header_str = std::str::from_utf8(header.as_bytes()).map_err(|e| {
@@ -192,9 +192,14 @@ impl QpackDecoder {
 
         match res {
             Ok(DecoderOutput::Done(ref buffer)) => {
-                let decoded_headers = PyList::new(py, Vec::<(String, String)>::new()).unwrap();
+                let headers_iter = buffer.headers();
+                let decoded_headers = PyList::new(
+                    py,
+                    Vec::<(String, String)>::with_capacity(headers_iter.len()),
+                )
+                .unwrap();
 
-                for header in buffer.headers() {
+                for header in headers_iter {
                     let _ = decoded_headers.append(
                         PyTuple::new(
                             py,

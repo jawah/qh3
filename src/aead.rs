@@ -25,7 +25,7 @@ impl QuicNonce {
     ///
     /// This is `iv ^ seq` where `seq` is encoded as a 96-bit big-endian integer.
     #[inline]
-    pub fn new(iv: &[u8], seq: u64) -> Self {
+    pub fn new(iv: &[u8; NONCE_LEN], seq: u64) -> Self {
         let mut nonce = Self([0u8; NONCE_LEN]);
         put_u64(seq, &mut nonce.0[4..]);
 
@@ -37,22 +37,33 @@ impl QuicNonce {
     }
 }
 
+#[inline]
+fn iv_from_pybytes(iv: &Bound<'_, PyBytes>) -> PyResult<[u8; NONCE_LEN]> {
+    let bytes = iv.as_bytes();
+    if bytes.len() != NONCE_LEN {
+        return Err(CryptoError::new_err("Invalid iv length"));
+    }
+    let mut out = [0u8; NONCE_LEN];
+    out.copy_from_slice(bytes);
+    Ok(out)
+}
+
 #[pyclass(name = "AeadChaCha20Poly1305", module = "qh3._hazmat")]
 pub struct AeadChaCha20Poly1305 {
     key: LessSafeKey,
-    iv: Vec<u8>,
+    iv: [u8; NONCE_LEN],
 }
 
 #[pyclass(name = "AeadAes256Gcm", module = "qh3._hazmat")]
 pub struct AeadAes256Gcm {
     key: LessSafeKey,
-    iv: Vec<u8>,
+    iv: [u8; NONCE_LEN],
 }
 
 #[pyclass(name = "AeadAes128Gcm", module = "qh3._hazmat")]
 pub struct AeadAes128Gcm {
     key: LessSafeKey,
-    iv: Vec<u8>,
+    iv: [u8; NONCE_LEN],
 }
 
 #[pymethods]
@@ -64,15 +75,11 @@ impl AeadAes256Gcm {
             Err(_) => return Err(CryptoError::new_err("Invalid AEAD key")),
         };
 
-        let iv_as_vec = iv.as_bytes().to_vec();
-
-        if iv_as_vec.len() != NONCE_LEN {
-            return Err(CryptoError::new_err("Invalid iv length"));
-        }
+        let iv = iv_from_pybytes(&iv)?;
 
         Ok(AeadAes256Gcm {
             key: LessSafeKey::new(unbound),
-            iv: iv_as_vec,
+            iv,
         })
     }
 
@@ -90,7 +97,7 @@ impl AeadAes256Gcm {
 
         let res = py.detach(|| {
             self.key.open_in_place(
-                Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
+                Nonce::assume_unique_for_key(QuicNonce::new(&self.iv, packet_number).0),
                 aad,
                 &mut in_out_buffer,
             )
@@ -109,22 +116,31 @@ impl AeadAes256Gcm {
         data: Bound<'_, PyBytes>,
         associated_data: Bound<'_, PyBytes>,
     ) -> PyResult<Bound<'a, PyBytes>> {
-        let mut in_out_buffer = Vec::from(data.as_bytes());
+        let plaintext = data.as_bytes();
+        let plaintext_len = plaintext.len();
+        let tag_len = AES_256_GCM.tag_len();
 
-        let aad = Aad::from(associated_data.as_bytes());
+        let aad_bytes = associated_data.as_bytes();
+        let nonce = QuicNonce::new(&self.iv, packet_number).0;
 
-        let res = py.detach(|| {
-            self.key.seal_in_place_append_tag(
-                Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
-                aad,
-                &mut in_out_buffer,
-            )
-        });
-
-        match res {
-            Ok(_) => Ok(PyBytes::new(py, &in_out_buffer)),
-            Err(_) => Err(CryptoError::new_err("encryption failed")),
-        }
+        PyBytes::new_with(py, plaintext_len + tag_len, |buffer| {
+            buffer[..plaintext_len].copy_from_slice(plaintext);
+            let aad = Aad::from(aad_bytes);
+            let res = py.detach(|| {
+                self.key.seal_in_place_separate_tag(
+                    Nonce::assume_unique_for_key(nonce),
+                    aad,
+                    &mut buffer[..plaintext_len],
+                )
+            });
+            match res {
+                Ok(tag) => {
+                    buffer[plaintext_len..].copy_from_slice(tag.as_ref());
+                    Ok(())
+                }
+                Err(_) => Err(CryptoError::new_err("encryption failed")),
+            }
+        })
     }
 }
 
@@ -137,15 +153,11 @@ impl AeadAes128Gcm {
             Err(_) => return Err(CryptoError::new_err("Invalid AEAD key")),
         };
 
-        let iv_as_vec = iv.as_bytes().to_vec();
-
-        if iv_as_vec.len() != NONCE_LEN {
-            return Err(CryptoError::new_err("Invalid iv length"));
-        }
+        let iv = iv_from_pybytes(&iv)?;
 
         Ok(AeadAes128Gcm {
             key: LessSafeKey::new(unbound),
-            iv: iv_as_vec,
+            iv,
         })
     }
 
@@ -163,7 +175,7 @@ impl AeadAes128Gcm {
 
         let res = py.detach(|| {
             self.key.open_in_place(
-                Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
+                Nonce::assume_unique_for_key(QuicNonce::new(&self.iv, packet_number).0),
                 aad,
                 &mut in_out_buffer,
             )
@@ -182,22 +194,31 @@ impl AeadAes128Gcm {
         data: Bound<'_, PyBytes>,
         associated_data: Bound<'_, PyBytes>,
     ) -> PyResult<Bound<'a, PyBytes>> {
-        let mut in_out_buffer = Vec::from(data.as_bytes());
+        let plaintext = data.as_bytes();
+        let plaintext_len = plaintext.len();
+        let tag_len = AES_128_GCM.tag_len();
 
-        let aad = Aad::from(associated_data.as_bytes());
+        let aad_bytes = associated_data.as_bytes();
+        let nonce = QuicNonce::new(&self.iv, packet_number).0;
 
-        let res = py.detach(|| {
-            self.key.seal_in_place_append_tag(
-                Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
-                aad,
-                &mut in_out_buffer,
-            )
-        });
-
-        match res {
-            Ok(_) => Ok(PyBytes::new(py, &in_out_buffer)),
-            Err(_) => Err(CryptoError::new_err("encryption failed")),
-        }
+        PyBytes::new_with(py, plaintext_len + tag_len, |buffer| {
+            buffer[..plaintext_len].copy_from_slice(plaintext);
+            let aad = Aad::from(aad_bytes);
+            let res = py.detach(|| {
+                self.key.seal_in_place_separate_tag(
+                    Nonce::assume_unique_for_key(nonce),
+                    aad,
+                    &mut buffer[..plaintext_len],
+                )
+            });
+            match res {
+                Ok(tag) => {
+                    buffer[plaintext_len..].copy_from_slice(tag.as_ref());
+                    Ok(())
+                }
+                Err(_) => Err(CryptoError::new_err("encryption failed")),
+            }
+        })
     }
 
     pub fn encrypt_with_nonce<'a>(
@@ -207,23 +228,31 @@ impl AeadAes128Gcm {
         data: Bound<'_, PyBytes>,
         associated_data: Bound<'_, PyBytes>,
     ) -> PyResult<Bound<'a, PyBytes>> {
-        let mut in_out_buffer = Vec::from(data.as_bytes());
+        let plaintext = data.as_bytes();
+        let plaintext_len = plaintext.len();
+        let tag_len = AES_128_GCM.tag_len();
 
-        let aad = Aad::from(associated_data.as_bytes());
-        let nonce_as_ref = nonce.as_bytes();
+        let aad_bytes = associated_data.as_bytes();
+        let nonce_bytes = nonce.as_bytes();
 
-        let res = py.detach(|| {
-            self.key.seal_in_place_append_tag(
-                Nonce::try_assume_unique_for_key(nonce_as_ref).unwrap(),
-                aad,
-                &mut in_out_buffer,
-            )
-        });
-
-        match res {
-            Ok(_) => Ok(PyBytes::new(py, &in_out_buffer)),
-            Err(_) => Err(CryptoError::new_err("encryption failed")),
-        }
+        PyBytes::new_with(py, plaintext_len + tag_len, |buffer| {
+            buffer[..plaintext_len].copy_from_slice(plaintext);
+            let aad = Aad::from(aad_bytes);
+            let res = py.detach(|| {
+                self.key.seal_in_place_separate_tag(
+                    Nonce::try_assume_unique_for_key(nonce_bytes).unwrap(),
+                    aad,
+                    &mut buffer[..plaintext_len],
+                )
+            });
+            match res {
+                Ok(tag) => {
+                    buffer[plaintext_len..].copy_from_slice(tag.as_ref());
+                    Ok(())
+                }
+                Err(_) => Err(CryptoError::new_err("encryption failed")),
+            }
+        })
     }
 }
 
@@ -231,15 +260,11 @@ impl AeadAes128Gcm {
 impl AeadChaCha20Poly1305 {
     #[new]
     pub fn py_new(key: Bound<'_, PyBytes>, iv: Bound<'_, PyBytes>) -> PyResult<Self> {
-        let iv_as_vec = iv.as_bytes().to_vec();
-
-        if iv_as_vec.len() != NONCE_LEN {
-            return Err(CryptoError::new_err("Invalid iv length"));
-        }
+        let iv = iv_from_pybytes(&iv)?;
 
         Ok(AeadChaCha20Poly1305 {
             key: LessSafeKey::new(UnboundKey::new(&CHACHA20_POLY1305, key.as_bytes()).unwrap()),
-            iv: iv_as_vec,
+            iv,
         })
     }
 
@@ -257,7 +282,7 @@ impl AeadChaCha20Poly1305 {
 
         let res = py.detach(|| {
             self.key.open_in_place(
-                Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
+                Nonce::assume_unique_for_key(QuicNonce::new(&self.iv, packet_number).0),
                 aad,
                 &mut in_out_buffer,
             )
@@ -276,21 +301,30 @@ impl AeadChaCha20Poly1305 {
         data: Bound<'_, PyBytes>,
         associated_data: Bound<'_, PyBytes>,
     ) -> PyResult<Bound<'a, PyBytes>> {
-        let mut in_out_buffer = Vec::from(data.as_bytes());
+        let plaintext = data.as_bytes();
+        let plaintext_len = plaintext.len();
+        let tag_len = CHACHA20_POLY1305.tag_len();
 
-        let aad = Aad::from(associated_data.as_bytes());
+        let aad_bytes = associated_data.as_bytes();
+        let nonce = QuicNonce::new(&self.iv, packet_number).0;
 
-        let res = py.detach(|| {
-            self.key.seal_in_place_append_tag(
-                Nonce::assume_unique_for_key(QuicNonce::new(self.iv.as_ref(), packet_number).0),
-                aad,
-                &mut in_out_buffer,
-            )
-        });
-
-        match res {
-            Ok(_) => Ok(PyBytes::new(py, &in_out_buffer)),
-            Err(_) => Err(CryptoError::new_err("encryption failed")),
-        }
+        PyBytes::new_with(py, plaintext_len + tag_len, |buffer| {
+            buffer[..plaintext_len].copy_from_slice(plaintext);
+            let aad = Aad::from(aad_bytes);
+            let res = py.detach(|| {
+                self.key.seal_in_place_separate_tag(
+                    Nonce::assume_unique_for_key(nonce),
+                    aad,
+                    &mut buffer[..plaintext_len],
+                )
+            });
+            match res {
+                Ok(tag) => {
+                    buffer[plaintext_len..].copy_from_slice(tag.as_ref());
+                    Ok(())
+                }
+                Err(_) => Err(CryptoError::new_err("encryption failed")),
+            }
+        })
     }
 }

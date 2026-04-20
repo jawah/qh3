@@ -1,3 +1,17 @@
+1.7.2 (2026-04-20)
+==================
+
+**Fixed**
+- HTTP/3 ``SETTINGS_H3_DATAGRAM`` identifier now uses the RFC 9297 value ``0x33``
+  instead of the obsolete draft ietf masque value ``0xFFD277``.
+  This fixes interop with RFC 9297-compliant peers. The legacy identifier is still
+  accepted on receive for backward compatibility. (https://github.com/jawah/qh3/issues/107)
+
+**Changed**
+- Updated aws-lc-rs v1.16.2 to v1.16.3
+- Updated pyo3 v0.28.2 to v0.28.3
+- Updated rustls v0.23.37 to v0.23.3
+
 1.7.1 (2026-03-30)
 ====================
 

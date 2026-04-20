@@ -41,6 +41,7 @@ UPPERCASE = re.compile(b"[A-Z]")
 
 
 class ErrorCode(IntEnum):
+    H3_DATAGRAM_ERROR = 0x33
     H3_NO_ERROR = 0x100
     H3_GENERAL_PROTOCOL_ERROR = 0x101
     H3_INTERNAL_ERROR = 0x102
@@ -89,8 +90,11 @@ class Setting(IntEnum):
 
     # https://datatracker.ietf.org/doc/html/rfc9220#section-5
     ENABLE_CONNECT_PROTOCOL = 0x8
-    # https://datatracker.ietf.org/doc/html/draft-ietf-masque-h3-datagram-05#section-9.1
-    H3_DATAGRAM = 0xFFD277
+    # https://datatracker.ietf.org/doc/html/rfc9297#section-2.1.1
+    H3_DATAGRAM = 0x33
+    # Legacy identifier from draft-ietf-masque-h3-datagram-05; kept so we can
+    # interop on receive with peers that have not migrated to RFC 9297.
+    H3_DATAGRAM_DRAFT05 = 0xFFD277
     # https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http2-02#section-10.1
     ENABLE_WEBTRANSPORT = 0x2B603742
 
@@ -682,7 +686,7 @@ class H3Connection:
 
         if frame_type == FrameType.DATA:
             # check DATA frame is allowed
-            if stream.headers_recv_state != HeadersState.AFTER_HEADERS:
+            if stream.headers_recv_state is not HeadersState.AFTER_HEADERS:
                 raise FrameUnexpected("DATA frame is not allowed in this state")
 
             if stream_ended or frame_data:
@@ -696,7 +700,7 @@ class H3Connection:
                 )
         elif frame_type == FrameType.HEADERS:
             # check HEADERS frame is allowed
-            if stream.headers_recv_state == HeadersState.AFTER_TRAILERS:
+            if stream.headers_recv_state is HeadersState.AFTER_TRAILERS:
                 raise FrameUnexpected("HEADERS frame is not allowed in this state")
 
             # try to decode HEADERS, may raise pylsqpack.StreamBlocked
@@ -705,7 +709,7 @@ class H3Connection:
             status_code: int | None = None
 
             # validate headers
-            if stream.headers_recv_state == HeadersState.INITIAL:
+            if stream.headers_recv_state is HeadersState.INITIAL:
                 if self._is_client:
                     status_code = validate_response_headers(headers)
                 else:
@@ -730,7 +734,7 @@ class H3Connection:
                 )
 
             # update state and emit headers
-            if stream.headers_recv_state == HeadersState.INITIAL:
+            if stream.headers_recv_state is HeadersState.INITIAL:
                 # Informational Response MUST be taken as-is without
                 # skipping the main response.
                 if status_code is None or status_code >= 200 or stream_ended:
@@ -739,7 +743,7 @@ class H3Connection:
                 stream.headers_recv_state = HeadersState.AFTER_TRAILERS
 
             if (
-                stream.headers_recv_state == HeadersState.INITIAL
+                stream.headers_recv_state is HeadersState.INITIAL
                 and status_code is not None
                 and status_code < 200
             ):
@@ -1196,20 +1200,22 @@ class H3Connection:
             Setting.ENABLE_CONNECT_PROTOCOL,
             Setting.ENABLE_WEBTRANSPORT,
             Setting.H3_DATAGRAM,
+            Setting.H3_DATAGRAM_DRAFT05,
         ]:
             if setting in settings and settings[setting] not in (0, 1):
                 raise SettingsError(f"{setting.name} setting must be 0 or 1")
 
-        if (
-            settings.get(Setting.H3_DATAGRAM) == 1
-            and self._quic._remote_max_datagram_frame_size is None
-        ):
+        # Accept either the RFC 9297 identifier (0x33) or the legacy
+        # draft-ietf-masque-h3-datagram-05 identifier (0xFFD277) on receive,
+        # so we can interop with peers that have not yet migrated.
+        h3_datagram = settings.get(Setting.H3_DATAGRAM)
+        if h3_datagram is None:
+            h3_datagram = settings.get(Setting.H3_DATAGRAM_DRAFT05)
+
+        if h3_datagram == 1 and self._quic._remote_max_datagram_frame_size is None:
             raise SettingsError(
                 "H3_DATAGRAM requires max_datagram_frame_size transport parameter"
             )
 
-        if (
-            settings.get(Setting.ENABLE_WEBTRANSPORT) == 1
-            and settings.get(Setting.H3_DATAGRAM) != 1
-        ):
+        if settings.get(Setting.ENABLE_WEBTRANSPORT) == 1 and h3_datagram != 1:
             raise SettingsError("ENABLE_WEBTRANSPORT requires H3_DATAGRAM")

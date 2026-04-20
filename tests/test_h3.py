@@ -1519,6 +1519,51 @@ class TestH3Connection:
                 "H3_DATAGRAM requires max_datagram_frame_size transport parameter",
             )
 
+    def test_validate_settings_h3_datagram_draft05_legacy_accepted(self):
+        # A peer still sending the obsolete draft-ietf-masque-h3-datagram-05
+        # identifier (0xFFD277) instead of the RFC 9297 value (0x33) must be
+        # interop-accepted; the validator should treat it equivalently.
+        quic_server = FakeQuicConnection(
+            configuration=QuicConfiguration(is_client=False)
+        )
+        quic_server._remote_max_datagram_frame_size = 65536
+        h3_server = H3Connection(quic_server)
+
+        settings = copy.copy(DUMMY_SETTINGS)
+        settings[Setting.H3_DATAGRAM_DRAFT05] = 1
+        h3_server.handle_event(
+            StreamDataReceived(
+                stream_id=2,
+                data=encode_uint_var(StreamType.CONTROL)
+                + encode_frame(FrameType.SETTINGS, encode_settings(settings)),
+                end_stream=False,
+            )
+        )
+        # No connection close on a valid legacy H3_DATAGRAM=1 setting.
+        assert quic_server.closed is None
+
+    def test_validate_settings_h3_datagram_draft05_invalid_value(self):
+        quic_server = FakeQuicConnection(
+            configuration=QuicConfiguration(is_client=False)
+        )
+        h3_server = H3Connection(quic_server)
+
+        settings = copy.copy(DUMMY_SETTINGS)
+        settings[Setting.H3_DATAGRAM_DRAFT05] = 2
+        h3_server.handle_event(
+            StreamDataReceived(
+                stream_id=2,
+                data=encode_uint_var(StreamType.CONTROL)
+                + encode_frame(FrameType.SETTINGS, encode_settings(settings)),
+                end_stream=False,
+            )
+        )
+        assert quic_server.closed == \
+            (
+                ErrorCode.H3_SETTINGS_ERROR,
+                "H3_DATAGRAM_DRAFT05 setting must be 0 or 1",
+            )
+
     def test_validate_settings_enable_connect_protocol_invalid_value(self):
         quic_server = FakeQuicConnection(
             configuration=QuicConfiguration(is_client=False)
