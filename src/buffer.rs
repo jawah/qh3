@@ -146,14 +146,12 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let tmp = vec![
+        let extract = u32::from_be_bytes([
             0,
             self.data[self.pos],
             self.data[self.pos + 1],
             self.data[self.pos + 2],
-        ];
-
-        let extract = u32::from_be_bytes(tmp.try_into().unwrap());
+        ]);
         self.pos = end_offset;
 
         Ok(extract)
