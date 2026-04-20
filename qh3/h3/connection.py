@@ -41,6 +41,7 @@ UPPERCASE = re.compile(b"[A-Z]")
 
 
 class ErrorCode(IntEnum):
+    H3_DATAGRAM_ERROR = 0x33
     H3_NO_ERROR = 0x100
     H3_GENERAL_PROTOCOL_ERROR = 0x101
     H3_INTERNAL_ERROR = 0x102
@@ -89,8 +90,11 @@ class Setting(IntEnum):
 
     # https://datatracker.ietf.org/doc/html/rfc9220#section-5
     ENABLE_CONNECT_PROTOCOL = 0x8
-    # https://datatracker.ietf.org/doc/html/draft-ietf-masque-h3-datagram-05#section-9.1
-    H3_DATAGRAM = 0xFFD277
+    # https://datatracker.ietf.org/doc/html/rfc9297#section-2.1.1
+    H3_DATAGRAM = 0x33
+    # Legacy identifier from draft-ietf-masque-h3-datagram-05; kept so we can
+    # interop on receive with peers that have not migrated to RFC 9297.
+    H3_DATAGRAM_DRAFT05 = 0xFFD277
     # https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http2-02#section-10.1
     ENABLE_WEBTRANSPORT = 0x2B603742
 
@@ -1196,12 +1200,20 @@ class H3Connection:
             Setting.ENABLE_CONNECT_PROTOCOL,
             Setting.ENABLE_WEBTRANSPORT,
             Setting.H3_DATAGRAM,
+            Setting.H3_DATAGRAM_DRAFT05,
         ]:
             if setting in settings and settings[setting] not in (0, 1):
                 raise SettingsError(f"{setting.name} setting must be 0 or 1")
 
+        # Accept either the RFC 9297 identifier (0x33) or the legacy
+        # draft-ietf-masque-h3-datagram-05 identifier (0xFFD277) on receive,
+        # so we can interop with peers that have not yet migrated.
+        h3_datagram = settings.get(Setting.H3_DATAGRAM)
+        if h3_datagram is None:
+            h3_datagram = settings.get(Setting.H3_DATAGRAM_DRAFT05)
+
         if (
-            settings.get(Setting.H3_DATAGRAM) == 1
+            h3_datagram == 1
             and self._quic._remote_max_datagram_frame_size is None
         ):
             raise SettingsError(
@@ -1210,6 +1222,6 @@ class H3Connection:
 
         if (
             settings.get(Setting.ENABLE_WEBTRANSPORT) == 1
-            and settings.get(Setting.H3_DATAGRAM) != 1
+            and h3_datagram != 1
         ):
             raise SettingsError("ENABLE_WEBTRANSPORT requires H3_DATAGRAM")
