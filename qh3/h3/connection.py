@@ -1212,16 +1212,10 @@ class H3Connection:
         if h3_datagram is None:
             h3_datagram = settings.get(Setting.H3_DATAGRAM_DRAFT05)
 
-        if (
-            h3_datagram == 1
-            and self._quic._remote_max_datagram_frame_size is None
-        ):
+        if h3_datagram == 1 and self._quic._remote_max_datagram_frame_size is None:
             raise SettingsError(
                 "H3_DATAGRAM requires max_datagram_frame_size transport parameter"
             )
 
-        if (
-            settings.get(Setting.ENABLE_WEBTRANSPORT) == 1
-            and h3_datagram != 1
-        ):
+        if settings.get(Setting.ENABLE_WEBTRANSPORT) == 1 and h3_datagram != 1:
             raise SettingsError("ENABLE_WEBTRANSPORT requires H3_DATAGRAM")
