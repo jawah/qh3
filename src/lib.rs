@@ -27,8 +27,8 @@ pub use self::agreement::{
 };
 pub use self::buffer::{encode_uint_var, size_uint_var, Buffer, BufferReadError, BufferWriteError};
 pub use self::certificate::{
-    Certificate, ExpiredCertificateError, InvalidNameCertificateError, SelfSignedCertificateError,
-    ServerVerifier, TlsCertUsage, UnacceptableCertificateError,
+    classify_certificates_der, Certificate, ExpiredCertificateError, InvalidNameCertificateError,
+    SelfSignedCertificateError, ServerVerifier, TlsCertUsage, UnacceptableCertificateError,
 };
 pub use self::chain::rebuild_chain;
 pub use self::crl::{CertificateRevocationList, RevokedCertificate};
@@ -96,6 +96,7 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
         py.get_type::<UnacceptableCertificateError>(),
     )?;
     m.add_function(wrap_pyfunction!(rebuild_chain, m)?)?;
+    m.add_function(wrap_pyfunction!(classify_certificates_der, m)?)?;
     // RSA specialized for the Retry Token
     m.add_class::<Rsa>()?;
     // Header protection mask

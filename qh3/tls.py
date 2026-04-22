@@ -12,7 +12,7 @@ from binascii import unhexlify
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import IntEnum
-from functools import lru_cache, partial
+from functools import partial
 from hmac import HMAC
 from typing import Any, Callable, Generator, Optional, Sequence, Tuple, TypeVar
 
@@ -35,10 +35,10 @@ from ._hazmat import (
     SelfSignedCertificateError,
     ServerVerifier,
     SignatureError,
-    TlsCertUsage,
     UnacceptableCertificateError,
     X25519KeyExchange,
     X25519ML768KeyExchange,
+    classify_certificates_der,
     idna_encode,
     rebuild_chain,
     verify_with_public_key,
@@ -311,9 +311,18 @@ def load_pem_x509_certificates(data: bytes) -> list[X509Certificate]:
     """
     Load a chain of PEM-encoded X509 certificates.
     """
+    return [X509Certificate(d) for d in _load_pem_certs_as_der(data)]
+
+
+def _load_pem_certs_as_der(data: bytes) -> list[bytes]:
+    """
+    Decode a PEM bundle into a list of DER byte strings, without instantiating
+    the (relatively expensive) ``X509Certificate`` Python wrapper.  Used by
+    ``load_store_and_sort`` to feed the bulk classifier.
+    """
     line_ending = b"\n" if b"-----\r\n" not in data else b"\r\n"
     boundary = b"-----END CERTIFICATE-----" + line_ending
-    certificates = []
+    out: list[bytes] = []
     for chunk in data.split(boundary):
         if chunk:
             start_marker = chunk.find(b"-----BEGIN CERTIFICATE-----" + line_ending)
@@ -322,10 +331,8 @@ def load_pem_x509_certificates(data: bytes) -> list[X509Certificate]:
             pem_reconstructed = b"".join([chunk[start_marker:], boundary]).decode(
                 "ascii"
             )
-            certificates.append(
-                X509Certificate(ssl.PEM_cert_to_DER_cert(pem_reconstructed))
-            )
-    return certificates
+            out.append(ssl.PEM_cert_to_DER_cert(pem_reconstructed))
+    return out
 
 
 def _capath_contains_certs(capath: str) -> bool:
@@ -338,62 +345,39 @@ def _capath_contains_certs(capath: str) -> bool:
     return False
 
 
-@lru_cache(maxsize=64)
 def load_store_and_sort(
     cadata: bytes | None = None,
     cafile: str | None = None,
     capath: str | None = None,
-) -> tuple[list[X509Certificate], list[X509Certificate], list[X509Certificate]]:
+) -> tuple[list[bytes], list[bytes], list[bytes]]:
     """
     Given cadata, cafile and capath load X509 certificates and sort
-    them into three distinct list:
-        - Trust anchors (ca self-signed)
-        - Intermediates (ca signed by other ca)
-        - Others (not suitable for our purposes)
-
-    This function consumes a lot of CPU times, so we want to cache it.
+    them into three distinct lists of DER-encoded byte strings:
+        - Trust anchors (self-issued CAs with no TLS-purpose EKU)
+        - Intermediates (CAs signed by another CA)
+        - Others        (self-issued but flagged with TLS-purpose EKU;
+                         excluded from trust anchors)
     """
-    trust_anchors = []
-    intermediaries = []
-    others = []
-
-    def _sort_cert_in_appropriate_list(c) -> None:
-        nonlocal trust_anchors, intermediaries, others
-
-        if c.self_signed:
-            # root CA must be tagged OTHER
-            # EKU must not have client auth
-            # or server auth. it's a red flag! period.
-            if c.usage != TlsCertUsage.Other:
-                others.append(c)
-            else:
-                trust_anchors.append(c)
-        else:
-            intermediaries.append(c)
+    raw_ders: list[bytes] = []
 
     if cadata is not None:
-        for cert in load_pem_x509_certificates(cadata):
-            _sort_cert_in_appropriate_list(cert)
+        raw_ders.extend(_load_pem_certs_as_der(cadata))
 
     if cafile is not None or capath is not None:
         if cafile:
             with open(cafile, "rb") as fp:
-                for cert in load_pem_x509_certificates(fp.read()):
-                    _sort_cert_in_appropriate_list(cert)
+                raw_ders.extend(_load_pem_certs_as_der(fp.read()))
         if capath and _capath_contains_certs(capath):
             for path in glob.glob(f"{capath}/*"):
                 with open(path, "rb") as fp:
-                    for cert in load_pem_x509_certificates(fp.read()):
-                        _sort_cert_in_appropriate_list(cert)
+                    raw_ders.extend(_load_pem_certs_as_der(fp.read()))
 
     if cadata is None and cafile is None and capath is None:
         default_ctx = ssl.create_default_context()
         default_ctx.load_default_certs()
+        raw_ders.extend(default_ctx.get_ca_certs(binary_form=True))
 
-        for ca in default_ctx.get_ca_certs(binary_form=True):
-            _sort_cert_in_appropriate_list(X509Certificate(ca))
-
-    return trust_anchors, intermediaries, others
+    return classify_certificates_der(raw_ders)
 
 
 def verify_certificate(
@@ -454,7 +438,7 @@ def verify_certificate(
     if not chain and intermediaries:
         raw_chain = rebuild_chain(
             certificate.public_bytes(),
-            [c.public_bytes() for c in intermediaries],
+            intermediaries,
         )
 
         if len(raw_chain) >= 2:
@@ -465,7 +449,7 @@ def verify_certificate(
 
     # load CAs
     try:
-        store = ServerVerifier([c.public_bytes() for c in trust_anchors])
+        store = ServerVerifier(trust_anchors)
     except CryptoError as e:
         raise AlertBadCertificate("unable to create the verifier x509 store") from e
 

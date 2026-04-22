@@ -377,3 +377,13 @@ class CertificateRevocationList:
     def authenticate_for(self, issuer_der: bytes) -> bool: ...
 
 def rebuild_chain(leaf: bytes, intermediates: list[bytes]) -> list[bytes]: ...
+def classify_certificates_der(
+    certificates_der: list[bytes],
+) -> tuple[list[bytes], list[bytes], list[bytes]]:
+    """
+    Bulk-classify a list of DER-encoded X.509 certificates into
+    (trust_anchors, intermediaries, others), matching the bucketing logic
+    used by qh3.tls.load_store_and_sort.  Items that fail to parse are
+    silently skipped.  Each output item is the original DER bytes.
+    """
+    ...

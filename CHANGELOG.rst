@@ -1,3 +1,9 @@
+1.7.3 (2026-04-22)
+==================
+
+**Fixed**
+- Performance issue on first TLS handshake due to an unnecessary CA store self signature check.
+
 1.7.2 (2026-04-20)
 ==================
 
