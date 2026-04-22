@@ -6,7 +6,7 @@ use rustls::{CertificateError, Error, RootCertStore};
 use pyo3::types::PyBytesMethods;
 use pyo3::types::PyListMethods;
 use pyo3::types::{PyBytes, PyList, PyTuple, PyType};
-use pyo3::{pyclass, Bound};
+use pyo3::{pyclass, pyfunction, Bound};
 use pyo3::{pymethods, IntoPyObject};
 use pyo3::{PyResult, Python};
 
@@ -15,7 +15,6 @@ use x509_parser::public_key::PublicKey;
 
 use std::sync::Arc;
 
-use crate::verify::{context_for_verify, verify_signature};
 use crate::CryptoError;
 use bincode::{deserialize, serialize};
 use pyo3::exceptions::PyException;
@@ -164,20 +163,11 @@ impl Certificate {
                     }
                 }
 
-                let cert_pubkey_info = context_for_verify(&cert.signature, &cert);
-
-                // consider any certificate to not be self-signed
-                // unless proven otherwise.
-                let mut is_selfsigned = false;
-
-                if let Some(ctx_verify) = cert_pubkey_info {
-                    let tbs_bytes = cert.tbs_certificate.as_ref();
-                    let sig_bytes = cert.signature_value.data.as_ref();
-                    let spki_der = cert.tbs_certificate.subject_pki.raw;
-
-                    is_selfsigned =
-                        verify_signature(spki_der, ctx_verify.0, tbs_bytes, sig_bytes).is_ok();
-                }
+                // Determine if the certificate is "self-issued" (RFC 5280 §6.1):
+                // subject DN equals issuer DN. We deliberately do NOT perform
+                // a signature verification here.
+                let is_selfsigned =
+                    cert.tbs_certificate.subject.as_raw() == cert.tbs_certificate.issuer.as_raw();
 
                 Ok(Certificate {
                     version: match cert.version() {
@@ -389,6 +379,45 @@ impl Certificate {
     pub fn deserialize(_cls: Bound<'_, PyType>, encoded: Bound<'_, PyBytes>) -> PyResult<Self> {
         Ok(deserialize(encoded.as_bytes()).unwrap())
     }
+}
+
+/// Bulk-classify a list of DER-encoded X.509 certificates into three buckets,
+/// matching the logic of `qh3.tls._sort_cert_in_appropriate_list`.
+#[pyfunction]
+pub fn classify_certificates_der<'py>(
+    py: Python<'py>,
+    certificates_der: Vec<Bound<'py, PyBytes>>,
+) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>, Bound<'py, PyList>)> {
+    let trust_anchors = PyList::empty(py);
+    let intermediaries = PyList::empty(py);
+    let others = PyList::empty(py);
+
+    for der in certificates_der.iter() {
+        let bytes = der.as_bytes();
+        // Lenient: skip un-parseable entries rather than failing the whole
+        // batch.  Matches the Python loop that simply iterates whatever
+        // load_pem_x509_certificates yields.
+        let parsed = match X509Certificate::from_der(bytes) {
+            Ok((_, cert)) => cert,
+            Err(_) => continue,
+        };
+
+        let self_issued =
+            parsed.tbs_certificate.subject.as_raw() == parsed.tbs_certificate.issuer.as_raw();
+
+        if self_issued {
+            let usage = identify_tls_usage(&parsed);
+            if usage != TlsCertUsage::Other {
+                others.append(der)?;
+            } else {
+                trust_anchors.append(der)?;
+            }
+        } else {
+            intermediaries.append(der)?;
+        }
+    }
+
+    Ok((trust_anchors, intermediaries, others))
 }
 
 #[pyclass(name = "ServerVerifier", module = "qh3._hazmat")]
