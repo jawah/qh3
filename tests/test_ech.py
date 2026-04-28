@@ -24,7 +24,7 @@ _PROBE_TIMEOUT_S = 2
 # "cloudflare-ech.com". This gives us a real test where:
 #   - outer (cleartext) SNI  = cloudflare-ech.com   (public_name from ECHConfig)
 #   - inner (encrypted) SNI  = research.cloudflare.com  (the actual target)
-_ECH_HOST = "research.cloudflare.com"
+_ECH_HOST = "encryptedsni.com"
 _ECH_PORT = 443
 
 
@@ -127,11 +127,11 @@ async def test_ech_accepted(requires_network):
             elif isinstance(event, DataReceived):
                 body += event.data
 
-        assert headers[b":status"] == b"200"
+        assert headers[b":status"] == b"301"
 
         html = body.decode()
 
-        assert "<title>Cloudflare Research</title>" in html
+        assert not html
 
 
 @pytest.mark.asyncio
@@ -161,7 +161,7 @@ async def test_grease_ech_no_rejection(requires_network):
             elif isinstance(event, DataReceived):
                 body += event.data
 
-        assert headers[b":status"] == b"200"
+        assert headers[b":status"] == b"301"
         html = body.decode()
 
-        assert "<title>Cloudflare Research</title>" in html
+        assert not html

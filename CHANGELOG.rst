@@ -1,3 +1,12 @@
+1.7.4 (2026-04-28)
+==================
+
+**Fixed**
+- Unexpected crash when a corrupted datagram is fed into the QUIC state machine.
+
+**Changed**
+- Updated rustls v0.23.38 to v0.23.39
+
 1.7.3 (2026-04-22)
 ==================
 
