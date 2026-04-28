@@ -408,3 +408,20 @@ class TestCrypto:
         with pytest.raises(CryptoError) as cm:
             self.create_hp(key=bytes(33))
         assert str(cm.value) == "Given key is not valid for chosen algorithm"
+
+    def test_decrypt_short_server_packet_too_short(self):
+        """Truncated packet must raise CryptoError, not panic."""
+        pair = CryptoPair()
+        pair.recv.setup(
+            cipher_suite=INITIAL_CIPHER_SUITE,
+            secret=binascii.unhexlify(
+                "310281977cb8c1c1c1212d784b2d29e5a6489e23de848d370a5a2f9537f3a100"
+            ),
+            version=PROTOCOL_VERSION,
+        )
+
+        # encrypted_offset=9 requires at least 9+4+16=29 bytes for HP sample.
+        # Truncate to 27 bytes to reproduce the exact scenario from the bug.
+        truncated = SHORT_SERVER_ENCRYPTED_PACKET[:27]
+        with pytest.raises(CryptoError):
+            pair.decrypt_packet(truncated, 9, 0)

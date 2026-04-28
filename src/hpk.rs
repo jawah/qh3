@@ -81,6 +81,12 @@ impl QUICHeaderProtection {
     ) -> PyResult<(Bound<'a, PyBytes>, u32)> {
         let sample_offset = pn_offset + PACKET_NUMBER_LENGTH_MAX;
 
+        if packet.len() < sample_offset + SAMPLE_LENGTH {
+            return Err(CryptoError::new_err(
+                "Packet too short for header protection removal",
+            ));
+        }
+
         let mask = self
             .hpk
             .new_mask(&packet[sample_offset..sample_offset + SAMPLE_LENGTH])
