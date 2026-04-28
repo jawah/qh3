@@ -13,7 +13,7 @@ from .quic.logger import QuicFileLogger, QuicLogger
 from .quic.packet import QuicProtocolVersion
 from .tls import CipherSuite, SessionTicket
 
-__version__ = "1.7.3"
+__version__ = "1.7.4"
 
 __all__ = (
     "connect",
