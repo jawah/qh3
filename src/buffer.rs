@@ -1,32 +1,115 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::types::PyBytes;
 use pyo3::types::PyBytesMethods;
-use pyo3::{pyclass, pyfunction, Bound};
+use pyo3::{pyclass, pyfunction, Bound, Py};
 use pyo3::{pymethods, PyResult, Python};
 
 pyo3::create_exception!(_hazmat, BufferReadError, PyValueError);
 pyo3::create_exception!(_hazmat, BufferWriteError, PyValueError);
 
+/// Wrapper around a raw pointer that is Send + Sync.
+/// Safety: the pointer is only accessed when GIL is held (in pymethods),
+/// and the Py<PyBytes> prevents the underlying data from being freed.
+struct SendPtr(*const u8);
+unsafe impl Send for SendPtr {}
+unsafe impl Sync for SendPtr {}
+
+enum BufferStorage {
+    /// Owned mutable buffer (write mode).
+    Owned(Vec<u8>),
+    /// Borrowed immutable buffer referencing a PyBytes (read mode, zero-copy).
+    Borrowed {
+        _obj: Py<PyBytes>,
+        ptr: SendPtr,
+        len: usize,
+    },
+}
+
+impl BufferStorage {
+    #[inline(always)]
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            BufferStorage::Owned(v) => v.as_slice(),
+            BufferStorage::Borrowed { ptr, len, .. } => {
+                // SAFETY: _obj prevents GC, PyBytes is immutable, GIL is held
+                unsafe { std::slice::from_raw_parts(ptr.0, *len) }
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn as_mut_slice(&mut self) -> Result<&mut [u8], PyResult<()>> {
+        match self {
+            BufferStorage::Owned(v) => Ok(v.as_mut_slice()),
+            BufferStorage::Borrowed { .. } => {
+                Err(Err(BufferWriteError::new_err("Buffer is read-only")))
+            }
+        }
+    }
+}
+
 #[pyclass(module = "qh3._hazmat")]
 pub struct Buffer {
     pos: usize,
-    data: Vec<u8>,
+    storage: BufferStorage,
     capacity: usize,
+}
+
+/// Non-pymethod helpers for internal Rust access.
+impl Buffer {
+    #[inline(always)]
+    pub fn data_ref(&self) -> &[u8] {
+        self.storage.as_slice()
+    }
+
+    #[inline(always)]
+    pub fn data_mut(&mut self) -> Result<&mut [u8], pyo3::PyErr> {
+        match &mut self.storage {
+            BufferStorage::Owned(v) => Ok(v.as_mut_slice()),
+            BufferStorage::Borrowed { .. } => Err(BufferWriteError::new_err("Buffer is read-only")),
+        }
+    }
+
+    #[inline(always)]
+    pub fn get_pos(&self) -> usize {
+        self.pos
+    }
+
+    #[inline(always)]
+    pub fn set_pos(&mut self, pos: usize) {
+        self.pos = pos;
+    }
+
+    #[inline(always)]
+    pub fn get_capacity(&self) -> usize {
+        self.capacity
+    }
 }
 
 #[pymethods]
 impl Buffer {
     #[new]
-    #[pyo3(signature = (capacity=None, data=None))]
-    pub fn py_new(capacity: Option<usize>, data: Option<Bound<'_, PyBytes>>) -> PyResult<Self> {
+    #[pyo3(signature = (capacity=None, data=None, length=None))]
+    pub fn py_new(
+        capacity: Option<usize>,
+        data: Option<Bound<'_, PyBytes>>,
+        length: Option<usize>,
+    ) -> PyResult<Self> {
         if let Some(payload) = data {
-            let initial_content = payload.as_bytes().to_vec();
-            let length = initial_content.len();
+            let bytes_slice = payload.as_bytes();
+            let cap = length.unwrap_or(bytes_slice.len()).min(bytes_slice.len());
+            let ptr = bytes_slice.as_ptr();
+            let len = bytes_slice.len();
+            let obj: Py<PyBytes> = payload.unbind();
 
             return Ok(Buffer {
                 pos: 0,
-                data: initial_content,
-                capacity: length,
+                storage: BufferStorage::Borrowed {
+                    _obj: obj,
+                    ptr: SendPtr(ptr),
+                    len,
+                },
+                capacity: cap,
             });
         }
 
@@ -38,7 +121,7 @@ impl Buffer {
 
         Ok(Buffer {
             pos: 0,
-            data: vec![0; capacity.unwrap()],
+            storage: BufferStorage::Owned(vec![0; capacity.unwrap()]),
             capacity: capacity.unwrap(),
         })
     }
@@ -53,7 +136,15 @@ impl Buffer {
         if self.pos == 0 {
             return PyBytes::new(py, &[]);
         }
-        PyBytes::new(py, &self.data[0_usize..self.pos])
+        let slice = self.storage.as_slice();
+        PyBytes::new(py, &slice[0_usize..self.pos])
+    }
+
+    /// Returns the full underlying buffer data (for read-mode buffers).
+    #[getter]
+    pub fn raw_data<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
+        let slice = self.storage.as_slice();
+        PyBytes::new(py, &slice[0_usize..self.capacity])
     }
 
     pub fn data_slice<'a>(
@@ -66,7 +157,8 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        Ok(PyBytes::new(py, &self.data[start..end]))
+        let slice = self.storage.as_slice();
+        Ok(PyBytes::new(py, &slice[start..end]))
     }
 
     #[inline(always)]
@@ -102,7 +194,8 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = PyBytes::new(py, &self.data[self.pos..(self.pos + length)]);
+        let slice = self.storage.as_slice();
+        let extract = PyBytes::new(py, &slice[self.pos..(self.pos + length)]);
 
         self.pos += length;
 
@@ -116,7 +209,8 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = self.data[self.pos];
+        let slice = self.storage.as_slice();
+        let extract = slice[self.pos];
         self.pos += 1;
 
         Ok(extract)
@@ -131,7 +225,8 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u16::from_be_bytes(self.data[self.pos..end_offset].try_into()?);
+        let slice = self.storage.as_slice();
+        let extract = u16::from_be_bytes(slice[self.pos..end_offset].try_into()?);
         self.pos = end_offset;
 
         Ok(extract)
@@ -146,12 +241,9 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u32::from_be_bytes([
-            0,
-            self.data[self.pos],
-            self.data[self.pos + 1],
-            self.data[self.pos + 2],
-        ]);
+        let slice = self.storage.as_slice();
+        let extract =
+            u32::from_be_bytes([0, slice[self.pos], slice[self.pos + 1], slice[self.pos + 2]]);
         self.pos = end_offset;
 
         Ok(extract)
@@ -166,7 +258,8 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u32::from_be_bytes(self.data[self.pos..end_offset].try_into()?);
+        let slice = self.storage.as_slice();
+        let extract = u32::from_be_bytes(slice[self.pos..end_offset].try_into()?);
         self.pos = end_offset;
 
         Ok(extract)
@@ -181,7 +274,8 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let extract = u64::from_be_bytes(self.data[self.pos..end_offset].try_into()?);
+        let slice = self.storage.as_slice();
+        let extract = u64::from_be_bytes(slice[self.pos..end_offset].try_into()?);
         self.pos = end_offset;
 
         Ok(extract)
@@ -193,7 +287,8 @@ impl Buffer {
             return Err(BufferReadError::new_err("Read out of bounds"));
         }
 
-        let first = self.data[self.pos];
+        let slice = self.storage.as_slice();
+        let first = slice[self.pos];
         let var_type = first >> 6;
 
         match var_type {
@@ -216,7 +311,8 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos..end_pos].copy_from_slice(data_to_be_pushed);
+        let buf = self.storage.as_mut_slice().map_err(|e| e.unwrap_err())?;
+        buf[self.pos..end_pos].copy_from_slice(data_to_be_pushed);
         self.pos = end_pos;
 
         Ok(())
@@ -228,7 +324,8 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos] = value;
+        let buf = self.storage.as_mut_slice().map_err(|e| e.unwrap_err())?;
+        buf[self.pos] = value;
         self.pos += 1;
 
         Ok(())
@@ -242,7 +339,8 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos..end_offset].copy_from_slice(&value.to_be_bytes());
+        let buf = self.storage.as_mut_slice().map_err(|e| e.unwrap_err())?;
+        buf[self.pos..end_offset].copy_from_slice(&value.to_be_bytes());
         self.pos = end_offset;
 
         Ok(())
@@ -256,7 +354,8 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos..end_offset].copy_from_slice(&value.to_be_bytes());
+        let buf = self.storage.as_mut_slice().map_err(|e| e.unwrap_err())?;
+        buf[self.pos..end_offset].copy_from_slice(&value.to_be_bytes());
         self.pos = end_offset;
 
         Ok(())
@@ -270,7 +369,8 @@ impl Buffer {
             return Err(BufferWriteError::new_err("Write out of bounds"));
         }
 
-        self.data[self.pos..end_offset].copy_from_slice(&value.to_be_bytes());
+        let buf = self.storage.as_mut_slice().map_err(|e| e.unwrap_err())?;
+        buf[self.pos..end_offset].copy_from_slice(&value.to_be_bytes());
         self.pos = end_offset;
 
         Ok(())

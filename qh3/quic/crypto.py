@@ -4,18 +4,13 @@ import binascii
 from typing import Callable
 
 from .._hazmat import (
-    AeadAes128Gcm,
-    AeadAes256Gcm,
-    AeadChaCha20Poly1305,
+    CryptoContext as RustCryptoContext,
+)
+from .._hazmat import (
     CryptoError,
-    decode_packet_number,
 )
-from .._hazmat import QUICHeaderProtection as HeaderProtection
 from ..tls import CipherSuite, cipher_suite_hash, hkdf_expand_label, hkdf_extract
-from .packet import (
-    QuicProtocolVersion,
-    is_long_header,
-)
+from .packet import QuicProtocolVersion
 
 CIPHER_SUITES = {
     CipherSuite.AES_128_GCM_SHA256: (b"aes-128-ecb", b"aes-128-gcm"),
@@ -68,9 +63,8 @@ def derive_key_iv_hp(
 
 class CryptoContext:
     __slots__ = (
-        "aead",
+        "_inner",
         "cipher_suite",
-        "hp",
         "key_phase",
         "secret",
         "version",
@@ -84,9 +78,8 @@ class CryptoContext:
         setup_cb: Callback = NoCallback,
         teardown_cb: Callback = NoCallback,
     ) -> None:
-        self.aead: AeadChaCha20Poly1305 | AeadAes128Gcm | AeadAes256Gcm | None = None
+        self._inner: RustCryptoContext | None = None
         self.cipher_suite: CipherSuite | None = None
-        self.hp: HeaderProtection | None = None
         self.key_phase = key_phase
         self.secret: bytes | None = None
         self.version: int | None = None
@@ -96,48 +89,34 @@ class CryptoContext:
     def decrypt_packet(
         self, packet: bytes, encrypted_offset: int, expected_packet_number: int
     ) -> tuple[bytes, bytes, int, bool]:
-        if self.aead is None:
+        if self._inner is None:
             raise KeyUnavailableError("Decryption key is not available")
 
-        # header protection
-        plain_header, packet_number = self.hp.remove(packet, encrypted_offset)
-        first_byte = plain_header[0]
-
-        # packet number
-        pn_length = (first_byte & 0x03) + 1
-        packet_number = decode_packet_number(
-            packet_number, pn_length * 8, expected_packet_number
+        # HP removal + PN decode + AEAD decrypt
+        plain_header, payload, packet_number, key_phase_changed = (
+            self._inner.decrypt_packet(packet, encrypted_offset, expected_packet_number)
         )
 
-        # detect key phase change
-        crypto = self
-        if not is_long_header(first_byte):
-            key_phase = (first_byte & 4) >> 2
-            if key_phase != self.key_phase:
-                crypto = next_key_phase(self)
+        if key_phase_changed:
+            # Key phase changed — create next-phase context and decrypt with it
+            crypto = next_key_phase(self)
+            payload = crypto._inner.decrypt_payload(
+                packet[len(plain_header) :], plain_header, packet_number
+            )
+            return plain_header, payload, packet_number, True
 
-        # payload protection
-        payload = crypto.aead.decrypt(
-            packet_number, packet[len(plain_header) :], plain_header
-        )
-
-        return plain_header, payload, packet_number, crypto != self
+        return plain_header, payload, packet_number, False
 
     def encrypt_packet(
         self, plain_header: bytes, plain_payload: bytes, packet_number: int
     ) -> bytes:
         assert self.is_valid(), "Encryption key is not available"
 
-        # payload protection
-        protected_payload = self.aead.encrypt(
-            packet_number, plain_payload, plain_header
-        )
-
-        # header protection
-        return self.hp.apply(plain_header, protected_payload)
+        # AEAD encrypt + HP apply
+        return self._inner.encrypt_packet(plain_header, plain_payload, packet_number)
 
     def is_valid(self) -> bool:
-        return self.aead is not None
+        return self._inner is not None
 
     def setup(self, *, cipher_suite: CipherSuite, secret: bytes, version: int) -> None:
         hp_cipher_name, aead_cipher_name = CIPHER_SUITES[cipher_suite]
@@ -148,17 +127,16 @@ class CryptoContext:
             version=version,
         )
 
-        if aead_cipher_name == b"chacha20-poly1305":
-            self.aead = AeadChaCha20Poly1305(key, iv)
-        elif aead_cipher_name == b"aes-256-gcm":
-            self.aead = AeadAes256Gcm(key, iv)
-        elif aead_cipher_name == b"aes-128-gcm":
-            self.aead = AeadAes128Gcm(key, iv)
-        else:
-            raise CryptoError(f"Invalid cipher name: {aead_cipher_name.decode()}")
+        self._inner = RustCryptoContext(
+            aead_cipher_name.decode(),
+            hp_cipher_name.decode(),
+            key,
+            iv,
+            hp,
+            self.key_phase,
+        )
 
         self.cipher_suite = cipher_suite
-        self.hp = HeaderProtection(hp_cipher_name.decode(), hp)
         self.secret = secret
         self.version = version
 
@@ -166,9 +144,8 @@ class CryptoContext:
         self._setup_cb("tls")
 
     def teardown(self) -> None:
-        self.aead = None
+        self._inner = None
         self.cipher_suite = None
-        self.hp = None
         self.secret = None
 
         # trigger callback
@@ -176,7 +153,13 @@ class CryptoContext:
 
 
 def apply_key_phase(self: CryptoContext, crypto: CryptoContext, trigger: str) -> None:
-    self.aead = crypto.aead
+    # Update the AEAD key material in the Rust CryptoContext without changing HP
+    key, iv, _ = derive_key_iv_hp(
+        cipher_suite=crypto.cipher_suite,
+        secret=crypto.secret,
+        version=crypto.version,
+    )
+    self._inner.update_aead(key, iv, crypto.key_phase)
     self.key_phase = crypto.key_phase
     self.secret = crypto.secret
 
@@ -234,6 +217,41 @@ class CryptoPair:
         if self._update_key_requested:
             self._update_key("local_update")
         return self.send.encrypt_packet(plain_header, plain_payload, packet_number)
+
+    def finalize_packet(
+        self,
+        buffer,
+        packet_start: int,
+        packet_size: int,
+        padding_size: int,
+        header_size: int,
+        is_long_header: bool,
+        version: int,
+        packet_type: int,
+        peer_cid: bytes,
+        host_cid: bytes,
+        peer_token: bytes,
+        spin_bit: int,
+        packet_number: int,
+    ) -> int:
+        """Finalize a packet: write header, pad, encrypt, apply HP in one call."""
+        if self._update_key_requested:
+            self._update_key("local_update")
+        return self.send._inner.finalize_packet(
+            buffer,
+            packet_start,
+            packet_size,
+            padding_size,
+            header_size,
+            is_long_header,
+            version,
+            packet_type,
+            peer_cid,
+            host_cid,
+            peer_token,
+            spin_bit,
+            packet_number,
+        )
 
     def setup_initial(self, cid: bytes, is_client: bool, version: int) -> None:
         if is_client:

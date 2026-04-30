@@ -313,8 +313,10 @@ class QuicPacketRecovery:
                 largest_sent_time = packet.sent_time
 
                 # trigger callbacks
-                for handler, args in packet.delivery_handlers:
-                    handler(QuicDeliveryState.ACKED, *args)
+                dh = packet.delivery_handlers
+                if dh is not None:
+                    for handler, args in dh:
+                        handler(QuicDeliveryState.ACKED, *args)
 
         # nothing to do if there are no newly acked packets
         if largest_newly_acked is None:
@@ -489,8 +491,10 @@ class QuicPacketRecovery:
                 self._log_metrics_updated()
 
             # trigger callbacks
-            for handler, args in packet.delivery_handlers:
-                handler(QuicDeliveryState.LOST, *args)
+            dh = packet.delivery_handlers
+            if dh is not None:
+                for handler, args in dh:
+                    handler(QuicDeliveryState.LOST, *args)
 
         # inform congestion controller
         if lost_packets_cc:

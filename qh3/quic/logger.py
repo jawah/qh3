@@ -12,7 +12,6 @@ from ..h3.events import Headers
 from .packet import (
     QuicFrameType,
     QuicPacketType,
-    QuicStreamFrame,
     QuicTransportParameters,
 )
 
@@ -89,11 +88,11 @@ class QuicLoggerTrace:
                 ),
             }
 
-    def encode_crypto_frame(self, frame: QuicStreamFrame) -> dict:
+    def encode_crypto_frame(self, data: bytes, offset: int) -> dict:
         return {
             "frame_type": "crypto",
-            "length": len(frame.data),
-            "offset": frame.offset,
+            "length": len(data),
+            "offset": offset,
         }
 
     def encode_data_blocked_frame(self, limit: int) -> dict:
@@ -177,12 +176,14 @@ class QuicLoggerTrace:
             "stream_id": stream_id,
         }
 
-    def encode_stream_frame(self, frame: QuicStreamFrame, stream_id: int) -> dict:
+    def encode_stream_frame(
+        self, fin: bool, data: bytes, offset: int, stream_id: int
+    ) -> dict:
         return {
-            "fin": frame.fin,
+            "fin": fin,
             "frame_type": "stream",
-            "length": len(frame.data),
-            "offset": frame.offset,
+            "length": len(data),
+            "offset": offset,
             "stream_id": stream_id,
         }
 

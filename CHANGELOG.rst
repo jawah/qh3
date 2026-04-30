@@ -1,3 +1,13 @@
+1.8.0 (2026-04-30)
+==================
+
+**Changed**
+- Aggressive optimizations in the library. Expect up to 30% improvement in general.
+  We are aware that qh3 have a significant part of the logic in pure Python and we are trying to
+  migrate some of that logic into Rust but it takes a significant time to arrive. We prefer
+  small incremental changes that we can be confident about.
+- Updated rustls to 0.23.40
+
 1.7.4 (2026-04-28)
 ==================
 
