@@ -3,8 +3,7 @@ from __future__ import annotations
 import pytest
 import binascii
 
-from qh3._hazmat import Buffer, BufferReadError, decode_packet_number
-from qh3.quic import packet
+from qh3._hazmat import Buffer, BufferReadError, decode_packet_number, pull_ack_frame, push_ack_frame
 from qh3.quic.packet import (
     QuicPacketType,
     QuicPreferredAddress,
@@ -439,13 +438,13 @@ class TestFrame:
 
         # parse
         buf = Buffer(data=data)
-        rangeset, delay = packet.pull_ack_frame(buf)
+        rangeset, delay = pull_ack_frame(buf)
         assert list(rangeset) == [(0, 1)]
         assert delay == 2
 
         # serialize
         buf = Buffer(capacity=len(data))
-        packet.push_ack_frame(buf, rangeset, delay)
+        push_ack_frame(buf, rangeset, delay)
         assert buf.data == data
 
     def test_ack_frame_with_one_range(self):
@@ -453,13 +452,13 @@ class TestFrame:
 
         # parse
         buf = Buffer(data=data)
-        rangeset, delay = packet.pull_ack_frame(buf)
+        rangeset, delay = pull_ack_frame(buf)
         assert list(rangeset) == [(0, 1), (2, 3)]
         assert delay == 2
 
         # serialize
         buf = Buffer(capacity=len(data))
-        packet.push_ack_frame(buf, rangeset, delay)
+        push_ack_frame(buf, rangeset, delay)
         assert buf.data == data
 
     def test_ack_frame_with_one_range_2(self):
@@ -467,13 +466,13 @@ class TestFrame:
 
         # parse
         buf = Buffer(data=data)
-        rangeset, delay = packet.pull_ack_frame(buf)
+        rangeset, delay = pull_ack_frame(buf)
         assert list(rangeset) == [(0, 4), (5, 6)]
         assert delay == 2
 
         # serialize
         buf = Buffer(capacity=len(data))
-        packet.push_ack_frame(buf, rangeset, delay)
+        push_ack_frame(buf, rangeset, delay)
         assert buf.data == data
 
     def test_ack_frame_with_one_range_3(self):
@@ -481,13 +480,13 @@ class TestFrame:
 
         # parse
         buf = Buffer(data=data)
-        rangeset, delay = packet.pull_ack_frame(buf)
+        rangeset, delay = pull_ack_frame(buf)
         assert list(rangeset) == [(0, 3), (5, 6)]
         assert delay == 2
 
         # serialize
         buf = Buffer(capacity=len(data))
-        packet.push_ack_frame(buf, rangeset, delay)
+        push_ack_frame(buf, rangeset, delay)
         assert buf.data == data
 
     def test_ack_frame_with_two_ranges(self):
@@ -495,11 +494,11 @@ class TestFrame:
 
         # parse
         buf = Buffer(data=data)
-        rangeset, delay = packet.pull_ack_frame(buf)
+        rangeset, delay = pull_ack_frame(buf)
         assert list(rangeset) == [(0, 1), (2, 3), (4, 5)]
         assert delay == 2
 
         # serialize
         buf = Buffer(capacity=len(data))
-        packet.push_ack_frame(buf, rangeset, delay)
+        push_ack_frame(buf, rangeset, delay)
         assert buf.data == data

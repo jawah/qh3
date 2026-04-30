@@ -1298,16 +1298,76 @@ class TestQuicConnection:
         crypto.setup_initial(
             client._peer_cid.cid, is_client=False, version=client._version
         )
-        CryptoPair.encrypt_packet_real = CryptoPair.encrypt_packet
 
-        def encrypt_packet(self, plain_header, plain_payload, packet_number):
-            # mess with reserved bits
-            plain_header = bytes([plain_header[0] | 0x0C]) + plain_header[1:]
-            return CryptoPair.encrypt_packet_real(
-                self, plain_header, plain_payload, packet_number
+        # Override finalize_packet at class level to corrupt reserved bits
+        from qh3.quic.packet import (
+            PACKET_FIXED_BIT,
+            encode_long_header_first_byte,
+        )
+
+        PACKET_NUMBER_SEND_SIZE = 2
+        CryptoPair._finalize_packet_real = CryptoPair.finalize_packet
+
+        def corrupt_finalize(
+            self, buffer, packet_start, packet_size, padding_size, header_size,
+            is_long_header, version, packet_type, peer_cid, host_cid,
+            peer_token, spin_bit, packet_number,
+        ):
+            # Write padding
+            if padding_size > 0:
+                buffer.seek(packet_start + packet_size)
+                buffer.push_bytes(bytes(padding_size))
+                packet_size += padding_size
+
+            # Write header
+            if is_long_header:
+                from qh3.quic.packet import QuicPacketType as QPT
+                length = (
+                    packet_size - header_size + PACKET_NUMBER_SEND_SIZE
+                    + self.aead_tag_size
+                )
+                buffer.seek(packet_start)
+                buffer.push_uint8(
+                    encode_long_header_first_byte(
+                        version, QPT(packet_type), PACKET_NUMBER_SEND_SIZE - 1
+                    )
+                )
+                buffer.push_uint32(version)
+                buffer.push_uint8(len(peer_cid))
+                buffer.push_bytes(peer_cid)
+                buffer.push_uint8(len(host_cid))
+                buffer.push_bytes(host_cid)
+                if packet_type == 0:  # INITIAL
+                    buffer.push_uint_var(len(peer_token))
+                    buffer.push_bytes(peer_token)
+                buffer.push_uint16(length | 0x4000)
+                buffer.push_uint16(packet_number & 0xFFFF)
+            else:
+                buffer.seek(packet_start)
+                buffer.push_uint8(
+                    PACKET_FIXED_BIT
+                    | (spin_bit << 5)
+                    | (self.send.key_phase << 2)
+                    | (PACKET_NUMBER_SEND_SIZE - 1)
+                )
+                buffer.push_bytes(peer_cid)
+                buffer.push_uint16(packet_number & 0xFFFF)
+
+            # Corrupt reserved bits in the plain header, then encrypt
+            plain = buffer.data_slice(packet_start, packet_start + packet_size)
+            corrupted_header = bytes([plain[0] | 0x0C]) + plain[1:header_size]
+
+            buffer.seek(packet_start)
+            buffer.push_bytes(
+                self.send.encrypt_packet(
+                    corrupted_header,
+                    plain[header_size:packet_size],
+                    packet_number,
+                )
             )
+            return buffer.tell() - packet_start
 
-        CryptoPair.encrypt_packet = encrypt_packet
+        CryptoPair.finalize_packet = corrupt_finalize
 
         builder.start_packet(QuicPacketType.INITIAL, crypto)
         buf = builder.start_frame(QuicFrameType.PADDING)
@@ -1322,8 +1382,8 @@ class TestQuicConnection:
             reason_phrase="Reserved bits must be zero",
         )
 
-        CryptoPair.encrypt_packet = CryptoPair.encrypt_packet_real
-        del CryptoPair.encrypt_packet_real
+        CryptoPair.finalize_packet = CryptoPair._finalize_packet_real
+        del CryptoPair._finalize_packet_real
 
     def test_receive_datagram_wrong_version(self):
         client = create_standalone_client(self)

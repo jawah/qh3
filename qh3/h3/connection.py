@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import contextlib
 import logging
-import re
-import typing
 from enum import Enum, IntEnum
 
 from .._compat import UINT_VAR_MAX_SIZE
@@ -37,7 +34,22 @@ logger = logging.getLogger("http3")
 
 H3_ALPN = ["h3"]
 RESERVED_SETTINGS = (0x0, 0x2, 0x3, 0x4, 0x5)
-UPPERCASE = re.compile(b"[A-Z]")
+
+# Frozenset constants for header validation
+_RESPONSE_ALLOWED_PSEUDO = frozenset((b":status",))
+_RESPONSE_REQUIRED_PSEUDO = frozenset((b":status",))
+_REQUEST_ALLOWED_PSEUDO = frozenset(
+    (b":method", b":scheme", b":authority", b":path", b":protocol")
+)
+_REQUEST_REQUIRED_PSEUDO = frozenset((b":method", b":authority"))
+_PUSH_PROMISE_PSEUDO = frozenset((b":method", b":scheme", b":authority", b":path"))
+_TRAILERS_PSEUDO: frozenset[bytes] = frozenset()
+
+# Lookup table for uppercase ASCII bytes (A-Z = 65-90)
+_HAS_UPPERCASE = bytearray(256)
+for _i in range(65, 91):
+    _HAS_UPPERCASE[_i] = 1
+del _i
 
 
 class ErrorCode(IntEnum):
@@ -213,14 +225,17 @@ def validate_headers(
 
     extracted_header_value: bytes | None = None
 
+    _has_upper = _HAS_UPPERCASE
     for key, value in headers:
-        if UPPERCASE.search(key):
-            raise MessageError(f"Header {key!r} contains uppercase letters")
+        # Fast uppercase check using lookup table instead of regex
+        for b in key:
+            if _has_upper[b]:
+                raise MessageError(f"Header {key!r} contains uppercase letters")
 
         if extract_header is not None and extracted_header_value is None:
             extracted_header_value = value
 
-        if key.startswith(b":"):
+        if key and key[0] == 58:  # ord(b":") == 58
             # pseudo-headers
             if after_pseudo_headers:
                 raise MessageError(
@@ -244,8 +259,8 @@ def validate_headers(
             after_pseudo_headers = True
 
     # check required pseudo-headers are present
-    missing = required_pseudo_headers.difference(seen_pseudo_headers)
-    if missing:
+    if not required_pseudo_headers.issubset(seen_pseudo_headers):
+        missing = required_pseudo_headers.difference(seen_pseudo_headers)
         raise MessageError(f"Pseudo-headers {sorted(missing)} are missing")
 
     if scheme in (b"http", b"https"):
@@ -260,32 +275,24 @@ def validate_headers(
 def validate_push_promise_headers(headers: Headers) -> None:
     validate_headers(
         headers,
-        allowed_pseudo_headers=frozenset(
-            (b":method", b":scheme", b":authority", b":path")
-        ),
-        required_pseudo_headers=frozenset(
-            (b":method", b":scheme", b":authority", b":path")
-        ),
+        allowed_pseudo_headers=_PUSH_PROMISE_PSEUDO,
+        required_pseudo_headers=_PUSH_PROMISE_PSEUDO,
     )
 
 
 def validate_request_headers(headers: Headers) -> None:
     validate_headers(
         headers,
-        allowed_pseudo_headers=frozenset(
-            # FIXME: The pseudo-header :protocol is not actually defined, but
-            # we use it for the WebSocket demo.
-            (b":method", b":scheme", b":authority", b":path", b":protocol")
-        ),
-        required_pseudo_headers=frozenset((b":method", b":authority")),
+        allowed_pseudo_headers=_REQUEST_ALLOWED_PSEUDO,
+        required_pseudo_headers=_REQUEST_REQUIRED_PSEUDO,
     )
 
 
 def validate_response_headers(headers: Headers) -> int | None:
     status_code: bytes | None = validate_headers(
         headers,
-        allowed_pseudo_headers=frozenset((b":status",)),
-        required_pseudo_headers=frozenset((b":status",)),
+        allowed_pseudo_headers=_RESPONSE_ALLOWED_PSEUDO,
+        required_pseudo_headers=_RESPONSE_REQUIRED_PSEUDO,
         extract_header=b":status",
     )
 
@@ -301,8 +308,8 @@ def validate_response_headers(headers: Headers) -> int | None:
 def validate_trailers(headers: Headers) -> None:
     validate_headers(
         headers,
-        allowed_pseudo_headers=frozenset(),
-        required_pseudo_headers=frozenset(),
+        allowed_pseudo_headers=_TRAILERS_PSEUDO,
+        required_pseudo_headers=_TRAILERS_PSEUDO,
     )
 
 
@@ -310,7 +317,7 @@ class H3Stream:
     def __init__(self, stream_id: int) -> None:
         self.blocked = False
         self.blocked_frame_size: int | None = None
-        self.buffer = b""
+        self.buffer = bytearray()
         self.ended = False
         self.frame_size: int | None = None
         self.frame_type: int | None = None
@@ -473,12 +480,14 @@ class H3Connection:
         :param end_stream: Whether to end the stream.
         """
         # check DATA frame is allowed
-        with self._get_or_create_stream(stream_id) as stream:
-            if stream.headers_send_state != HeadersState.AFTER_HEADERS:
-                raise FrameUnexpected("DATA frame is not allowed in this state")
+        stream = self._get_or_create_stream(stream_id)
+        if stream.headers_send_state != HeadersState.AFTER_HEADERS:
+            raise FrameUnexpected("DATA frame is not allowed in this state")
 
-            if end_stream:
-                stream.finish_sending()
+        if end_stream:
+            stream.finish_sending()
+
+        self._maybe_cleanup_stream(stream)
 
         # log frame
         if self._quic_logger is not None:
@@ -509,46 +518,47 @@ class H3Connection:
         :param end_stream: Whether to end the stream.
         """
         # check HEADERS frame is allowed
-        with self._get_or_create_stream(stream_id) as stream:
-            if stream.headers_send_state == HeadersState.AFTER_TRAILERS:
-                raise FrameUnexpected("HEADERS frame is not allowed in this state")
+        stream = self._get_or_create_stream(stream_id)
+        if stream.headers_send_state == HeadersState.AFTER_TRAILERS:
+            raise FrameUnexpected("HEADERS frame is not allowed in this state")
 
-            if end_stream:
-                stream.finish_sending()
+        if end_stream:
+            stream.finish_sending()
 
-            frame_data = self._encode_headers(stream_id, headers)
+        frame_data = self._encode_headers(stream_id, headers)
 
-            # log frame
-            if self._quic_logger is not None:
-                self._quic_logger.log_event(
-                    category="http",
-                    event="frame_created",
-                    data=self._quic_logger.encode_http3_headers_frame(
-                        length=len(frame_data), headers=headers, stream_id=stream_id
-                    ),
-                )
-
-            # update state and send headers
-            if stream.headers_send_state == HeadersState.INITIAL:
-                is_informational_headers = False
-
-                if not self._is_client and not end_stream:
-                    for k, v in headers:
-                        if k == b":status":
-                            if int(v) < 200:
-                                is_informational_headers = True
-                                break
-                        elif not k.startswith(b":"):
-                            break
-
-                # only the server is allowed to do so!
-                if not is_informational_headers:
-                    stream.headers_send_state = HeadersState.AFTER_HEADERS
-            else:
-                stream.headers_send_state = HeadersState.AFTER_TRAILERS
-            self._quic.send_stream_data(
-                stream_id, encode_frame(FrameType.HEADERS, frame_data), end_stream
+        # log frame
+        if self._quic_logger is not None:
+            self._quic_logger.log_event(
+                category="http",
+                event="frame_created",
+                data=self._quic_logger.encode_http3_headers_frame(
+                    length=len(frame_data), headers=headers, stream_id=stream_id
+                ),
             )
+
+        # update state and send headers
+        if stream.headers_send_state == HeadersState.INITIAL:
+            is_informational_headers = False
+
+            if not self._is_client and not end_stream:
+                for k, v in headers:
+                    if k == b":status":
+                        if int(v) < 200:
+                            is_informational_headers = True
+                            break
+                    elif not k.startswith(b":"):
+                        break
+
+            # only the server is allowed to do so!
+            if not is_informational_headers:
+                stream.headers_send_state = HeadersState.AFTER_HEADERS
+        else:
+            stream.headers_send_state = HeadersState.AFTER_TRAILERS
+        self._quic.send_stream_data(
+            stream_id, encode_frame(FrameType.HEADERS, frame_data), end_stream
+        )
+        self._maybe_cleanup_stream(stream)
 
     @property
     def received_settings(self) -> dict[int, int] | None:
@@ -611,19 +621,16 @@ class H3Connection:
         self._quic.send_stream_data(self._local_encoder_stream_id, encoder)
         return frame_data
 
-    @contextlib.contextmanager
-    def _get_or_create_stream(self, stream_id: int) -> typing.Generator[H3Stream]:
-        if stream_id not in self._stream:
-            self._stream[stream_id] = H3Stream(stream_id)
+    def _get_or_create_stream(self, stream_id: int) -> H3Stream:
+        stream = self._stream.get(stream_id)
+        if stream is None:
+            stream = H3Stream(stream_id)
+            self._stream[stream_id] = stream
+        return stream
 
-        stream = self._stream[stream_id]
-
-        try:
-            yield stream
-        finally:
-            # Don't forget to delete stream objects when they are done
-            if stream.is_ended():
-                del self._stream[stream_id]
+    def _maybe_cleanup_stream(self, stream: H3Stream) -> None:
+        if stream.is_ended():
+            self._stream.pop(stream.stream_id, None)
 
     def _get_local_settings(self) -> dict[int, int]:
         """
@@ -682,23 +689,25 @@ class H3Connection:
         """
         Handle a frame received on a request or push stream.
         """
-        http_events: list[H3Event] = []
-
         if frame_type == FrameType.DATA:
             # check DATA frame is allowed
             if stream.headers_recv_state is not HeadersState.AFTER_HEADERS:
                 raise FrameUnexpected("DATA frame is not allowed in this state")
 
             if stream_ended or frame_data:
-                http_events.append(
+                return [
                     DataReceived(
                         data=frame_data,
                         push_id=stream.push_id,
                         stream_ended=stream_ended,
                         stream_id=stream.stream_id,
                     )
-                )
-        elif frame_type == FrameType.HEADERS:
+                ]
+            return []
+
+        http_events: list[H3Event] = []
+
+        if frame_type == FrameType.HEADERS:
             # check HEADERS frame is allowed
             if stream.headers_recv_state is HeadersState.AFTER_TRAILERS:
                 raise FrameUnexpected("HEADERS frame is not allowed in this state")
@@ -868,15 +877,15 @@ class H3Connection:
     def _receive_stream_data(self, event: StreamDataReceived) -> list[H3Event]:
         stream_id = event.stream_id
 
-        with self._get_or_create_stream(stream_id) as stream:
-            if stream_is_unidirectional(stream_id):
-                return self._receive_stream_data_uni(
-                    stream, event.data, event.end_stream
-                )
-            else:
-                return self._receive_request_or_push_data(
-                    stream, event.data, event.end_stream
-                )
+        stream = self._get_or_create_stream(stream_id)
+        if stream_is_unidirectional(stream_id):
+            result = self._receive_stream_data_uni(stream, event.data, event.end_stream)
+        else:
+            result = self._receive_request_or_push_data(
+                stream, event.data, event.end_stream
+            )
+        self._maybe_cleanup_stream(stream)
+        return result
 
     def _receive_request_or_push_data(
         self, stream: H3Stream, data: bytes, stream_ended: bool
@@ -886,81 +895,118 @@ class H3Connection:
         """
         http_events: list[H3Event] = []
 
-        stream.buffer += data
+        s_buffer = stream.buffer
         if stream_ended:
             stream.receiving_ended = True
         if stream.blocked:
+            s_buffer.extend(data)
             return http_events
+
+        s_stream_id = stream.stream_id
 
         # shortcut for WEBTRANSPORT_STREAM frame fragments
         if (
             stream.frame_type == FrameType.WEBTRANSPORT_STREAM
             and stream.session_id is not None
         ):
-            http_events.append(
-                WebTransportStreamDataReceived(
-                    data=stream.buffer,
-                    session_id=stream.session_id,
-                    stream_id=stream.stream_id,
-                    stream_ended=stream_ended,
+            if s_buffer:
+                s_buffer.extend(data)
+                http_events.append(
+                    WebTransportStreamDataReceived(
+                        data=bytes(s_buffer),
+                        session_id=stream.session_id,
+                        stream_id=s_stream_id,
+                        stream_ended=stream_ended,
+                    )
                 )
-            )
-            stream.buffer = b""
+                s_buffer.clear()
+            else:
+                http_events.append(
+                    WebTransportStreamDataReceived(
+                        data=data,
+                        session_id=stream.session_id,
+                        stream_id=s_stream_id,
+                        stream_ended=stream_ended,
+                    )
+                )
             return http_events
 
-        # shortcut for DATA frame fragments
-        if (
-            stream.frame_type == FrameType.DATA
-            and stream.frame_size is not None
-            and len(stream.buffer) < stream.frame_size
-        ):
-            http_events.append(
-                DataReceived(
-                    data=stream.buffer,
-                    push_id=stream.push_id,
-                    stream_id=stream.stream_id,
-                    stream_ended=False,
-                )
-            )
-            stream.frame_size -= len(stream.buffer)
-            stream.buffer = b""
-            return http_events
+        # shortcut for DATA frame fragments - zero-copy when buffer is empty
+        if stream.frame_type == FrameType.DATA and stream.frame_size is not None:
+            if not s_buffer:
+                data_len = len(data)
+                if data_len < stream.frame_size:
+                    http_events.append(
+                        DataReceived(
+                            data=data,
+                            push_id=stream.push_id,
+                            stream_id=s_stream_id,
+                            stream_ended=False,
+                        )
+                    )
+                    stream.frame_size -= data_len
+                    return http_events
+                # data completes or exceeds frame - fall through to general path
+            else:
+                s_buffer.extend(data)
+                buf_len = len(s_buffer)
+                if buf_len < stream.frame_size:
+                    http_events.append(
+                        DataReceived(
+                            data=bytes(s_buffer),
+                            push_id=stream.push_id,
+                            stream_id=s_stream_id,
+                            stream_ended=False,
+                        )
+                    )
+                    stream.frame_size -= buf_len
+                    s_buffer.clear()
+                    return http_events
+                # buffer has enough for frame - fall through to general path
+                data = b""  # already extended into s_buffer
 
         # handle lone FIN
-        if stream_ended and not stream.buffer:
-            http_events.append(
+        if stream_ended and not s_buffer and not data:
+            return [
                 DataReceived(
                     data=b"",
                     push_id=stream.push_id,
-                    stream_id=stream.stream_id,
+                    stream_id=s_stream_id,
                     stream_ended=True,
                 )
-            )
-            return http_events
+            ]
 
-        buf = Buffer(data=stream.buffer)
+        if data:
+            s_buffer.extend(data)
+
+        buf = Buffer(data=bytes(s_buffer))
         consumed = 0
+        buf_tell = buf.tell
+        buf_eof = buf.eof
+        buf_pull_uint_var = buf.pull_uint_var
+        buf_pull_bytes = buf.pull_bytes
+        handle_frame = self._handle_request_or_push_frame
 
-        while not buf.eof():
+        while not buf_eof():
             # fetch next frame header
             if stream.frame_size is None:
                 try:
-                    stream.frame_type = buf.pull_uint_var()
-                    stream.frame_size = buf.pull_uint_var()
+                    stream.frame_type = buf_pull_uint_var()
+                    stream.frame_size = buf_pull_uint_var()
                 except BufferReadError:
                     break
-                consumed = buf.tell()
+                consumed = buf_tell()
 
                 # WEBTRANSPORT_STREAM frames last until the end of the stream
                 if stream.frame_type == FrameType.WEBTRANSPORT_STREAM:
                     stream.session_id = stream.frame_size
                     stream.frame_size = None
 
-                    frame_data = stream.buffer[consumed:]
-                    stream.buffer = b""
+                    frame_data = bytes(s_buffer[consumed:])
+                    s_buffer.clear()
 
                     self._log_stream_type(
-                        stream_id=stream.stream_id, stream_type=StreamType.WEBTRANSPORT
+                        stream_id=s_stream_id, stream_type=StreamType.WEBTRANSPORT
                     )
 
                     if frame_data or stream_ended:
@@ -968,7 +1014,7 @@ class H3Connection:
                             WebTransportStreamDataReceived(
                                 data=frame_data,
                                 session_id=stream.session_id,
-                                stream_id=stream.stream_id,
+                                stream_id=s_stream_id,
                                 stream_ended=stream_ended,
                             )
                         )
@@ -983,43 +1029,45 @@ class H3Connection:
                         category="http",
                         event="frame_parsed",
                         data=self._quic_logger.encode_http3_data_frame(
-                            length=stream.frame_size, stream_id=stream.stream_id
+                            length=stream.frame_size, stream_id=s_stream_id
                         ),
                     )
 
             # check how much data is available
-            chunk_size = min(stream.frame_size, buf.capacity - consumed)
-            if stream.frame_type != FrameType.DATA and chunk_size < stream.frame_size:
+            s_frame_size = stream.frame_size
+            chunk_size = min(s_frame_size, buf.capacity - consumed)
+            if stream.frame_type != FrameType.DATA and chunk_size < s_frame_size:
                 break
 
             # read available data
-            frame_data = buf.pull_bytes(chunk_size)
+            frame_data = buf_pull_bytes(chunk_size)
             frame_type = stream.frame_type
-            consumed = buf.tell()
+            consumed = buf_tell()
 
             # detect end of frame
-            stream.frame_size -= chunk_size
+            stream.frame_size = s_frame_size - chunk_size
             if not stream.frame_size:
                 stream.frame_size = None
                 stream.frame_type = None
 
             try:
                 http_events.extend(
-                    self._handle_request_or_push_frame(
+                    handle_frame(
                         frame_type=frame_type,
                         frame_data=frame_data,
                         stream=stream,
-                        stream_ended=stream.receiving_ended and buf.eof(),
+                        stream_ended=stream.receiving_ended and buf_eof(),
                     )
                 )
             except StreamBlocked:
                 stream.blocked = True
                 stream.blocked_frame_size = len(frame_data)
-                self._blocked_stream_map[stream.stream_id] = stream
+                self._blocked_stream_map[s_stream_id] = stream
                 break
 
         # remove processed data from buffer
-        stream.buffer = stream.buffer[consumed:]
+        if consumed:
+            del s_buffer[:consumed]
 
         return http_events
 
@@ -1028,11 +1076,11 @@ class H3Connection:
     ) -> list[H3Event]:
         http_events: list[H3Event] = []
 
-        stream.buffer += data
+        stream.buffer.extend(data)
         if stream_ended:
             stream.receiving_ended = True
 
-        buf = Buffer(data=stream.buffer)
+        buf = Buffer(data=bytes(stream.buffer))
         consumed = 0
         unblocked_streams: set[int] = set()
 
@@ -1103,7 +1151,7 @@ class H3Connection:
                     )
 
                 # remove processed data from buffer
-                stream.buffer = stream.buffer[consumed:]
+                del stream.buffer[:consumed]
 
                 return self._receive_request_or_push_data(stream, b"", stream_ended)
             elif stream.stream_type == StreamType.WEBTRANSPORT:
@@ -1115,8 +1163,8 @@ class H3Connection:
                         break
                     consumed = buf.tell()
 
-                frame_data = stream.buffer[consumed:]
-                stream.buffer = b""
+                frame_data = bytes(stream.buffer[consumed:])
+                stream.buffer.clear()
 
                 if frame_data or stream_ended:
                     http_events.append(
@@ -1164,7 +1212,8 @@ class H3Connection:
                 consumed = buf.tell()
 
         # remove processed data from buffer
-        stream.buffer = stream.buffer[consumed:]
+        if consumed:
+            del stream.buffer[:consumed]
 
         # process unblocked streams
         for stream_id in unblocked_streams:

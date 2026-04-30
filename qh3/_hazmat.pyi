@@ -92,11 +92,9 @@ class Certificate:
 
     def __init__(self, certificate_der: bytes) -> None: ...
     @property
-    def subject(self):
-        list[tuple[str, str, bytes]]
+    def subject(self) -> list[tuple[str, str, bytes]]: ...
     @property
-    def issuer(self):
-        list[tuple[str, str, bytes]]
+    def issuer(self) -> list[tuple[str, str, bytes]]: ...
     @property
     def not_valid_after(self) -> int: ...
     @property
@@ -235,6 +233,81 @@ class QUICHeaderProtection:
     def remove(self, packet: bytes, pn_offset: int) -> tuple[bytes, int]: ...
     def mask(self, sample: bytes) -> bytes: ...
 
+class CryptoContext:
+    """QUIC crypto context holding both AEAD and Header Protection keys."""
+
+    def __init__(
+        self,
+        aead_algorithm: str,
+        hp_algorithm: str,
+        key: bytes,
+        iv: bytes,
+        hp_key: bytes,
+        key_phase: int,
+    ) -> None: ...
+    def decrypt_packet(
+        self,
+        packet: bytes,
+        encrypted_offset: int,
+        expected_packet_number: int,
+    ) -> tuple[bytes, bytes, int, bool]: ...
+    def decrypt_payload(
+        self,
+        ciphertext: bytes,
+        plain_header: bytes,
+        packet_number: int,
+    ) -> bytes: ...
+    def encrypt_packet(
+        self,
+        plain_header: bytes,
+        plain_payload: bytes,
+        packet_number: int,
+    ) -> bytes: ...
+    def update_aead(self, key: bytes, iv: bytes, key_phase: int) -> None: ...
+    def finalize_packet(
+        self,
+        buffer: Buffer,
+        packet_start: int,
+        packet_size: int,
+        padding_size: int,
+        header_size: int,
+        is_long_header: bool,
+        version: int,
+        packet_type: int,
+        peer_cid: bytes,
+        host_cid: bytes,
+        peer_token: bytes,
+        spin_bit: int,
+        packet_number: int,
+    ) -> int: ...
+
+class QuicStreamSender:
+    """The send part of a QUIC stream."""
+
+    buffer_is_empty: bool
+    highest_offset: int
+    is_finished: bool
+    reset_pending: bool
+
+    def __init__(self, stream_id: int | None = None, writable: bool = True) -> None: ...
+    @property
+    def next_offset(self) -> int: ...
+    @property
+    def _stream_id_size(self) -> int: ...
+    @property
+    def _pending(self) -> list[tuple[int, int]]: ...
+    def get_frame(
+        self, max_size: int, max_offset: int | None = None
+    ) -> tuple[bytes, bool, int] | None: ...
+    def prepare_stream_frame(
+        self, flight_space: int, max_offset: int
+    ) -> tuple[bytes, int, int, int, int, int] | None: ...
+    def get_reset_frame(self) -> tuple[int, int, int]: ...
+    def on_data_delivery(self, delivery: int, start: int, stop: int) -> None: ...
+    def on_reset_delivery(self, delivery: int) -> None: ...
+    def reset(self, error_code: int) -> None: ...
+    def write(self, data: bytes, end_stream: bool = False) -> None: ...
+
 class ReasonFlags(Enum):
     unspecified = 0
     key_compromise = 1
@@ -283,11 +356,18 @@ class BufferReadError(ValueError): ...
 class BufferWriteError(ValueError): ...
 
 class Buffer:
-    def __init__(self, capacity: int = 0, data: bytes | None = None) -> None: ...
+    def __init__(
+        self,
+        capacity: int | None = None,
+        data: bytes | None = None,
+        length: int | None = None,
+    ) -> None: ...
     @property
     def capacity(self) -> int: ...
     @property
     def data(self) -> bytes: ...
+    @property
+    def raw_data(self) -> bytes: ...
     def data_slice(self, start: int, end: int) -> bytes: ...
     def eof(self) -> bool: ...
     def seek(self, pos: int) -> None: ...
@@ -387,3 +467,31 @@ def classify_certificates_der(
     silently skipped.  Each output item is the original DER bytes.
     """
     ...
+
+def pull_quic_header(
+    data: bytes,
+    offset: int,
+    host_cid_length: int | None = None,
+) -> tuple[
+    int | None,  # version
+    int,  # packet_type
+    int,  # packet_length
+    bytes,  # destination_cid
+    bytes,  # source_cid
+    bytes,  # token
+    bytes,  # integrity_tag
+    list[int],  # supported_versions
+    int,  # encrypted_offset
+    int,  # end_offset
+]: ...
+def pull_ack_frame(buffer: Buffer) -> tuple[RangeSet, int]: ...
+def push_ack_frame(buffer: Buffer, rangeset: RangeSet, delay: int) -> int: ...
+def skip_padding(buffer: Buffer) -> None: ...
+def pull_stream_frame(
+    buffer: Buffer, frame_type: int
+) -> tuple[int, int, bytes, bool]: ...
+def pull_crypto_frame(buffer: Buffer) -> tuple[int, bytes]: ...
+def push_stream_frame_body(
+    buffer: Buffer, stream_id: int, offset: int, data: bytes
+) -> None: ...
+def push_crypto_frame_body(buffer: Buffer, offset: int, data: bytes) -> None: ...

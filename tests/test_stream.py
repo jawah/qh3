@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from qh3.quic.events import StreamDataReceived, StreamReset
-from qh3.quic.packet import QuicErrorCode, QuicStreamFrame
+from qh3.quic.packet import QuicErrorCode
 from qh3.quic.packet_builder import QuicDeliveryState
 from qh3.quic.stream import FinalSizeError, QuicStream
 
@@ -16,7 +16,7 @@ class TestQuicStream:
         assert stream.receiver._buffer_start == 0
 
         # empty
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"")) == None
+        assert stream.receiver.handle_frame(0, b"") == None
         assert bytes(stream.receiver._buffer) == b""
         assert list(stream.receiver._ranges) == []
         assert stream.receiver._buffer_start == 0
@@ -25,7 +25,7 @@ class TestQuicStream:
         stream = QuicStream(stream_id=0)
 
         # add data at start
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"01234567")) == \
+        assert stream.receiver.handle_frame(0, b"01234567") == \
             StreamDataReceived(data=b"01234567", end_stream=False, stream_id=0)
         assert bytes(stream.receiver._buffer) == b""
         assert list(stream.receiver._ranges) == []
@@ -34,7 +34,7 @@ class TestQuicStream:
         assert not stream.receiver.is_finished
 
         # add more data
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=8, data=b"89012345")) == \
+        assert stream.receiver.handle_frame(8, b"89012345") == \
             StreamDataReceived(data=b"89012345", end_stream=False, stream_id=0)
         assert bytes(stream.receiver._buffer) == b""
         assert list(stream.receiver._ranges) == []
@@ -43,8 +43,7 @@ class TestQuicStream:
         assert not stream.receiver.is_finished
 
         # add data and fin
-        assert stream.receiver.handle_frame(
-                QuicStreamFrame(offset=16, data=b"67890123", fin=True) \
+        assert stream.receiver.handle_frame(16, b"67890123", True
             ) == \
             StreamDataReceived(data=b"67890123", end_stream=True, stream_id=0)
         assert bytes(stream.receiver._buffer) == b""
@@ -57,7 +56,7 @@ class TestQuicStream:
         stream = QuicStream(stream_id=0)
 
         # add data at offset 8
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=8, data=b"89012345")) == \
+        assert stream.receiver.handle_frame(8, b"89012345") == \
             None
         assert bytes(stream.receiver._buffer) == b"\x00\x00\x00\x00\x00\x00\x00\x0089012345"
         assert list(stream.receiver._ranges) == [(8, 16)]
@@ -65,7 +64,7 @@ class TestQuicStream:
         assert stream.receiver.highest_offset == 16
 
         # add data at offset 0
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"01234567")) == \
+        assert stream.receiver.handle_frame(0, b"01234567") == \
             StreamDataReceived(data=b"0123456789012345", end_stream=False, stream_id=0)
         assert bytes(stream.receiver._buffer) == b""
         assert list(stream.receiver._ranges) == []
@@ -76,14 +75,14 @@ class TestQuicStream:
         stream = QuicStream(stream_id=0)
 
         # add data at offset 0
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"")) == None
+        assert stream.receiver.handle_frame(0, b"") == None
         assert bytes(stream.receiver._buffer) == b""
         assert list(stream.receiver._ranges) == []
         assert stream.receiver._buffer_start == 0
         assert stream.receiver.highest_offset == 0
 
         # add data at offset 8
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=8, data=b"")) == None
+        assert stream.receiver.handle_frame(8, b"") == None
         assert bytes(stream.receiver._buffer) == b"\x00\x00\x00\x00\x00\x00\x00\x00"
         assert list(stream.receiver._ranges) == []
         assert stream.receiver._buffer_start == 0
@@ -93,21 +92,21 @@ class TestQuicStream:
         stream = QuicStream(stream_id=0)
 
         # add data at offset 0
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"01234567")) == \
+        assert stream.receiver.handle_frame(0, b"01234567") == \
             StreamDataReceived(data=b"01234567", end_stream=False, stream_id=0)
         assert bytes(stream.receiver._buffer) == b""
         assert list(stream.receiver._ranges) == []
         assert stream.receiver._buffer_start == 8
 
         # add data again at offset 0
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"01234567")) == \
+        assert stream.receiver.handle_frame(0, b"01234567") == \
             None
         assert bytes(stream.receiver._buffer) == b""
         assert list(stream.receiver._ranges) == []
         assert stream.receiver._buffer_start == 8
 
         # add data again at offset 0
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"01")) == None
+        assert stream.receiver.handle_frame(0, b"01") == None
         assert bytes(stream.receiver._buffer) == b""
         assert list(stream.receiver._ranges) == []
         assert stream.receiver._buffer_start == 8
@@ -115,11 +114,10 @@ class TestQuicStream:
     def test_receiver_already_partially_consumed(self):
         stream = QuicStream(stream_id=0)
 
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"01234567")) == \
+        assert stream.receiver.handle_frame(0, b"01234567") == \
             StreamDataReceived(data=b"01234567", end_stream=False, stream_id=0)
 
-        assert stream.receiver.handle_frame(
-                QuicStreamFrame(offset=0, data=b"0123456789012345") \
+        assert stream.receiver.handle_frame(0, b"0123456789012345"
             ) == \
             StreamDataReceived(data=b"89012345", end_stream=False, stream_id=0)
         assert bytes(stream.receiver._buffer) == b""
@@ -129,14 +127,13 @@ class TestQuicStream:
     def test_receiver_already_partially_consumed_2(self):
         stream = QuicStream(stream_id=0)
 
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"01234567")) == \
+        assert stream.receiver.handle_frame(0, b"01234567") == \
             StreamDataReceived(data=b"01234567", end_stream=False, stream_id=0)
 
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=16, data=b"abcdefgh")) == \
+        assert stream.receiver.handle_frame(16, b"abcdefgh") == \
             None
 
-        assert stream.receiver.handle_frame(
-                QuicStreamFrame(offset=2, data=b"23456789012345") \
+        assert stream.receiver.handle_frame(2, b"23456789012345"
             ) == \
             StreamDataReceived(data=b"89012345abcdefgh", end_stream=False, stream_id=0)
         assert bytes(stream.receiver._buffer) == b""
@@ -146,10 +143,9 @@ class TestQuicStream:
     def test_receiver_fin(self):
         stream = QuicStream(stream_id=0)
 
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"01234567")) == \
+        assert stream.receiver.handle_frame(0, b"01234567") == \
             StreamDataReceived(data=b"01234567", end_stream=False, stream_id=0)
-        assert stream.receiver.handle_frame(
-                QuicStreamFrame(offset=8, data=b"89012345", fin=True) \
+        assert stream.receiver.handle_frame(8, b"89012345", True
             ) == \
             StreamDataReceived(data=b"89012345", end_stream=True, stream_id=0)
 
@@ -157,52 +153,47 @@ class TestQuicStream:
         stream = QuicStream(stream_id=0)
 
         # add data at offset 8 with FIN
-        assert stream.receiver.handle_frame(
-                QuicStreamFrame(offset=8, data=b"89012345", fin=True) \
+        assert stream.receiver.handle_frame(8, b"89012345", True
             ) == \
             None
         assert stream.receiver.highest_offset == 16
         assert not stream.receiver.is_finished
 
         # add data at offset 0
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"01234567")) == \
+        assert stream.receiver.handle_frame(0, b"01234567") == \
             StreamDataReceived(data=b"0123456789012345", end_stream=True, stream_id=0)
         assert stream.receiver.highest_offset == 16
         assert stream.receiver.is_finished
 
     def test_receiver_fin_then_data(self):
         stream = QuicStream(stream_id=0)
-        stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"0123", fin=True))
+        stream.receiver.handle_frame(0, b"0123", True)
 
         # data beyond final size
         with pytest.raises(FinalSizeError) as cm:
-            stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"01234567"))
+            stream.receiver.handle_frame(0, b"01234567")
         assert str(cm.value) == "Data received beyond final size"
 
         # final size would be lowered
         with pytest.raises(FinalSizeError) as cm:
-            stream.receiver.handle_frame(
-                QuicStreamFrame(offset=0, data=b"01", fin=True)
-            )
+            stream.receiver.handle_frame(0, b"01", True)
         assert str(cm.value) == "Cannot change final size"
 
     def test_receiver_fin_twice(self):
         stream = QuicStream(stream_id=0)
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"01234567")) == \
+        assert stream.receiver.handle_frame(0, b"01234567") == \
             StreamDataReceived(data=b"01234567", end_stream=False, stream_id=0)
-        assert stream.receiver.handle_frame(
-                QuicStreamFrame(offset=8, data=b"89012345", fin=True) \
+        assert stream.receiver.handle_frame(8, b"89012345", True
             ) == \
             StreamDataReceived(data=b"89012345", end_stream=True, stream_id=0)
 
-        assert stream.receiver.handle_frame(
-                QuicStreamFrame(offset=8, data=b"89012345", fin=True) \
+        assert stream.receiver.handle_frame(8, b"89012345", True
             ) == \
             StreamDataReceived(data=b"", end_stream=True, stream_id=0)
 
     def test_receiver_fin_without_data(self):
         stream = QuicStream(stream_id=0)
-        assert stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"", fin=True)) == \
+        assert stream.receiver.handle_frame(0, b"", True) == \
             StreamDataReceived(data=b"", end_stream=True, stream_id=0)
 
     def test_receiver_reset(self):
@@ -213,7 +204,7 @@ class TestQuicStream:
 
     def test_receiver_reset_after_fin(self):
         stream = QuicStream(stream_id=0)
-        stream.receiver.handle_frame(QuicStreamFrame(offset=0, data=b"0123", fin=True))
+        stream.receiver.handle_frame(0, b"0123", True)
         assert stream.receiver.handle_reset(final_size=4) == \
             StreamReset(error_code=QuicErrorCode.NO_ERROR, stream_id=0)
 
@@ -288,18 +279,18 @@ class TestQuicStream:
         assert stream.sender.next_offset == 0
 
         # send a chunk
-        frame = stream.sender.get_frame(8)
-        assert frame.data == b"01234567"
-        assert not frame.fin
-        assert frame.offset == 0
+        f_data, f_fin, f_offset = stream.sender.get_frame(8)
+        assert f_data == b"01234567"
+        assert not f_fin
+        assert f_offset == 0
         assert list(stream.sender._pending) == [(8, 16)]
         assert stream.sender.next_offset == 8
 
         # send another chunk
-        frame = stream.sender.get_frame(8)
-        assert frame.data == b"89012345"
-        assert not frame.fin
-        assert frame.offset == 8
+        f_data, f_fin, f_offset = stream.sender.get_frame(8)
+        assert f_data == b"89012345"
+        assert not f_fin
+        assert f_offset == 8
         assert list(stream.sender._pending) == []
         assert stream.sender.next_offset == 16
 
@@ -330,17 +321,17 @@ class TestQuicStream:
         assert stream.sender.next_offset == 0
 
         # send a chunk
-        frame = stream.sender.get_frame(8)
-        assert frame.data == b"01234567"
-        assert not frame.fin
-        assert frame.offset == 0
+        f_data, f_fin, f_offset = stream.sender.get_frame(8)
+        assert f_data == b"01234567"
+        assert not f_fin
+        assert f_offset == 0
         assert stream.sender.next_offset == 8
 
         # send another chunk
-        frame = stream.sender.get_frame(8)
-        assert frame.data == b"89012345"
-        assert frame.fin
-        assert frame.offset == 8
+        f_data, f_fin, f_offset = stream.sender.get_frame(8)
+        assert f_data == b"89012345"
+        assert f_fin
+        assert f_offset == 8
         assert stream.sender.next_offset == 16
 
         # nothing more to send
@@ -370,16 +361,18 @@ class TestQuicStream:
 
         # send a chunk
         frame = stream.sender.get_frame(8)
-        assert frame.data == b"01234567"
-        assert not frame.fin
-        assert frame.offset == 0
+        f_data, f_fin, f_offset = frame
+        assert f_data == b"01234567"
+        assert not f_fin
+        assert f_offset == 0
         assert stream.sender.next_offset == 8
 
         # send another chunk
         frame = stream.sender.get_frame(8)
-        assert frame.data == b"89012345"
-        assert frame.fin
-        assert frame.offset == 8
+        f_data, f_fin, f_offset = frame
+        assert f_data == b"89012345"
+        assert f_fin
+        assert f_offset == 8
         assert stream.sender.next_offset == 16
 
         # nothing more to send
@@ -409,13 +402,13 @@ class TestQuicStream:
 
         # send a chunk
         assert stream.sender.get_frame(8) == \
-            QuicStreamFrame(data=b"01234567", fin=False, offset=0)
+            (b"01234567", False, 0)
         assert list(stream.sender._pending) == [(8, 16)]
         assert stream.sender.next_offset == 8
 
         # send another chunk
         assert stream.sender.get_frame(8) == \
-            QuicStreamFrame(data=b"89012345", fin=True, offset=8)
+            (b"89012345", True, 8)
         assert list(stream.sender._pending) == []
         assert stream.sender.next_offset == 16
 
@@ -431,7 +424,7 @@ class TestQuicStream:
 
         # send chunk again
         assert stream.sender.get_frame(8) == \
-            QuicStreamFrame(data=b"01234567", fin=False, offset=0)
+            (b"01234567", False, 0)
         assert list(stream.sender._pending) == []
         assert stream.sender.next_offset == 16
 
@@ -449,13 +442,13 @@ class TestQuicStream:
 
         # send a chunk
         assert stream.sender.get_frame(8) == \
-            QuicStreamFrame(data=b"01234567", fin=False, offset=0)
+            (b"01234567", False, 0)
         assert list(stream.sender._pending) == [(8, 16)]
         assert stream.sender.next_offset == 8
 
         # send another chunk
         assert stream.sender.get_frame(8) == \
-            QuicStreamFrame(data=b"89012345", fin=True, offset=8)
+            (b"89012345", True, 8)
         assert list(stream.sender._pending) == []
         assert stream.sender.next_offset == 16
 
@@ -471,7 +464,7 @@ class TestQuicStream:
 
         # send chunk again
         assert stream.sender.get_frame(8) == \
-            QuicStreamFrame(data=b"89012345", fin=True, offset=8)
+            (b"89012345", True, 8)
         assert list(stream.sender._pending) == []
         assert stream.sender.next_offset == 16
 
@@ -491,18 +484,18 @@ class TestQuicStream:
 
         # write data, send a chunk
         stream.sender.write(b"0123456789012345")
-        frame = stream.sender.get_frame(8)
-        assert frame.data == b"01234567"
-        assert not frame.fin
-        assert frame.offset == 0
+        f_data, f_fin, f_offset = stream.sender.get_frame(8)
+        assert f_data == b"01234567"
+        assert not f_fin
+        assert f_offset == 0
         assert list(stream.sender._pending) == [(8, 16)]
         assert stream.sender.next_offset == 8
 
         # send is limited by peer
-        frame = stream.sender.get_frame(8, max_offset)
-        assert frame.data == b"8901"
-        assert not frame.fin
-        assert frame.offset == 8
+        f_data, f_fin, f_offset = stream.sender.get_frame(8, max_offset)
+        assert f_data == b"8901"
+        assert not f_fin
+        assert f_offset == 8
         assert list(stream.sender._pending) == [(12, 16)]
         assert stream.sender.next_offset == 12
 
@@ -521,19 +514,19 @@ class TestQuicStream:
 
         # peer raises limit, send some data
         max_offset += 8
-        frame = stream.sender.get_frame(8, max_offset)
-        assert frame.data == b"2345abcd"
-        assert not frame.fin
-        assert frame.offset == 12
+        f_data, f_fin, f_offset = stream.sender.get_frame(8, max_offset)
+        assert f_data == b"2345abcd"
+        assert not f_fin
+        assert f_offset == 12
         assert list(stream.sender._pending) == [(20, 24)]
         assert stream.sender.next_offset == 20
 
         # peer raises limit again, send remaining data
         max_offset += 8
-        frame = stream.sender.get_frame(8, max_offset)
-        assert frame.data == b"efgh"
-        assert not frame.fin
-        assert frame.offset == 20
+        f_data, f_fin, f_offset = stream.sender.get_frame(8, max_offset)
+        assert f_data == b"efgh"
+        assert not f_fin
+        assert f_offset == 20
         assert list(stream.sender._pending) == []
         assert stream.sender.next_offset == 24
 
@@ -552,10 +545,10 @@ class TestQuicStream:
         # write EOF
         stream.sender.write(b"", end_stream=True)
         assert not stream.sender.buffer_is_empty
-        frame = stream.sender.get_frame(8)
-        assert frame.data == b""
-        assert frame.fin
-        assert frame.offset == 0
+        f_data, f_fin, f_offset = stream.sender.get_frame(8)
+        assert f_data == b""
+        assert f_fin
+        assert f_offset == 0
 
         # nothing more to send
         assert not stream.sender.buffer_is_empty# FIXME?
@@ -574,10 +567,10 @@ class TestQuicStream:
         # write EOF
         stream.sender.write(b"", end_stream=True)
         assert not stream.sender.buffer_is_empty
-        frame = stream.sender.get_frame(8)
-        assert frame.data == b""
-        assert frame.fin
-        assert frame.offset == 0
+        f_data, f_fin, f_offset = stream.sender.get_frame(8)
+        assert f_data == b""
+        assert f_fin
+        assert f_offset == 0
 
         # nothing more to send
         assert not stream.sender.buffer_is_empty# FIXME?
@@ -594,8 +587,8 @@ class TestQuicStream:
 
         # reset is sent
         reset = stream.sender.get_reset_frame()
-        assert reset.error_code == QuicErrorCode.NO_ERROR
-        assert reset.final_size == 0
+        assert reset[0] == QuicErrorCode.NO_ERROR  # error_code
+        assert reset[1] == 0  # final_size
         assert not stream.sender.reset_pending
         assert not stream.sender.is_finished
 
@@ -613,8 +606,8 @@ class TestQuicStream:
 
         # reset is sent
         reset = stream.sender.get_reset_frame()
-        assert reset.error_code == QuicErrorCode.NO_ERROR
-        assert reset.final_size == 0
+        assert reset[0] == QuicErrorCode.NO_ERROR  # error_code
+        assert reset[1] == 0  # final_size
         assert not stream.sender.reset_pending
 
         # reset is lost
@@ -624,8 +617,8 @@ class TestQuicStream:
 
         # reset is sent again
         reset = stream.sender.get_reset_frame()
-        assert reset.error_code == QuicErrorCode.NO_ERROR
-        assert reset.final_size == 0
+        assert reset[0] == QuicErrorCode.NO_ERROR  # error_code
+        assert reset[1] == 0  # final_size
         assert not stream.sender.reset_pending
 
         # reset is acklowledged
