@@ -701,8 +701,7 @@ class QuicConnection:
             is_client=self._is_client,
             max_datagram_size=self._max_datagram_size,
             packet_numbers={
-                epoch: space.packet_number
-                for epoch, space in self._spaces.items()
+                epoch: space.packet_number for epoch, space in self._spaces.items()
             },
             peer_cid=self._peer_cid.cid,
             peer_token=self._peer_token,
@@ -1199,7 +1198,8 @@ class QuicConnection:
                 if self._logger is not None:
                     self._logger.debug(
                         "Discarding duplicate packet: epoch=%s pn=%d",
-                        epoch, packet_number,
+                        epoch,
+                        packet_number,
                     )
                 continue
 

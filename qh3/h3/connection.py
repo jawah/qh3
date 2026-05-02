@@ -1142,9 +1142,7 @@ class H3Connection:
                     break
                 consumed = buf.tell()
 
-                http_events.extend(
-                    self._handle_control_frame(frame_type, frame_data)
-                )
+                http_events.extend(self._handle_control_frame(frame_type, frame_data))
             elif stream.stream_type == StreamType.PUSH:
                 # fetch push id
                 if stream.push_id is None:
