@@ -949,7 +949,7 @@ class H3Connection:
                             data=data,
                             push_id=stream.push_id,
                             stream_id=s_stream_id,
-                            stream_ended=False,
+                            stream_ended=stream_ended,
                         )
                     )
                     stream.frame_size -= data_len
@@ -964,7 +964,7 @@ class H3Connection:
                             data=bytes(s_buffer),
                             push_id=stream.push_id,
                             stream_id=s_stream_id,
-                            stream_ended=False,
+                            stream_ended=stream_ended,
                         )
                     )
                     stream.frame_size -= buf_len
