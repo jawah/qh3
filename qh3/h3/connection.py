@@ -21,6 +21,7 @@ from ..quic.logger import QuicLoggerTrace
 from .events import (
     DatagramReceived,
     DataReceived,
+    GoawayReceived,
     H3Event,
     Headers,
     HeadersReceived,
@@ -647,7 +648,9 @@ class H3Connection:
             settings[Setting.ENABLE_WEBTRANSPORT] = 1
         return settings
 
-    def _handle_control_frame(self, frame_type: int, frame_data: bytes) -> None:
+    def _handle_control_frame(
+        self, frame_type: int, frame_data: bytes
+    ) -> list[H3Event]:
         """
         Handle a frame received on the peer's control stream.
         """
@@ -667,6 +670,10 @@ class H3Connection:
             )
             self._quic.send_stream_data(self._local_encoder_stream_id, encoder)
             self._settings_received = True
+        elif frame_type == FrameType.GOAWAY:
+            buf = Buffer(data=frame_data)
+            goaway_id = buf.pull_uint_var()
+            return [GoawayReceived(stream_id=goaway_id)]
         elif frame_type == FrameType.MAX_PUSH_ID:
             if self._is_client:
                 raise FrameUnexpected("Servers must not send MAX_PUSH_ID")
@@ -678,6 +685,7 @@ class H3Connection:
             FrameType.DUPLICATE_PUSH,
         ):
             raise FrameUnexpected("Invalid frame type on control stream")
+        return []
 
     def _handle_request_or_push_frame(
         self,
@@ -1134,7 +1142,9 @@ class H3Connection:
                     break
                 consumed = buf.tell()
 
-                self._handle_control_frame(frame_type, frame_data)
+                http_events.extend(
+                    self._handle_control_frame(frame_type, frame_data)
+                )
             elif stream.stream_type == StreamType.PUSH:
                 # fetch push id
                 if stream.push_id is None:
