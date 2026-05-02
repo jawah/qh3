@@ -39,6 +39,7 @@ class QuicPacketSpace:
         self.expected_packet_number = 0
         self.largest_received_packet = -1
         self.largest_received_time: float | None = None
+        self.packet_number = 0  # next send PN for this space (RFC 9000 §12.3)
 
         # sent packets and loss
         self.ack_eliciting_in_flight = 0

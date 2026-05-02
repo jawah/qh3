@@ -253,14 +253,14 @@ class TestQuicPacketBuilder:
                     in_flight=True,
                     is_ack_eliciting=True,
                     is_crypto_packet=False,
-                    packet_number=1,
+                    packet_number=0,
                     packet_type=QuicPacketType.ONE_RTT,
                     sent_bytes=1280,
                 ),
             ]
 
         # check builder
-        assert builder.packet_number == 2
+        assert builder.packet_number == 1
 
     def test_long_header_initial_client_zero_rtt(self):
         builder = create_builder(is_client=True)
@@ -299,7 +299,7 @@ class TestQuicPacketBuilder:
                     in_flight=True,
                     is_ack_eliciting=True,
                     is_crypto_packet=False,
-                    packet_number=1,
+                    packet_number=0,
                     packet_type=QuicPacketType.ZERO_RTT,
                     sent_bytes=144,
                 ),
@@ -350,7 +350,7 @@ class TestQuicPacketBuilder:
                     in_flight=True,
                     is_ack_eliciting=True,
                     is_crypto_packet=True,
-                    packet_number=1,
+                    packet_number=0,
                     packet_type=QuicPacketType.HANDSHAKE,
                     sent_bytes=343,
                 ),
@@ -359,14 +359,14 @@ class TestQuicPacketBuilder:
                     in_flight=True,
                     is_ack_eliciting=True,
                     is_crypto_packet=True,
-                    packet_number=2,
+                    packet_number=0,
                     packet_type=QuicPacketType.ONE_RTT,
                     sent_bytes=693,
                 ),
             ]
 
         # check builder
-        assert builder.packet_number == 3
+        assert builder.packet_number == 1
 
     def test_short_header_empty(self):
         builder = create_builder()

@@ -308,7 +308,6 @@ class QuicConnection:
         "_loss_at",
         "_network_paths",
         "_pacing_at",
-        "_packet_number",
         "_peer_cid",
         "_peer_cid_available",
         "_peer_cid_sequence_numbers",
@@ -363,6 +362,7 @@ class QuicConnection:
         "_mtu_probe_pending",
         "_initial_source_connection_id",
         "_ech_retry_configs",
+        "_effective_idle_timeout",
     )
 
     def __init__(
@@ -454,7 +454,6 @@ class QuicConnection:
         self._loss_at: float | None = None
         self._network_paths: list[QuicNetworkPath] = []
         self._pacing_at: float | None = None
-        self._packet_number = 0
         self._peer_cid = QuicConnectionId(
             cid=os.urandom(configuration.connection_id_length), sequence_number=None
         )
@@ -467,6 +466,7 @@ class QuicConnection:
         self._remote_active_connection_id_limit = 2
         self._remote_initial_source_connection_id: bytes | None = None
         self._remote_max_idle_timeout = 0.0  # seconds
+        self._effective_idle_timeout: float = self._configuration.idle_timeout
         self._remote_max_data = 0
         self._remote_max_data_used = 0
         self._remote_max_datagram_frame_size: int | None = None
@@ -700,7 +700,10 @@ class QuicConnection:
             host_cid=self.host_cid,
             is_client=self._is_client,
             max_datagram_size=self._max_datagram_size,
-            packet_number=self._packet_number,
+            packet_numbers={
+                epoch: space.packet_number
+                for epoch, space in self._spaces.items()
+            },
             peer_cid=self._peer_cid.cid,
             peer_token=self._peer_token,
             quic_logger=self._quic_logger,
@@ -761,7 +764,6 @@ class QuicConnection:
         datagrams, packets = builder.flush()
 
         # MTU probing — send an oversized PING+PADDING packet
-        last_builder = builder
         if (
             self._mtu_probe_sizes
             and self._mtu_probe_pending is None
@@ -774,9 +776,7 @@ class QuicConnection:
                 host_cid=self.host_cid,
                 is_client=self._is_client,
                 max_datagram_size=probe_size,
-                packet_number=(
-                    builder.packet_number if datagrams else self._packet_number
-                ),
+                packet_numbers=dict(builder.packet_numbers),
                 peer_cid=self._peer_cid.cid,
                 peer_token=self._peer_token,
                 quic_logger=self._quic_logger,
@@ -799,10 +799,14 @@ class QuicConnection:
             if probe_datagrams:
                 datagrams.extend(probe_datagrams)
                 packets.extend(probe_packets)
-                last_builder = probe_builder
+                builder = probe_builder
 
         if datagrams:
-            self._packet_number = last_builder.packet_number
+            # save per-space packet numbers back (RFC 9000 12.3)
+            for epoch, space in self._spaces.items():
+                pn = builder.packet_numbers.get(epoch)
+                if pn is not None:
+                    space.packet_number = pn
 
             # register packets
             sent_handshake = False
@@ -885,16 +889,22 @@ class QuicConnection:
         if self._state not in END_STATES:
             # ack timer
             for space in self._loss.spaces:
-                if space.ack_at is not None and space.ack_at < timer_at:
+                if space.ack_at is not None and (
+                    timer_at is None or space.ack_at < timer_at
+                ):
                     timer_at = space.ack_at
 
             # loss detection timer
             self._loss_at = self._loss.get_loss_detection_time()
-            if self._loss_at is not None and self._loss_at < timer_at:
+            if self._loss_at is not None and (
+                timer_at is None or self._loss_at < timer_at
+            ):
                 timer_at = self._loss_at
 
             # pacing timer
-            if self._pacing_at is not None and self._pacing_at < timer_at:
+            if self._pacing_at is not None and (
+                timer_at is None or self._pacing_at < timer_at
+            ):
                 timer_at = self._pacing_at
 
         return timer_at
@@ -1184,6 +1194,15 @@ class QuicConnection:
             if packet_number > space.expected_packet_number:
                 space.expected_packet_number = packet_number + 1
 
+            # RFC 9000 21.4: discard duplicate packets
+            if packet_number in space.ack_queue:
+                if self._logger is not None:
+                    self._logger.debug(
+                        "Discarding duplicate packet: epoch=%s pn=%d",
+                        epoch, packet_number,
+                    )
+                continue
+
             # discard initial keys and packet space
             if not is_client and epoch == tls.Epoch.HANDSHAKE:
                 self._discard_epoch(tls.Epoch.INITIAL)
@@ -1240,7 +1259,7 @@ class QuicConnection:
                 return
 
             # update idle timeout
-            self._close_at = now + self._configuration.idle_timeout
+            self._close_at = now + self._effective_idle_timeout
 
             # handle migration
             if (
@@ -2861,7 +2880,6 @@ class QuicConnection:
                 )
                 self._close_end()
                 return
-            self._packet_number = 0
             self._version = chosen_version
             self._version_negotiated_incompatible = True
             self._logger.debug(
@@ -3098,6 +3116,14 @@ class QuicConnection:
             self._remote_max_idle_timeout = (
                 quic_transport_parameters.max_idle_timeout / 1000.0
             )
+            # RFC 9000 10.1: effective idle timeout is the minimum of the
+            # two advertised values. A zero value means the peer does not
+            # have a timeout.
+            if self._remote_max_idle_timeout > 0:
+                self._effective_idle_timeout = min(
+                    self._configuration.idle_timeout,
+                    self._remote_max_idle_timeout,
+                )
         self._remote_max_datagram_frame_size = (
             quic_transport_parameters.max_datagram_frame_size
         )

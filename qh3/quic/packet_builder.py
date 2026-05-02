@@ -128,7 +128,7 @@ class QuicPacketBuilder:
         "_packet",
         "_packet_crypto",
         "_packet_long_header",
-        "_packet_number",
+        "_packet_numbers",
         "_packet_start",
         "_packet_type",
         "_buffer",
@@ -146,6 +146,7 @@ class QuicPacketBuilder:
         is_client: bool,
         max_datagram_size: int = PACKET_MAX_SIZE,
         packet_number: int = 0,
+        packet_numbers: dict[Epoch, int] | None = None,
         peer_token: bytes = b"",
         quic_logger: QuicLoggerTrace | None = None,
         spin_bit: bool = False,
@@ -176,9 +177,18 @@ class QuicPacketBuilder:
         self._packet: QuicSentPacket | None = None
         self._packet_crypto: CryptoPair | None = None
         self._packet_long_header = False
-        self._packet_number = packet_number
         self._packet_start = 0
         self._packet_type: QuicPacketType | None = None
+
+        # per-space packet numbers (RFC 9000 §12.3)
+        if packet_numbers is not None:
+            self._packet_numbers = dict(packet_numbers)
+        else:
+            self._packet_numbers = {
+                Epoch.INITIAL: packet_number,
+                Epoch.HANDSHAKE: packet_number,
+                Epoch.ONE_RTT: packet_number,
+            }
 
         self._buffer = Buffer(max_datagram_size)
         self._buffer_capacity = max_datagram_size
@@ -197,8 +207,17 @@ class QuicPacketBuilder:
     def packet_number(self) -> int:
         """
         Returns the packet number for the next packet.
+
+        .. deprecated:: Use ``packet_numbers`` for per-space access.
         """
-        return self._packet_number
+        return max(self._packet_numbers.values())
+
+    @property
+    def packet_numbers(self) -> dict[Epoch, int]:
+        """
+        Returns the per-space packet numbers (RFC 9000 12.3).
+        """
+        return self._packet_numbers
 
     @property
     def remaining_buffer_space(self) -> int:
@@ -329,7 +348,7 @@ class QuicPacketBuilder:
             False,
             False,
             False,
-            self._packet_number,
+            self._packet_numbers[epoch],
             packet_type,
         )
         self._packet_crypto = crypto
@@ -402,7 +421,7 @@ class QuicPacketBuilder:
                 self._host_cid,
                 self._peer_token,
                 self._spin_bit,
-                self._packet_number,
+                self._packet.packet_number,
             )
 
             self._packets.append(self._packet)
@@ -413,7 +432,7 @@ class QuicPacketBuilder:
             if self._packet_type == QuicPacketType.ONE_RTT:
                 self._flush_current_datagram()
 
-            self._packet_number += 1
+            self._packet_numbers[self._packet.epoch] += 1
         else:
             # "cancel" the packet
             buf.seek(self._packet_start)
