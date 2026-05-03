@@ -20,6 +20,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         self._connected = False
         self._connected_waiter: asyncio.Future[None] | None = None
         self._loop = loop
+        self._loop_time = loop.time
         self._ping_waiters: dict[int, asyncio.Future[None]] = {}
         self._quic = quic
         self._stream_readers: dict[int, asyncio.StreamReader] = {}
@@ -27,6 +28,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         self._timer_at: float | None = None
         self._transmit_task: asyncio.Handle | None = None
         self._transport: asyncio.DatagramTransport | None = None
+        self._sendto_many: Callable[[list[bytes], Any], None] | None = None
 
         # callbacks
         self._connection_id_issued_handler: QuicConnectionIdHandler = lambda c: None
@@ -59,7 +61,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
 
         This method can only be called for clients and a single time.
         """
-        self._quic.connect(addr, now=self._loop.time())
+        self._quic.connect(addr, now=self._loop_time())
         self.transmit()
 
     async def create_stream(
@@ -99,10 +101,23 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         Send pending datagrams to the peer and arm the timer if needed.
         """
         self._transmit_task = None
+        now = self._loop_time()
 
         # send datagrams
-        for data, addr in self._quic.datagrams_to_send(now=self._loop.time()):
-            self._transport.sendto(data, addr)
+        # use batch GSO path if transport supports it
+        sendto_many = self._sendto_many
+        if sendto_many is not None:
+            datagrams: list[bytes] = []
+            send_addr: NetworkAddress | None = None
+            for data, addr in self._quic.datagrams_to_send(now=now):
+                datagrams.append(data)
+                send_addr = addr
+            if datagrams:
+                sendto_many(datagrams, send_addr)
+        else:
+            transport = self._transport
+            for data, addr in self._quic.datagrams_to_send(now=now):
+                transport.sendto(data, addr)
 
         # re-arm timer
         timer_at = self._quic.get_timer()
@@ -132,9 +147,18 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self._transport = cast(asyncio.DatagramTransport, transport)
+        self._sendto_many = getattr(transport, "sendto_many", None)
 
     def datagram_received(self, data: bytes | str, addr: NetworkAddress) -> None:
-        self._quic.receive_datagram(cast(bytes, data), addr, now=self._loop.time())
+        self._quic.receive_datagram(cast(bytes, data), addr, now=self._loop_time())
+        self._process_events()
+        self.transmit()
+
+    def datagrams_received(self, data: list[bytes], addr: NetworkAddress) -> None:
+        now = self._loop_time()
+        receive = self._quic.receive_datagram
+        for dgram in data:
+            receive(dgram, addr, now=now)
         self._process_events()
         self.transmit()
 
@@ -179,8 +203,11 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         self.transmit()
 
     def _process_events(self) -> None:
-        event = self._quic.next_event()
+        quic = self._quic
+        quic_event_received = self.quic_event_received
+        event = quic.next_event()
         while event is not None:
+            # Fast path: most events during data transfer are not control events.
             if isinstance(event, events.ConnectionIdIssued):
                 self._connection_id_issued_handler(event.connection_id)
             elif isinstance(event, events.ConnectionIdRetired):
@@ -210,8 +237,8 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
                 waiter = self._ping_waiters.pop(event.uid, None)
                 if waiter is not None:
                     waiter.set_result(None)
-            self.quic_event_received(event)
-            event = self._quic.next_event()
+            quic_event_received(event)
+            event = quic.next_event()
 
     def _transmit_soon(self) -> None:
         if self._transmit_task is None:

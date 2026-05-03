@@ -16,6 +16,9 @@
 
 **Added**
 - Goaway event for the HTTP/3 state machine.
+- GRO/GSO support when available. Native support for Linux and via MacOS private batching API otherwise fallback to native datagrams reader/writer.
+  Windows support for URO (equivalent of GRO) is scheduled in a future release. We are currently investigate how stable it is due to recent
+  report of unstability in Firefox.
 
 1.7.4 (2026-04-28)
 ==================

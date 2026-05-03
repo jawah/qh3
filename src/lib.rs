@@ -20,6 +20,7 @@ mod rangeset;
 mod recovery;
 mod rsa;
 mod stream_sender;
+mod udp;
 mod utils;
 mod verify;
 
@@ -61,6 +62,7 @@ pub use self::rangeset::RangeSet;
 pub use self::recovery::{QuicPacketPacer, QuicRttMonitor};
 pub use self::rsa::Rsa;
 pub use self::stream_sender::QuicStreamSender;
+pub use self::udp::PyUdpSocketState;
 pub use self::utils::decode_packet_number;
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
@@ -163,5 +165,7 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(push_crypto_frame_body, m)?)?;
     // Stream sender
     m.add_class::<QuicStreamSender>()?;
+    // UDP socket state (quinn-udp bridge for GRO/GSO)
+    m.add_class::<PyUdpSocketState>()?;
     Ok(())
 }
