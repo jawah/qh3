@@ -22,7 +22,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
-      - uses: actions/setup-python@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: '3.10'
       - run: pip install pre-commit
@@ -52,7 +54,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
-      - uses: actions/setup-python@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: ${{ matrix.python_version }}
           allow-prereleases: true
@@ -64,7 +68,7 @@ jobs:
       - name: Set up Clang (Cygwin)
         if: matrix.os == 'windows-latest'
         run: choco install llvm -y
-      - uses: ilammy/setup-nasm@v1
+      - uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b  # v1.5.2
         if: matrix.os == 'windows-latest'
       - name: Run test CPython
         if: startsWith(matrix.python_version, 'pypy') == false
@@ -91,9 +95,11 @@ jobs:
     steps:
       - name: "Checkout repository"
         uses: "actions/checkout@d632683dd7b4114ad314bca15554477dd762a938"
+        with:
+          persist-credentials: false
 
       - name: "Setup Python"
-        uses: "actions/setup-python@2e3e4b15a884dc73a63f962bff250a855150a234"
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: "3.x"
 
@@ -128,7 +134,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
-      - uses: actions/setup-python@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: ${{ matrix.python_version }}
           allow-prereleases: true
@@ -140,7 +148,7 @@ jobs:
       - name: Set up Clang (Cygwin)
         if: matrix.os == 'windows-latest'
         run: choco install llvm -y
-      - uses: ilammy/setup-nasm@v1
+      - uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b  # v1.5.2
         if: matrix.os == 'windows-latest'
       - name: Run test
         run: nox -s downstream_niquests
@@ -188,19 +196,21 @@ jobs:
 
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
-      - uses: actions/setup-python@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: ${{ matrix.python_version }}
           allow-prereleases: true
       - name: Build wheels (no workarounds)
         if: matrix.target == 'x86_64'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
@@ -218,14 +228,14 @@ jobs:
 
       - name: Build wheels (aarch64+musl workaround)
         if: matrix.target == 'aarch64' && matrix.manylinux == 'musllinux_1_1'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           CFLAGS_aarch64_unknown_linux_gnu: "-D__ARM_ARCH=8"
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
@@ -242,14 +252,14 @@ jobs:
 
       - name: Build wheels (aarch64+manylinux2014 workaround)
         if: matrix.target == 'aarch64' && matrix.manylinux == 'manylinux2014'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           CFLAGS_aarch64_unknown_linux_gnu: "-D__ARM_ARCH=8 -DAT_HWCAP2=26"
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
@@ -265,13 +275,13 @@ jobs:
 
       - name: Build wheels (s390x+manylinux2014 workaround)
         if: matrix.target == 's390x' && matrix.manylinux == 'manylinux2014'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
@@ -287,13 +297,13 @@ jobs:
 
       - name: Build wheels (i686+manylinux2014 workaround)
         if: matrix.target == 'i686' && matrix.manylinux == 'manylinux2014'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           container: messense/manylinux2014-cross:i686
@@ -310,13 +320,13 @@ jobs:
 
       - name: Build wheels (ppc64le+manylinux2014 workaround)
         if: matrix.target == 'ppc64le' && matrix.manylinux == 'manylinux2014'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
@@ -333,13 +343,13 @@ jobs:
 
       - name: Build wheels (ppc64+manylinux2014 workaround)
         if: matrix.target == 'ppc64' && matrix.manylinux == 'manylinux2014'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
@@ -355,13 +365,13 @@ jobs:
 
       - name: Build wheels (riscv+manylinux_2_39 workaround)
         if: matrix.target == 'riscv64gc-unknown-linux-gnu' && matrix.manylinux == 'manylinux_2_39'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           container: ghcr.io/rust-cross/manylinux_2_39-cross:riscv64
@@ -378,13 +388,13 @@ jobs:
 
       - name: Build wheels (riscv+manylinux_2_39 workaround)
         if: matrix.target == 'riscv64gc-unknown-linux-musl' && matrix.manylinux == 'musllinux_1_1'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           container: ghcr.io/rust-cross/rust-musl-cross:riscv64gc-musl
@@ -402,13 +412,13 @@ jobs:
 
       - name: Build wheels (armv7l+manylinux workaround)
         if: matrix.target == 'armv7l' && matrix.manylinux == 'manylinux2014'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
@@ -424,13 +434,13 @@ jobs:
 
       - name: Build wheels (armv7l+musl workaround)
         if: matrix.target == 'armv7l' && matrix.manylinux == 'musllinux_1_1'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
@@ -447,13 +457,13 @@ jobs:
 
       - name: Build wheels (i686+musl workaround)
         if: matrix.target == 'i686' && matrix.manylinux == 'musllinux_1_1'
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e UNSAFE_PYO3_SKIP_VERSION_CHECK=1
           before-script-linux: |
@@ -508,20 +518,22 @@ jobs:
             python_version: pypy-3.11
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
-      - uses: actions/setup-python@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         if: matrix.target != 'aarch64'
         with:
           python-version: ${{ matrix.python_version }}
           architecture: ${{ matrix.target == 'x86' && 'x86' || 'x64' }}
           allow-prereleases: true
-      - uses: ilammy/setup-nasm@v1
+      - uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b  # v1.5.2
       - name: Set up Clang (Cygwin)
         run: choco install llvm -y
       - name: Add Ninja (aarch64 build requirement)
         if: matrix.target == 'aarch64'
         run: choco install ninja -y
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         if: matrix.target != 'aarch64'
         env:
           XWIN_VERSION: 16  # fix for "no cab file specified by MSI" ...?
@@ -529,9 +541,9 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist -i ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
       - name: Build wheels (force CROSS aarch64)
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         if: matrix.target == 'aarch64'
         env:
           XWIN_VERSION: 16  # fix for "no cab file specified by MSI" ...?
@@ -539,7 +551,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist -i ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
       - name: Upload wheels
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
@@ -559,18 +571,20 @@ jobs:
         python_version: [ '3.10', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t', '3.14t' ]
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
-      - uses: actions/setup-python@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: ${{ matrix.python_version }}
           allow-prereleases: true
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
-          sccache: 'true'
+          sccache: 'false'
       - name: Upload wheels
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
@@ -585,8 +599,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
+        with:
+          persist-credentials: false
       - name: Build sdist
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         with:
           command: sdist
           args: --out dist
@@ -604,7 +620,9 @@ jobs:
       hashes: ${{ steps.compute.outputs.hashes }}
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v4.0.0
-      - uses: actions/setup-python@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: '3.12'
       - name: Download distributions
@@ -649,7 +667,7 @@ jobs:
   provenance:
     needs: checksum
     if: "startsWith(github.ref, 'refs/tags/')"
-    uses: "slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0"
+    uses: "slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"  # v2.1.0
     permissions:
       actions: read
       id-token: write
@@ -669,7 +687,7 @@ jobs:
       id-token: write
       contents: write
     steps:
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: '3.12'
       - name: Download distributions
@@ -706,8 +724,10 @@ jobs:
       - name: "Upload dists to GitHub Release"
         env:
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          REF_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          gh release upload ${{ github.ref_name }} dist/* --repo ${{ github.repository }}
+          gh release upload "$REF_NAME" dist/* --repo "$REPOSITORY"
       - name: Publish to PyPI
         uses: "pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e" # v1.13.0
         with:
