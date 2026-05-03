@@ -1,4 +1,4 @@
-1.8.0 (2026-04-30)
+1.8.0 (2026-05-03)
 ==================
 
 **Changed**
@@ -7,6 +7,15 @@
   migrate some of that logic into Rust but it takes a significant time to arrive. We prefer
   small incremental changes that we can be confident about.
 - Updated rustls to 0.23.40
+- Per space packet number instead of a single one for QUIC compliance.
+
+**Fixed**
+- Erroneous PTO loss detector under high pressure.
+- Duplicate datagram eviction.
+- Effective keepalive did not respect remote max keepalive.
+
+**Added**
+- Goaway event for the HTTP/3 state machine.
 
 1.7.4 (2026-04-28)
 ==================
