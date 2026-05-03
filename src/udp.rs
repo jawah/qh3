@@ -19,7 +19,8 @@ use std::sync::Mutex;
 
 use pyo3::prelude::*;
 #[cfg(unix)]
-use pyo3::types::{PyBytes, PyList, PyTuple};
+use pyo3::types::PyBytes;
+use pyo3::types::{PyList, PyTuple};
 
 #[cfg(unix)]
 use quinn_udp::{RecvMeta, Transmit, UdpSockRef, BATCH_SIZE};
@@ -341,7 +342,7 @@ impl PyUdpSocketState {
         }
         #[cfg(not(unix))]
         {
-            let _ = (py, datagrams, addr_ip, addr_port);
+            let _ = (_py, datagrams, addr_ip, addr_port);
             Err(pyo3::exceptions::PyNotImplementedError::new_err(
                 "send is only supported on Unix platforms",
             ))

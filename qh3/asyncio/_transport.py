@@ -43,7 +43,9 @@ _IS_UNIX: typing.Final = sys.platform != "win32"
 _SOL_UDP: typing.Final = socket.SOL_UDP
 _MSG_TRUNC: typing.Final = getattr(socket, "MSG_TRUNC", 0)
 _MSG_CTRUNC: typing.Final = getattr(socket, "MSG_CTRUNC", 0)
-_ANCBUFSIZE: typing.Final = socket.CMSG_SPACE(_GRO_CMSG.size)
+_ANCBUFSIZE: typing.Final = (
+    socket.CMSG_SPACE(_GRO_CMSG.size) if hasattr(socket, "CMSG_SPACE") else 0
+)
 
 
 def enable_gro(sock: socket.socket) -> bool:
