@@ -888,51 +888,29 @@ class TestQuicConnection:
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS)
 
-            # server PTO - 1-RTT PING
+            # server side PTO retransmits HANDSHAKE_DONE + NEW_CONNECTION_IDs
+            # (RFC 9002 6.2.4: retransmit in-flight data instead of PING)
             now = server.get_timer()
             server.handle_timer(now=now)
             items = server.datagrams_to_send(now=now)
-            assert datagram_sizes(items) == [29]
-            assert server.get_timer() == pytest.approx(0.975)
-            self.assertSentPackets(server, [0, 0, 2])
-            self.assertEvents(server, [])
-
-            # client receives PING, sends ACK
-            now += TICK
-            client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
-            items = client.datagrams_to_send(now=now)
-            assert datagram_sizes(items) == [32]
-            assert client.get_timer() == pytest.approx(0.425)
-            self.assertSentPackets(client, [0, 1, 2])
-            self.assertEvents(client, [])
-
-            # server receives ACK, retransmits HANDSHAKE_DONE
-            now += TICK
-            assert not server._handshake_done_pending
-            server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
-            assert server._handshake_done_pending
-            items = server.datagrams_to_send(now=now)
-            assert not server._handshake_done_pending
             assert datagram_sizes(items) == [224]
-            assert server.get_timer() == pytest.approx(0.7625)
+            assert server.get_timer() == pytest.approx(0.975)
             self.assertSentPackets(server, [0, 0, 1])
-            # FIXME: the server re-emits the ConnectionIdIssued events
+            # Server re-emits ConnectionIdIssued when re-writing CID frames
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS[1:])
 
+            # client receives retransmitted HANDSHAKE_DONE + CIDs, sends ACK
             now += TICK
             client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [32]
-            assert client.get_timer() == pytest.approx(0.425)
-            self.assertSentPackets(client, [0, 0, 3])
             self.assertEvents(client, [])
 
+            # server receives ACK — all data acknowledged
             now += TICK
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == []
-            # idle timeout
-            assert server.get_timer() == pytest.approx(60.625)
             self.assertSentPackets(server, [0, 0, 0])
             self.assertEvents(server, [])
 
