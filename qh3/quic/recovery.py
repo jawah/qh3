@@ -39,6 +39,7 @@ class QuicPacketSpace:
         self.expected_packet_number = 0
         self.largest_received_packet = -1
         self.largest_received_time: float | None = None
+        self.packet_number = 0  # next send PN for this space (RFC 9000 §12.3)
 
         # sent packets and loss
         self.ack_eliciting_in_flight = 0
@@ -217,6 +218,8 @@ class QuicPacketRecovery:
 
         # loss detection
         self._pto_count = 0
+        self._pto_total = 0  # cumulative PTO fires (for diagnostics)
+        self._loss_total = 0  # cumulative packets declared lost
         self._rtt_initial = initial_rtt
         self._rtt_initialized = False
         self._rtt_latest = 0.0
@@ -313,8 +316,10 @@ class QuicPacketRecovery:
                 largest_sent_time = packet.sent_time
 
                 # trigger callbacks
-                for handler, args in packet.delivery_handlers:
-                    handler(QuicDeliveryState.ACKED, *args)
+                dh = packet.delivery_handlers
+                if dh is not None:
+                    for handler, args in dh:
+                        handler(QuicDeliveryState.ACKED, *args)
 
         # nothing to do if there are no newly acked packets
         if largest_newly_acked is None:
@@ -370,6 +375,7 @@ class QuicPacketRecovery:
             self._detect_loss(loss_space, now=now)
         else:
             self._pto_count += 1
+            self._pto_total += 1
             self.reschedule_data(now=now)
 
     def on_packet_sent(self, packet: QuicSentPacket, space: QuicPacketSpace) -> None:
@@ -390,6 +396,16 @@ class QuicPacketRecovery:
     def reschedule_data(self, now: float) -> None:
         """
         Schedule some data for retransmission.
+
+        Per RFC 9002 6.2.4, on PTO expiration the sender MUST send one or two
+        ack-eliciting packets. If application data is in flight, we declare
+        the oldest in-flight packets as lost so their stream data is
+        retransmitted in the same write cycle. This ensures that PTO
+        exponential backoff functions correctly: if the retransmission also
+        fails to elicit an ACK, _pto_count remains elevated and the next PTO
+        interval doubles. Without this, a small PING probe could be ACK'd
+        (resetting _pto_count to 0) while the larger retransmission packet is
+        persistently lost, defeating backoff entirely.
         """
         # if there is any outstanding CRYPTO, retransmit it
         crypto_scheduled = False
@@ -403,8 +419,28 @@ class QuicPacketRecovery:
         if crypto_scheduled and self._logger is not None:
             self._logger.debug("Scheduled CRYPTO data for retransmission")
 
-        # ensure an ACK-elliciting packet is sent
-        self._send_probe()
+        # Reschedule oldest in-flight application data (up to 2 packets) so
+        # it is retransmitted with the probe rather than waiting an extra RTT
+        # for loss detection after the PING ACK.
+        app_rescheduled = False
+        if not crypto_scheduled:
+            for space in self.spaces:
+                if not space.sent_packets:
+                    continue
+                to_reschedule = []
+                for pn in sorted(space.sent_packets.keys()):
+                    pkt = space.sent_packets[pn]
+                    if pkt.is_ack_eliciting and pkt.in_flight:
+                        to_reschedule.append(pkt)
+                        if len(to_reschedule) >= 2:
+                            break
+                if to_reschedule:
+                    self._on_packets_lost(to_reschedule, space=space, now=now)
+                    app_rescheduled = True
+
+        # If no data was rescheduled, send a PING as the ack-eliciting probe
+        if not crypto_scheduled and not app_rescheduled:
+            self._send_probe()
 
     def _detect_loss(self, space: QuicPacketSpace, now: float) -> None:
         """
@@ -469,6 +505,7 @@ class QuicPacketRecovery:
     ) -> None:
         lost_packets_cc = []
         for packet in packets:
+            self._loss_total += 1
             del space.sent_packets[packet.packet_number]
 
             if packet.in_flight:
@@ -489,8 +526,10 @@ class QuicPacketRecovery:
                 self._log_metrics_updated()
 
             # trigger callbacks
-            for handler, args in packet.delivery_handlers:
-                handler(QuicDeliveryState.LOST, *args)
+            dh = packet.delivery_handlers
+            if dh is not None:
+                for handler, args in dh:
+                    handler(QuicDeliveryState.LOST, *args)
 
         # inform congestion controller
         if lost_packets_cc:

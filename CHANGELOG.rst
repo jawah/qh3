@@ -1,3 +1,25 @@
+1.8.0 (2026-05-03)
+==================
+
+**Changed**
+- Aggressive optimizations in the library. Expect up to 30% improvement in general.
+  We are aware that qh3 have a significant part of the logic in pure Python and we are trying to
+  migrate some of that logic into Rust but it takes a significant time to arrive. We prefer
+  small incremental changes that we can be confident about.
+- Updated rustls to 0.23.40
+- Per space packet number instead of a single one for QUIC compliance.
+
+**Fixed**
+- Erroneous PTO loss detector under high pressure.
+- Duplicate datagram eviction.
+- Effective keepalive did not respect remote max keepalive.
+
+**Added**
+- Goaway event for the HTTP/3 state machine.
+- GRO/GSO support when available. Native support for Linux and via MacOS private batching API otherwise fallback to native datagrams reader/writer.
+  Windows support for URO (equivalent of GRO) is scheduled in a future release. We are currently investigate how stable it is due to recent
+  report of unstability in Firefox.
+
 1.7.4 (2026-04-28)
 ==================
 

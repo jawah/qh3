@@ -7,6 +7,24 @@ pub struct RangeSet {
     ranges: Vec<(i64, i64)>,
 }
 
+/// Non-pymethod helpers for internal Rust access.
+impl RangeSet {
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.ranges.len()
+    }
+
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.ranges.is_empty()
+    }
+
+    #[inline(always)]
+    pub fn get_item(&self, index: usize) -> (i64, i64) {
+        self.ranges[index]
+    }
+}
+
 #[pymethods]
 impl RangeSet {
     #[new]

@@ -5,14 +5,14 @@ import os
 from functools import partial
 from typing import Callable, cast
 
-from .._hazmat import Buffer
+from .._hazmat import pull_quic_header as _pull_quic_header_raw
 from ..quic.configuration import QuicConfiguration
 from ..quic.connection import NetworkAddress, QuicConnection
 from ..quic.packet import (
+    QuicHeader,
     QuicPacketType,
     encode_quic_retry,
     encode_quic_version_negotiation,
-    pull_quic_header,
 )
 from ..quic.retry import QuicRetryTokenHandler
 from ..tls import SessionTicketFetcher, SessionTicketHandler
@@ -58,14 +58,33 @@ class QuicServer(asyncio.DatagramProtocol):
 
     def datagram_received(self, data: bytes | str, addr: NetworkAddress) -> None:
         data = cast(bytes, data)
-        buf = Buffer(data=data)
 
         try:
-            header = pull_quic_header(
-                buf, host_cid_length=self._configuration.connection_id_length
-            )
+            (
+                _version,
+                _packet_type,
+                _packet_length,
+                _destination_cid,
+                _source_cid,
+                _token,
+                _integrity_tag,
+                _supported_versions,
+                _encrypted_offset,
+                _end_offset,
+            ) = _pull_quic_header_raw(data, 0, self._configuration.connection_id_length)
         except ValueError:
             return
+
+        header = QuicHeader(
+            version=_version,
+            packet_type=QuicPacketType(_packet_type),
+            packet_length=_packet_length,
+            destination_cid=_destination_cid,
+            source_cid=_source_cid,
+            token=_token,
+            integrity_tag=_integrity_tag,
+            supported_versions=list(_supported_versions),
+        )
 
         # version negotiation
         if (

@@ -7,16 +7,20 @@ mod buffer;
 mod certificate;
 mod chain;
 mod crl;
+mod crypto_context;
 mod headers;
 mod hpk;
 mod hpke;
 mod intldomain;
 mod ocsp;
+mod packet;
 mod pkcs8;
 mod private_key;
 mod rangeset;
 mod recovery;
 mod rsa;
+mod stream_sender;
+mod udp;
 mod utils;
 mod verify;
 
@@ -32,6 +36,7 @@ pub use self::certificate::{
 };
 pub use self::chain::rebuild_chain;
 pub use self::crl::{CertificateRevocationList, RevokedCertificate};
+pub use self::crypto_context::CryptoContext;
 pub use self::headers::{
     DecoderStreamError, DecompressionFailed, EncoderStreamError, QpackDecoder, QpackEncoder,
     StreamBlocked,
@@ -40,6 +45,14 @@ pub use self::hpk::QUICHeaderProtection;
 pub use self::hpke::HpkeContext;
 pub use self::intldomain::{idna_decode, idna_encode};
 pub use self::ocsp::{OCSPCertStatus, OCSPRequest, OCSPResponse, OCSPResponseStatus, ReasonFlags};
+pub use self::packet::pull_ack_frame;
+pub use self::packet::pull_crypto_frame;
+pub use self::packet::pull_quic_header;
+pub use self::packet::pull_stream_frame;
+pub use self::packet::push_ack_frame;
+pub use self::packet::push_crypto_frame_body;
+pub use self::packet::push_stream_frame_body;
+pub use self::packet::skip_padding;
 pub use self::pkcs8::{KeyType, PrivateKeyInfo};
 pub use self::private_key::{
     verify_with_public_key, DsaPrivateKey, EcPrivateKey, Ed25519PrivateKey, RsaPrivateKey,
@@ -48,6 +61,8 @@ pub use self::private_key::{
 pub use self::rangeset::RangeSet;
 pub use self::recovery::{QuicPacketPacer, QuicRttMonitor};
 pub use self::rsa::Rsa;
+pub use self::stream_sender::QuicStreamSender;
+pub use self::udp::PyUdpSocketState;
 pub use self::utils::decode_packet_number;
 
 pyo3::create_exception!(_hazmat, CryptoError, PyException);
@@ -101,6 +116,8 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Rsa>()?;
     // Header protection mask
     m.add_class::<QUICHeaderProtection>()?;
+    // Crypto context (HP + AEAD)
+    m.add_class::<CryptoContext>()?;
     // Private&Public Key Mgmt
     m.add_class::<RsaPrivateKey>()?;
     m.add_class::<DsaPrivateKey>()?;
@@ -135,5 +152,20 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Buffer>()?;
     m.add_function(wrap_pyfunction!(encode_uint_var, m)?)?;
     m.add_function(wrap_pyfunction!(size_uint_var, m)?)?;
+    // Packet header parsing
+    m.add_function(wrap_pyfunction!(pull_quic_header, m)?)?;
+    m.add_function(wrap_pyfunction!(pull_ack_frame, m)?)?;
+    // Frame parsers (receive path)
+    m.add_function(wrap_pyfunction!(pull_stream_frame, m)?)?;
+    m.add_function(wrap_pyfunction!(pull_crypto_frame, m)?)?;
+    m.add_function(wrap_pyfunction!(skip_padding, m)?)?;
+    // Frame serializers (send path)
+    m.add_function(wrap_pyfunction!(push_ack_frame, m)?)?;
+    m.add_function(wrap_pyfunction!(push_stream_frame_body, m)?)?;
+    m.add_function(wrap_pyfunction!(push_crypto_frame_body, m)?)?;
+    // Stream sender
+    m.add_class::<QuicStreamSender>()?;
+    // UDP socket state (quinn-udp bridge for GRO/GSO)
+    m.add_class::<PyUdpSocketState>()?;
     Ok(())
 }

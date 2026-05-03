@@ -3,13 +3,12 @@ from __future__ import annotations
 import pytest
 import binascii
 
-from qh3._hazmat import Buffer
+from qh3._hazmat import Buffer, QUICHeaderProtection as HeaderProtection
 from qh3.quic.crypto import (
     CIPHER_SUITES,
     INITIAL_CIPHER_SUITE,
     CryptoError,
     CryptoPair,
-    HeaderProtection,
     derive_key_iv_hp,
 )
 from qh3._hazmat import AeadAes128Gcm, AeadAes256Gcm, AeadChaCha20Poly1305

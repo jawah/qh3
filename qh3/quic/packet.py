@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 from .._compat import DATACLASS_KWARGS
-from .._hazmat import AeadAes128Gcm, Buffer, RangeSet
+from .._hazmat import AeadAes128Gcm, Buffer
+from .._hazmat import pull_quic_header as _pull_quic_header_raw
 
 PACKET_LONG_HEADER = 0x80
 PACKET_FIXED_BIT = 0x40
@@ -167,91 +168,31 @@ def pretty_protocol_version(version: int) -> str:
 def pull_quic_header(buf: Buffer, host_cid_length: int | None = None) -> QuicHeader:
     packet_start = buf.tell()
 
-    version: int | None
+    (
+        version,
+        packet_type,
+        packet_length,
+        destination_cid,
+        source_cid,
+        token,
+        integrity_tag,
+        supported_versions,
+        _encrypted_offset,
+        end_offset,
+    ) = _pull_quic_header_raw(buf.raw_data, packet_start, host_cid_length)
 
-    integrity_tag = b""
-    supported_versions = []
-    token = b""
-
-    first_byte = buf.pull_uint8()
-
-    if is_long_header(first_byte):
-        # Long Header Packets.
-        # https://datatracker.ietf.org/doc/html/rfc9000#section-17.2
-        version = buf.pull_uint32()
-
-        destination_cid_length = buf.pull_uint8()
-        if destination_cid_length > CONNECTION_ID_MAX_SIZE:
-            raise ValueError(
-                f"Destination CID is too long ({destination_cid_length} bytes)"
-            )
-        destination_cid = buf.pull_bytes(destination_cid_length)
-
-        source_cid_length = buf.pull_uint8()
-        if source_cid_length > CONNECTION_ID_MAX_SIZE:
-            raise ValueError(f"Source CID is too long ({source_cid_length} bytes)")
-        source_cid = buf.pull_bytes(source_cid_length)
-
-        if version == QuicProtocolVersion.NEGOTIATION:
-            # Version Negotiation Packet.
-            # https://datatracker.ietf.org/doc/html/rfc9000#section-17.2.1
-            packet_type = QuicPacketType.VERSION_NEGOTIATION
-            while not buf.eof():
-                supported_versions.append(buf.pull_uint32())
-            packet_end = buf.tell()
-        else:
-            if not (first_byte & PACKET_FIXED_BIT):
-                raise ValueError("Packet fixed bit is zero")
-
-            if version == QuicProtocolVersion.VERSION_2:
-                packet_type = PACKET_LONG_TYPE_DECODE_VERSION_2[
-                    (first_byte & 0x30) >> 4
-                ]
-            else:
-                packet_type = PACKET_LONG_TYPE_DECODE_VERSION_1[
-                    (first_byte & 0x30) >> 4
-                ]
-
-            if packet_type == QuicPacketType.INITIAL:
-                token_length = buf.pull_uint_var()
-                token = buf.pull_bytes(token_length)
-                rest_length = buf.pull_uint_var()
-            elif packet_type == QuicPacketType.ZERO_RTT:
-                rest_length = buf.pull_uint_var()
-            elif packet_type == QuicPacketType.HANDSHAKE:
-                rest_length = buf.pull_uint_var()
-            else:
-                token_length = buf.capacity - buf.tell() - RETRY_INTEGRITY_TAG_SIZE
-                token = buf.pull_bytes(token_length)
-                integrity_tag = buf.pull_bytes(RETRY_INTEGRITY_TAG_SIZE)
-                rest_length = 0
-
-            # Check remainder length.
-            packet_end = buf.tell() + rest_length
-
-            if packet_end > buf.capacity:
-                raise ValueError("Packet payload is truncated")
-
-    else:
-        # https://datatracker.ietf.org/doc/html/rfc9000#section-17.3
-        if not (first_byte & PACKET_FIXED_BIT):
-            raise ValueError("Packet fixed bit is zero")
-
-        version = None
-        packet_type = QuicPacketType.ONE_RTT
-        destination_cid = buf.pull_bytes(host_cid_length)
-        source_cid = b""
-        packet_end = buf.capacity
+    # Advance the buffer position to where the encrypted payload begins
+    buf.seek(packet_start + _encrypted_offset)
 
     return QuicHeader(
         version=version,
-        packet_type=packet_type,
-        packet_length=packet_end - packet_start,
+        packet_type=QuicPacketType(packet_type),
+        packet_length=packet_length,
         destination_cid=destination_cid,
         source_cid=source_cid,
         token=token,
         integrity_tag=integrity_tag,
-        supported_versions=supported_versions,
+        supported_versions=list(supported_versions),
     )
 
 
@@ -592,37 +533,3 @@ class QuicStreamFrame:
     data: bytes = b""
     fin: bool = False
     offset: int = 0
-
-
-def pull_ack_frame(buf: Buffer) -> tuple[RangeSet, int]:
-    rangeset = RangeSet()
-    end = buf.pull_uint_var()  # largest acknowledged
-    delay = buf.pull_uint_var()
-    ack_range_count = buf.pull_uint_var()
-    ack_count = buf.pull_uint_var()  # first ack range
-    rangeset.add(end - ack_count, end + 1)
-    end -= ack_count
-    for _ in range(ack_range_count):
-        end -= buf.pull_uint_var() + 2
-        ack_count = buf.pull_uint_var()
-        rangeset.add(end - ack_count, end + 1)
-        end -= ack_count
-    return rangeset, delay
-
-
-def push_ack_frame(buf: Buffer, rangeset: RangeSet, delay: int) -> int:
-    ranges = len(rangeset)
-    index = ranges - 1
-    r = rangeset[index]
-    buf.push_uint_var(r[1] - 1)
-    buf.push_uint_var(delay)
-    buf.push_uint_var(index)
-    buf.push_uint_var(r[1] - 1 - r[0])
-    start = r[0]
-    while index > 0:
-        index -= 1
-        r = rangeset[index]
-        buf.push_uint_var(start - r[1] - 1)
-        buf.push_uint_var(r[1] - r[0] - 1)
-        start = r[0]
-    return ranges

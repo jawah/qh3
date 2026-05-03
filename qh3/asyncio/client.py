@@ -9,6 +9,7 @@ from typing import AsyncGenerator, Callable, cast
 from ..quic.configuration import QuicConfiguration
 from ..quic.connection import QuicConnection
 from ..tls import SessionTicketHandler
+from ._transport import create_optimized_datagram_transport
 from .protocol import QuicConnectionProtocol, QuicStreamHandler
 
 __all__ = ["connect"]
@@ -88,7 +89,9 @@ async def connect(
         if not completed:
             sock.close()
     # connect
-    transport, protocol = await loop.create_datagram_endpoint(
+    # use GRO/GSO transport when available
+    transport, protocol = await create_optimized_datagram_transport(
+        loop,
         lambda: create_protocol(connection, stream_handler=stream_handler),
         sock=sock,
     )

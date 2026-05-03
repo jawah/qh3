@@ -97,6 +97,18 @@ class PushPromiseReceived(H3Event):
 
 
 @dataclass
+class GoawayReceived(H3Event):
+    """
+    The GoawayReceived event is fired when a GOAWAY frame is received,
+    indicating graceful shutdown. Streams with IDs >= stream_id were
+    not processed and may be retried on a new connection.
+    """
+
+    stream_id: int
+    "The stream ID beyond which no requests were processed."
+
+
+@dataclass
 class WebTransportStreamDataReceived(H3Event):
     """
     The WebTransportStreamDataReceived is fired whenever data is received

@@ -69,6 +69,7 @@ Features
 - Post-Quantum (KEM) Key-Exchange (NIST FIPS 203 ML-KEM-768)
 - OCSP Stapling (Client Only)
 - Encrypted Client Hello conforming with `RFC 9849`_
+- GRO/GSO support when available (Linux native and MacOS private batching API)
 
 Requirements
 ------------

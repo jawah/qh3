@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Callable, Sequence
 
-from .._compat import DATACLASS_KWARGS
 from .._hazmat import Buffer, size_uint_var
 from ..tls import Epoch
 from .crypto import CryptoPair
@@ -12,11 +10,9 @@ from .logger import QuicLoggerTrace
 from .packet import (
     NON_ACK_ELICITING_FRAME_TYPES,
     NON_IN_FLIGHT_FRAME_TYPES,
-    PACKET_FIXED_BIT,
     PACKET_NUMBER_MAX_SIZE,
     QuicFrameType,
     QuicPacketType,
-    encode_long_header_first_byte,
 )
 
 # MinPacketSize and MaxPacketSize control the packet sizes for UDP datagrams.
@@ -51,21 +47,54 @@ class QuicDeliveryState(IntEnum):
     LOST = 1
 
 
-@dataclass(**DATACLASS_KWARGS)
 class QuicSentPacket:
-    epoch: Epoch
-    in_flight: bool
-    is_ack_eliciting: bool
-    is_crypto_packet: bool
-    packet_number: int
-    packet_type: QuicPacketType
-    sent_time: float | None = None
-    sent_bytes: int = 0
-
-    delivery_handlers: list[tuple[QuicDeliveryHandler, Any]] = field(
-        default_factory=list
+    __slots__ = (
+        "epoch",
+        "in_flight",
+        "is_ack_eliciting",
+        "is_crypto_packet",
+        "packet_number",
+        "packet_type",
+        "sent_time",
+        "sent_bytes",
+        "delivery_handlers",
+        "quic_logger_frames",
     )
-    quic_logger_frames: list[dict] = field(default_factory=list)
+
+    def __init__(
+        self,
+        epoch: Epoch,
+        in_flight: bool,
+        is_ack_eliciting: bool,
+        is_crypto_packet: bool,
+        packet_number: int,
+        packet_type: QuicPacketType,
+        sent_time: float | None = None,
+        sent_bytes: int = 0,
+    ) -> None:
+        self.epoch = epoch
+        self.in_flight = in_flight
+        self.is_ack_eliciting = is_ack_eliciting
+        self.is_crypto_packet = is_crypto_packet
+        self.packet_number = packet_number
+        self.packet_type = packet_type
+        self.sent_time = sent_time
+        self.sent_bytes = sent_bytes
+        self.delivery_handlers: list[tuple[QuicDeliveryHandler, Any]] | None = None
+        self.quic_logger_frames: list[dict] | None = None
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, QuicSentPacket):
+            return NotImplemented
+        return (
+            self.epoch == other.epoch
+            and self.in_flight == other.in_flight
+            and self.is_ack_eliciting == other.is_ack_eliciting
+            and self.is_crypto_packet == other.is_crypto_packet
+            and self.packet_number == other.packet_number
+            and self.packet_type == other.packet_type
+            and self.sent_bytes == other.sent_bytes
+        )
 
 
 class QuicPacketBuilderStop(Exception):
@@ -99,12 +128,13 @@ class QuicPacketBuilder:
         "_packet",
         "_packet_crypto",
         "_packet_long_header",
-        "_packet_number",
+        "_packet_numbers",
         "_packet_start",
         "_packet_type",
         "_buffer",
         "_buffer_capacity",
         "_flight_capacity",
+        "_aead_tag_size",
     )
 
     def __init__(
@@ -116,6 +146,7 @@ class QuicPacketBuilder:
         is_client: bool,
         max_datagram_size: int = PACKET_MAX_SIZE,
         packet_number: int = 0,
+        packet_numbers: dict[Epoch, int] | None = None,
         peer_token: bytes = b"",
         quic_logger: QuicLoggerTrace | None = None,
         spin_bit: bool = False,
@@ -146,9 +177,18 @@ class QuicPacketBuilder:
         self._packet: QuicSentPacket | None = None
         self._packet_crypto: CryptoPair | None = None
         self._packet_long_header = False
-        self._packet_number = packet_number
         self._packet_start = 0
         self._packet_type: QuicPacketType | None = None
+
+        # per-space packet numbers (RFC 9000 §12.3)
+        if packet_numbers is not None:
+            self._packet_numbers = dict(packet_numbers)
+        else:
+            self._packet_numbers = {
+                Epoch.INITIAL: packet_number,
+                Epoch.HANDSHAKE: packet_number,
+                Epoch.ONE_RTT: packet_number,
+            }
 
         self._buffer = Buffer(max_datagram_size)
         self._buffer_capacity = max_datagram_size
@@ -167,8 +207,17 @@ class QuicPacketBuilder:
     def packet_number(self) -> int:
         """
         Returns the packet number for the next packet.
+
+        .. deprecated:: Use ``packet_numbers`` for per-space access.
         """
-        return self._packet_number
+        return max(self._packet_numbers.values())
+
+    @property
+    def packet_numbers(self) -> dict[Epoch, int]:
+        """
+        Returns the per-space packet numbers (RFC 9000 12.3).
+        """
+        return self._packet_numbers
 
     @property
     def remaining_buffer_space(self) -> int:
@@ -176,11 +225,7 @@ class QuicPacketBuilder:
         Returns the remaining number of bytes which can be used in
         the current packet.
         """
-        return (
-            self._buffer_capacity
-            - self._buffer.tell()
-            - self._packet_crypto.aead_tag_size
-        )
+        return self._buffer_capacity - self._buffer.tell() - self._aead_tag_size
 
     @property
     def remaining_flight_space(self) -> int:
@@ -188,11 +233,7 @@ class QuicPacketBuilder:
         Returns the remaining number of bytes which can be used in
         the current packet.
         """
-        return (
-            self._flight_capacity
-            - self._buffer.tell()
-            - self._packet_crypto.aead_tag_size
-        )
+        return self._flight_capacity - self._buffer.tell() - self._aead_tag_size
 
     def flush(self) -> tuple[list[bytes], list[QuicSentPacket]]:
         """
@@ -218,21 +259,28 @@ class QuicPacketBuilder:
         """
         Starts a new frame.
         """
-        if self.remaining_buffer_space < capacity or (
+        buf_pos = self._buffer.tell()
+        aead = self._aead_tag_size
+        if self._buffer_capacity - buf_pos - aead < capacity or (
             frame_type not in NON_IN_FLIGHT_FRAME_TYPES
-            and self.remaining_flight_space < capacity
+            and self._flight_capacity - buf_pos - aead < capacity
         ):
             raise QuicPacketBuilderStop
 
         self._buffer.push_uint_var(frame_type)
+        packet = self._packet
         if frame_type not in NON_ACK_ELICITING_FRAME_TYPES:
-            self._packet.is_ack_eliciting = True
+            packet.is_ack_eliciting = True
         if frame_type not in NON_IN_FLIGHT_FRAME_TYPES:
-            self._packet.in_flight = True
+            packet.in_flight = True
         if frame_type == QuicFrameType.CRYPTO:
-            self._packet.is_crypto_packet = True
+            packet.is_crypto_packet = True
         if handler is not None:
-            self._packet.delivery_handlers.append((handler, handler_args))
+            dh = packet.delivery_handlers
+            if dh is None:
+                packet.delivery_handlers = [(handler, handler_args)]
+            else:
+                dh.append((handler, handler_args))
         return self._buffer
 
     def start_packet(self, packet_type: QuicPacketType, crypto: CryptoPair) -> None:
@@ -296,17 +344,21 @@ class QuicPacketBuilder:
 
         self._header_size = header_size
         self._packet = QuicSentPacket(
-            epoch=epoch,
-            in_flight=False,
-            is_ack_eliciting=False,
-            is_crypto_packet=False,
-            packet_number=self._packet_number,
-            packet_type=packet_type,
+            epoch,
+            False,
+            False,
+            False,
+            self._packet_numbers[epoch],
+            packet_type,
         )
         self._packet_crypto = crypto
+        self._aead_tag_size = crypto.aead_tag_size
         self._packet_start = packet_start
         self._packet_type = packet_type
-        self.quic_logger_frames = self._packet.quic_logger_frames
+
+        qlf: list[dict] = []
+        self._packet.quic_logger_frames = qlf
+        self.quic_logger_frames = qlf
 
         buf.seek(self._packet_start + self._header_size)
 
@@ -315,7 +367,8 @@ class QuicPacketBuilder:
         Ends the current packet.
         """
         buf = self._buffer
-        packet_size = buf.tell() - self._packet_start
+        buf_pos = buf.tell()
+        packet_size = buf_pos - self._packet_start
         if packet_size > self._header_size:
             # padding to ensure sufficient sample size
             padding_size = (
@@ -339,69 +392,38 @@ class QuicPacketBuilder:
                 self._datagram_needs_padding
                 and self._packet_type == QuicPacketType.ONE_RTT
             ):
-                if self.remaining_flight_space > padding_size:
-                    padding_size = self.remaining_flight_space
+                remaining_flight = self._flight_capacity - buf_pos - self._aead_tag_size
+                if remaining_flight > padding_size:
+                    padding_size = remaining_flight
                 self._datagram_needs_padding = False
 
-            # write padding
             if padding_size > 0:
-                buf.push_bytes(bytes(padding_size))
-                packet_size += padding_size
                 self._packet.in_flight = True
-
                 # log frame
                 if self._quic_logger is not None:
                     self._packet.quic_logger_frames.append(
                         self._quic_logger.encode_padding_frame()
                     )
-
-            # write header
-            if self._packet_type != QuicPacketType.ONE_RTT:
-                length = (
-                    packet_size
-                    - self._header_size
-                    + PACKET_NUMBER_SEND_SIZE
-                    + self._packet_crypto.aead_tag_size
-                )
-
-                buf.seek(self._packet_start)
-                buf.push_uint8(
-                    encode_long_header_first_byte(
-                        self._version, self._packet_type, PACKET_NUMBER_SEND_SIZE - 1
-                    )
-                )
-                buf.push_uint32(self._version)
-                buf.push_uint8(len(self._peer_cid))
-                buf.push_bytes(self._peer_cid)
-                buf.push_uint8(len(self._host_cid))
-                buf.push_bytes(self._host_cid)
-                if self._packet_type == QuicPacketType.INITIAL:
-                    buf.push_uint_var(len(self._peer_token))
-                    buf.push_bytes(self._peer_token)
-                buf.push_uint16(length | 0x4000)
-                buf.push_uint16(self._packet_number & 0xFFFF)
             else:
-                buf.seek(self._packet_start)
-                buf.push_uint8(
-                    PACKET_FIXED_BIT
-                    | (self._spin_bit << 5)
-                    | (self._packet_crypto.key_phase << 2)
-                    | (PACKET_NUMBER_SEND_SIZE - 1)
-                )
-                buf.push_bytes(self._peer_cid)
-                buf.push_uint16(self._packet_number & 0xFFFF)
+                padding_size = 0
 
-            # encrypt in place
-            plain = buf.data_slice(self._packet_start, self._packet_start + packet_size)
-            buf.seek(self._packet_start)
-            buf.push_bytes(
-                self._packet_crypto.encrypt_packet(
-                    plain[0 : self._header_size],
-                    plain[self._header_size : packet_size],
-                    self._packet_number,
-                )
+            # Write header, pad, encrypt, apply header protection
+            self._packet.sent_bytes = self._packet_crypto.finalize_packet(
+                buf,
+                self._packet_start,
+                packet_size,
+                padding_size,
+                self._header_size,
+                self._packet_type != QuicPacketType.ONE_RTT,
+                self._version,
+                int(self._packet_type),
+                self._peer_cid,
+                self._host_cid,
+                self._peer_token,
+                self._spin_bit,
+                self._packet.packet_number,
             )
-            self._packet.sent_bytes = buf.tell() - self._packet_start
+
             self._packets.append(self._packet)
             if self._packet.in_flight:
                 self._datagram_flight_bytes += self._packet.sent_bytes
@@ -410,7 +432,7 @@ class QuicPacketBuilder:
             if self._packet_type == QuicPacketType.ONE_RTT:
                 self._flush_current_datagram()
 
-            self._packet_number += 1
+            self._packet_numbers[self._packet.epoch] += 1
         else:
             # "cancel" the packet
             buf.seek(self._packet_start)
