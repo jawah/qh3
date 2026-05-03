@@ -35,6 +35,12 @@ pub struct QuicStreamSender {
     pub is_finished: bool,
     #[pyo3(get)]
     pub reset_pending: bool,
+    /// Count of times on_data_delivery was called with LOST (for diagnostics).
+    #[pyo3(get)]
+    pub loss_count: u32,
+    /// Count of times on_data_delivery was called with ACKED (for diagnostics).
+    #[pyo3(get)]
+    pub ack_count: u32,
 
     acked: RangeSet,
     buffer: Vec<u8>,
@@ -129,6 +135,8 @@ impl QuicStreamSender {
             highest_offset: 0,
             is_finished: !writable,
             reset_pending: false,
+            loss_count: 0,
+            ack_count: 0,
             acked: RangeSet::new(),
             buffer: Vec::new(),
             buf_offset: 0,
@@ -250,6 +258,7 @@ impl QuicStreamSender {
     pub fn on_data_delivery(&mut self, delivery: u8, start: i64, stop: i64) {
         self.buffer_is_empty = false;
         if delivery == DELIVERY_ACKED {
+            self.ack_count += 1;
             if stop > start {
                 self.acked.add(start, Some(stop));
                 let first_range = self.acked.get_item(0);
@@ -274,6 +283,7 @@ impl QuicStreamSender {
             }
         } else {
             // LOST
+            self.loss_count += 1;
             if stop > start {
                 self.pending.add(start, Some(stop));
             }
