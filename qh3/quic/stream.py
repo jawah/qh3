@@ -133,6 +133,8 @@ class QuicStreamReceiver:
 
         # we are done receiving
         self._final_size = final_size
+        if final_size > self.highest_offset:
+            self.highest_offset = final_size
         self.is_finished = True
         return events.StreamReset(error_code=error_code, stream_id=self._stream_id)
 
