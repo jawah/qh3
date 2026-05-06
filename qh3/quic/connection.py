@@ -2597,6 +2597,23 @@ class QuicConnection:
         if delivery != QuicDeliveryState.ACKED:
             limit.sent = 0
 
+    def _on_streams_blocked_delivery(
+        self, delivery: QuicDeliveryState, is_unidirectional: bool
+    ) -> None:
+        """
+        Callback when a STREAMS_BLOCKED frame is acknowledged or lost.
+
+        Re-arms the pending flag on loss if blocked streams still exist,
+        per RFC 9000 13.3 (SHOULD retransmit if conditions persist).
+        """
+        if delivery != QuicDeliveryState.ACKED:
+            if is_unidirectional:
+                if self._streams_blocked_uni:
+                    self._streams_blocked_pending = True
+            else:
+                if self._streams_blocked_bidi:
+                    self._streams_blocked_pending = True
+
     def _on_handshake_done_delivery(self, delivery: QuicDeliveryState) -> None:
         """
         Callback when a HANDSHAKE_DONE frame is acknowledged or lost.
@@ -4020,7 +4037,13 @@ class QuicConnection:
     def _write_streams_blocked_frame(
         self, builder: QuicPacketBuilder, frame_type: QuicFrameType, limit: int
     ) -> None:
-        buf = builder.start_frame(frame_type, capacity=STREAMS_BLOCKED_CAPACITY)
+        is_uni = frame_type == QuicFrameType.STREAMS_BLOCKED_UNI
+        buf = builder.start_frame(
+            frame_type,
+            capacity=STREAMS_BLOCKED_CAPACITY,
+            handler=self._on_streams_blocked_delivery,
+            handler_args=(is_uni,),
+        )
         buf.push_uint_var(limit)
 
         # log frame
