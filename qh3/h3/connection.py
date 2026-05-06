@@ -302,8 +302,10 @@ def validate_response_headers(headers: Headers) -> int | None:
 
     try:
         return int(status_code)
-    except ValueError:  # Defensive:
-        return None
+    except ValueError:
+        raise MessageError(
+            f"Invalid :status value {status_code!r}"
+        ) from None
 
 
 def validate_trailers(headers: Headers) -> None:
