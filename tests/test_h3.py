@@ -1268,6 +1268,190 @@ class TestH3Connection:
             )
             assert h3_transfer(quic_client, h3_server) == []
 
+    def test_grease_after_request_body(self):
+        """Issue #565: GREASE frame after DATA swallows stream_ended."""
+        with h3_client_and_server() as (quic_client, quic_server):
+            h3_client = H3Connection(quic_client)
+            h3_server = H3Connection(quic_server)
+
+            stream_id = quic_client.get_next_available_stream_id()
+            h3_client.send_headers(
+                stream_id=stream_id,
+                headers=[
+                    (b":method", b"POST"),
+                    (b":scheme", b"https"),
+                    (b":authority", b"localhost"),
+                    (b":path", b"/"),
+                    (b"x-foo", b"client"),
+                ],
+                end_stream=False,
+            )
+            h3_client.send_data(
+                stream_id=stream_id, data=b"hello world", end_stream=False
+            )
+            # Send a GREASE frame directly at the QUIC level, ending the stream
+            grease_type = 0x21  # smallest valid GREASE type
+            quic_client.send_stream_data(
+                stream_id=stream_id,
+                data=encode_frame(frame_type=grease_type, frame_data=b"grease"),
+                end_stream=True,
+            )
+
+            events = h3_transfer(quic_client, h3_server)
+            assert events == [
+                HeadersReceived(
+                    headers=[
+                        (b":method", b"POST"),
+                        (b":scheme", b"https"),
+                        (b":authority", b"localhost"),
+                        (b":path", b"/"),
+                        (b"x-foo", b"client"),
+                    ],
+                    stream_id=stream_id,
+                    stream_ended=False,
+                ),
+                DataReceived(data=b"hello world", stream_id=0, stream_ended=False),
+                DataReceived(data=b"", stream_id=0, stream_ended=True),
+            ]
+
+    def test_push_promise_after_response_body(self):
+        """Issue #565: PUSH_PROMISE after DATA swallows stream_ended."""
+        with h3_client_and_server() as (quic_client, quic_server):
+            h3_client = H3Connection(quic_client)
+            h3_server = H3Connection(quic_server)
+
+            stream_id = quic_client.get_next_available_stream_id()
+            h3_client.send_headers(
+                stream_id=stream_id,
+                headers=[
+                    (b":method", b"GET"),
+                    (b":scheme", b"https"),
+                    (b":authority", b"localhost"),
+                    (b":path", b"/test-promise"),
+                ],
+                end_stream=True,
+            )
+
+            h3_transfer(quic_client, h3_server)
+
+            # Server sends response + push promise, then ends stream
+            h3_server.send_headers(
+                stream_id=stream_id,
+                headers=[
+                    (b":status", b"200"),
+                    (b"content-type", b"text/html; charset=utf-8"),
+                ],
+                end_stream=False,
+            )
+            h3_server.send_data(
+                stream_id=stream_id, data=b"html", end_stream=False
+            )
+            h3_server.send_push_promise(
+                stream_id=stream_id,
+                headers=[
+                    (b":method", b"GET"),
+                    (b":scheme", b"https"),
+                    (b":authority", b"localhost"),
+                    (b":path", b"/my/promise"),
+                ],
+            )
+            # End the stream at the QUIC level
+            quic_server.send_stream_data(
+                stream_id=stream_id, data=b"", end_stream=True
+            )
+
+            events = h3_transfer(quic_server, h3_client)
+            assert events == [
+                HeadersReceived(
+                    headers=[
+                        (b":status", b"200"),
+                        (b"content-type", b"text/html; charset=utf-8"),
+                    ],
+                    stream_id=0,
+                    stream_ended=False,
+                ),
+                DataReceived(data=b"html", stream_id=0, stream_ended=False),
+                PushPromiseReceived(
+                    headers=[
+                        (b":method", b"GET"),
+                        (b":scheme", b"https"),
+                        (b":authority", b"localhost"),
+                        (b":path", b"/my/promise"),
+                    ],
+                    push_id=0,
+                    stream_id=stream_id,
+                ),
+                DataReceived(data=b"", stream_id=0, stream_ended=True),
+            ]
+
+    def test_grease_after_trailers(self):
+        """Issue #565: GREASE after trailers - trailers should carry stream_ended."""
+        with h3_client_and_server() as (quic_client, quic_server):
+            h3_client = H3Connection(quic_client)
+            h3_server = H3Connection(quic_server)
+
+            stream_id = quic_client.get_next_available_stream_id()
+            h3_client.send_headers(
+                stream_id=stream_id,
+                headers=[
+                    (b":method", b"GET"),
+                    (b":scheme", b"https"),
+                    (b":authority", b"localhost"),
+                    (b":path", b"/"),
+                ],
+                end_stream=True,
+            )
+            h3_transfer(quic_client, h3_server)
+
+            # Server sends response with trailers, then GREASE at QUIC level
+            h3_server.send_headers(
+                stream_id=stream_id,
+                headers=[
+                    (b":status", b"200"),
+                    (b"content-type", b"text/html; charset=utf-8"),
+                ],
+                end_stream=False,
+            )
+            h3_server.send_data(
+                stream_id=stream_id,
+                data=b"<html><body>hello</body></html>",
+                end_stream=False,
+            )
+            h3_server.send_headers(
+                stream_id=stream_id,
+                headers=[(b"x-some-trailer", b"bar")],
+                end_stream=False,
+            )
+            # Send GREASE frame at QUIC level, ending the stream
+            grease_type = 0x21
+            quic_server.send_stream_data(
+                stream_id=stream_id,
+                data=encode_frame(frame_type=grease_type, frame_data=b"grease"),
+                end_stream=True,
+            )
+
+            events = h3_transfer(quic_server, h3_client)
+            assert events == [
+                HeadersReceived(
+                    headers=[
+                        (b":status", b"200"),
+                        (b"content-type", b"text/html; charset=utf-8"),
+                    ],
+                    stream_id=stream_id,
+                    stream_ended=False,
+                ),
+                DataReceived(
+                    data=b"<html><body>hello</body></html>",
+                    stream_id=stream_id,
+                    stream_ended=False,
+                ),
+                HeadersReceived(
+                    headers=[(b"x-some-trailer", b"bar")],
+                    stream_id=stream_id,
+                    stream_ended=True,
+                ),
+            ]
+
     def test_request_with_trailers(self):
         with h3_client_and_server() as (quic_client, quic_server):
             h3_client = H3Connection(quic_client)
