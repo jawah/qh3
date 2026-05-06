@@ -154,6 +154,10 @@ class ClosedCriticalStream(ProtocolError):
     error_code = ErrorCode.H3_CLOSED_CRITICAL_STREAM
 
 
+class FrameError(ProtocolError):
+    error_code = ErrorCode.H3_FRAME_ERROR
+
+
 class FrameUnexpected(ProtocolError):
     error_code = ErrorCode.H3_FRAME_UNEXPECTED
 
@@ -760,6 +764,11 @@ class H3Connection:
                     stream.headers_recv_state = HeadersState.AFTER_HEADERS
             else:
                 stream.headers_recv_state = HeadersState.AFTER_TRAILERS
+                # Trailers are the final HTTP message element (RFC 9114 4.1).
+                # If the QUIC stream has ended, force stream_ended regardless
+                # of whether trailing frames (GREASE, etc.) remain in the buffer.
+                if stream.receiving_ended:
+                    stream_ended = True
 
             if (
                 stream.headers_recv_state is HeadersState.INITIAL
@@ -946,12 +955,14 @@ class H3Connection:
             if not s_buffer:
                 data_len = len(data)
                 if data_len < stream.frame_size:
+                    if stream_ended:
+                        raise FrameError("DATA frame truncated by stream end")
                     http_events.append(
                         DataReceived(
                             data=data,
                             push_id=stream.push_id,
                             stream_id=s_stream_id,
-                            stream_ended=stream_ended,
+                            stream_ended=False,
                         )
                     )
                     stream.frame_size -= data_len
@@ -961,12 +972,14 @@ class H3Connection:
                 s_buffer.extend(data)
                 buf_len = len(s_buffer)
                 if buf_len < stream.frame_size:
+                    if stream_ended:
+                        raise FrameError("DATA frame truncated by stream end")
                     http_events.append(
                         DataReceived(
                             data=bytes(s_buffer),
                             push_id=stream.push_id,
                             stream_id=s_stream_id,
-                            stream_ended=stream_ended,
+                            stream_ended=False,
                         )
                     )
                     stream.frame_size -= buf_len
@@ -977,14 +990,16 @@ class H3Connection:
 
         # handle lone FIN
         if stream_ended and not s_buffer and not data:
-            return [
-                DataReceived(
-                    data=b"",
-                    push_id=stream.push_id,
-                    stream_id=s_stream_id,
-                    stream_ended=True,
-                )
-            ]
+            if stream.headers_recv_state is not HeadersState.INITIAL:
+                return [
+                    DataReceived(
+                        data=b"",
+                        push_id=stream.push_id,
+                        stream_id=s_stream_id,
+                        stream_ended=True,
+                    )
+                ]
+            return []
 
         if data:
             s_buffer.extend(data)
@@ -1075,9 +1090,37 @@ class H3Connection:
                 self._blocked_stream_map[s_stream_id] = stream
                 break
 
+            # Trailers are the final HTTP message element (RFC 9114 4.1).
+            # Once received, swallow any remaining frames in the buffer.
+            if (
+                stream.headers_recv_state is HeadersState.AFTER_TRAILERS
+                and stream.receiving_ended
+            ):
+                consumed = len(s_buffer)
+                break
+
         # remove processed data from buffer
         if consumed:
             del s_buffer[:consumed]
+
+        # If the stream ended but no event carried stream_ended=True
+        # (e.g. the last frame was GREASE or PUSH_PROMISE after DATA),
+        # emit a closing DataReceived so the consumer knows the stream
+        # is done. Skip if QPACK-blocked or if trailers already
+        # delivered stream_ended.
+        if stream_ended and not s_buffer and not stream.blocked:
+            if stream.headers_recv_state is HeadersState.AFTER_HEADERS:
+                if not http_events or not getattr(
+                    http_events[-1], "stream_ended", False
+                ):
+                    http_events.append(
+                        DataReceived(
+                            data=b"",
+                            push_id=stream.push_id,
+                            stream_id=s_stream_id,
+                            stream_ended=True,
+                        )
+                    )
 
         return http_events
 
