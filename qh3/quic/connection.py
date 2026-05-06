@@ -1886,7 +1886,9 @@ class QuicConnection:
             self._crypto_frame_type = frame_type
             self._crypto_packet_version = context.version
             try:
-                self.tls.handle_message(event.data, self._crypto_buffers)
+                self.tls.handle_message(
+                    event.data, self._crypto_buffers, epoch=context.epoch
+                )
                 self._push_crypto_data()
             except tls.AlertECHRequired as exc:
                 # ECH was offered but rejected. Store retry_configs before
