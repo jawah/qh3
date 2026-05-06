@@ -336,7 +336,7 @@ class QuicPacketRecovery:
             self._rtt_latest = max(latest_rtt, 0.001)
             if self._rtt_latest < self._rtt_min:
                 self._rtt_min = self._rtt_latest
-            if self._rtt_latest > self._rtt_min + ack_delay:
+            if self._rtt_latest >= self._rtt_min + ack_delay:
                 self._rtt_latest -= ack_delay
 
             if not self._rtt_initialized:
@@ -345,7 +345,7 @@ class QuicPacketRecovery:
                 self._rtt_smoothed = latest_rtt
             else:
                 self._rtt_variance = 3 / 4 * self._rtt_variance + 1 / 4 * abs(
-                    self._rtt_min - self._rtt_latest
+                    self._rtt_smoothed - self._rtt_latest
                 )
                 self._rtt_smoothed = (
                     7 / 8 * self._rtt_smoothed + 1 / 8 * self._rtt_latest
@@ -446,10 +446,14 @@ class QuicPacketRecovery:
         """
         Check whether any packets should be declared lost.
         """
-        loss_delay = K_TIME_THRESHOLD * (
-            max(self._rtt_latest, self._rtt_smoothed)
-            if self._rtt_initialized
-            else self._rtt_initial
+        loss_delay = max(
+            K_TIME_THRESHOLD
+            * (
+                max(self._rtt_latest, self._rtt_smoothed)
+                if self._rtt_initialized
+                else self._rtt_initial
+            ),
+            K_GRANULARITY,
         )
         packet_threshold = space.largest_acked_packet - K_PACKET_THRESHOLD
         time_threshold = now - loss_delay
