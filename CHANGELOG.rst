@@ -1,3 +1,17 @@
+1.8.1 (2026-05-07)
+==================
+
+**Fixed**
+- Remediation on various QUIC compliance items (enabled by 3rd party audit).
+  - fix(recovery): compliance batch
+  - fix(crypto): retain previous recv keys for 3 PTO
+  - fix(connection): stateless reset, CONNECTION_CLOSE retransmit, idle-timer floor
+  - fix(stream): FINAL_SIZE_ERROR, send-only stream cleanup
+  - fix(h3): surface StreamReset / StopSending events; enforce critical stream closure
+  - fix(packet): reject duplicate transport parameters
+  - fix(recovery): implement missing HyStart++
+  - chore: raise initial_rtt default to 333 ms
+
 1.8.0 (2026-05-03)
 ==================
 
