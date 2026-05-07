@@ -126,3 +126,31 @@ class WebTransportStreamDataReceived(H3Event):
 
     session_id: int
     "The ID of the session the data was received for."
+
+
+@dataclass
+class StreamReset(H3Event):
+    """
+    Fired when the remote peer abruptly resets a request stream
+    (RFC 9000 RESET_STREAM). The stream will produce no further events.
+    """
+
+    stream_id: int
+    "The ID of the stream that was reset."
+
+    error_code: int
+    "The application error code carried by the RESET_STREAM frame."
+
+
+@dataclass
+class StopSending(H3Event):
+    """
+    Fired when the remote peer asks us to stop sending on a stream
+    (RFC 9000 STOP_SENDING). The local sender side has been reset.
+    """
+
+    stream_id: int
+    "The ID of the stream the peer asked us to stop sending on."
+
+    error_code: int
+    "The application error code carried by the STOP_SENDING frame."

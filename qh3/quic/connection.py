@@ -318,6 +318,8 @@ class QuicConnection:
         "_remote_active_connection_id_limit",
         "_remote_initial_source_connection_id",
         "_remote_max_idle_timeout",
+        "_remote_max_ack_delay",
+        "_ack_eliciting_sent_since_receive",
         "_remote_max_data",
         "_remote_max_data_used",
         "_remote_max_datagram_frame_size",
@@ -346,6 +348,9 @@ class QuicConnection:
         "_logger",
         "_loss",
         "_close_pending",
+        "_close_packets_received_since_send",
+        "_close_packets_send_threshold",
+        "_handshake_keys_discard_pending",
         "_datagrams_pending",
         "_handshake_done_pending",
         "_ping_pending",
@@ -466,6 +471,8 @@ class QuicConnection:
         self._remote_active_connection_id_limit = 2
         self._remote_initial_source_connection_id: bytes | None = None
         self._remote_max_idle_timeout = 0.0  # seconds
+        self._remote_max_ack_delay = 0.025  # seconds, RFC 9000 default
+        self._ack_eliciting_sent_since_receive = False
         self._effective_idle_timeout: float = self._configuration.idle_timeout
         self._remote_max_data = 0
         self._remote_max_data_used = 0
@@ -519,9 +526,15 @@ class QuicConnection:
             quic_logger=self._quic_logger,
             logger=self._logger,
         )
+        # RFC 9002 6.2.1: until the handshake is confirmed, the PTO
+        # computation MUST use a max_ack_delay of 0.
+        self._loss.max_ack_delay = 0.0
 
         # things to send
         self._close_pending = False
+        self._close_packets_received_since_send = 0
+        self._close_packets_send_threshold = 1
+        self._handshake_keys_discard_pending = False
         self._datagrams_pending: deque[bytes] = deque()
         self._handshake_done_pending = False
         self._ping_pending: list[int] = []
@@ -692,7 +705,26 @@ class QuicConnection:
         """
         network_path = self._network_paths[0]
 
-        if self._state in END_STATES:
+        # Capture the current 1-RTT send key_phase so we can detect a
+        # local-initiated key update that occurs while encrypting and
+        # arrange for the previous recv key to be retained for 3*PTO
+        # (RFC 9001 6.5).
+        _onertt_crypto = self._cryptos[tls.Epoch.ONE_RTT]
+        _kp_before = (
+            _onertt_crypto.send.key_phase if _onertt_crypto.send.is_valid() else None
+        )
+        # opportunistically expire any previously retained recv keys
+        _onertt_crypto.expire_previous_keys(now)
+
+        # Allow CONNECTION_CLOSE retransmissions even after we have
+        # transitioned to CLOSING. RFC 9000 10.2.1 SHOULD-resend semantics.
+        if (
+            self._state == QuicConnectionState.CLOSING
+            and self._close_pending
+            and self._close_event is not None
+        ):
+            pass  # fall through to the close-pending block below
+        elif self._state in END_STATES:
             return []
 
         # build datagrams
@@ -796,6 +828,10 @@ class QuicConnection:
                 probe_builder._buffer.push_bytes(bytes(pad_size))
             probe_datagrams, probe_packets = probe_builder.flush()
             if probe_datagrams:
+                # RFC 9000 14.4: tag probe packets so loss detection
+                # does not trigger a congestion control reaction.
+                for probe_pkt in probe_packets:
+                    probe_pkt.is_pmtu_probe = True
                 datagrams.extend(probe_datagrams)
                 packets.extend(probe_packets)
                 builder = probe_builder
@@ -817,6 +853,19 @@ class QuicConnection:
                 loss_on_packet_sent(packet=packet, space=spaces[packet.epoch])
                 if packet.epoch == tls.Epoch.HANDSHAKE:
                     sent_handshake = True
+                # RFC 9000 10.1: restart the idle timer when sending an
+                # ack-eliciting packet if no other ack-eliciting packets
+                # have been sent since the last receive.
+                if (
+                    packet.is_ack_eliciting
+                    and not self._ack_eliciting_sent_since_receive
+                ):
+                    self._ack_eliciting_sent_since_receive = True
+                    deadline = self._idle_deadline(now)
+                    if deadline is not None and (
+                        self._close_at is None or deadline > self._close_at
+                    ):
+                        self._close_at = deadline
 
                 # log packet
                 if quic_logger is not None:
@@ -844,6 +893,19 @@ class QuicConnection:
             # check if we can discard initial keys
             if sent_handshake and self._is_client:
                 self._discard_epoch(tls.Epoch.INITIAL)
+
+        # If a local-initiated 1-RTT key update happened during this
+        # send pass, retain the previous receive key for 3*PTO so we
+        # can still decrypt reordered packets sent under the old key
+        # (RFC 9001 6.5).
+        if (
+            _kp_before is not None
+            and _onertt_crypto.send.is_valid()
+            and _onertt_crypto.send.key_phase != _kp_before
+        ):
+            _onertt_crypto.retain_previous_keys(
+                now + 3 * self._loss.get_probe_timeout()
+            )
 
         # return datagrams to send and the destination network address
         addr = network_path.addr
@@ -908,6 +970,18 @@ class QuicConnection:
 
         return timer_at
 
+    def _idle_deadline(self, now: float) -> float | None:
+        """
+        Compute the next idle-timeout deadline, or None if no idle
+        timeout is in effect. RFC 9000 10.1.1: the idle timeout period
+        MUST be at least three times the current PTO.
+        """
+        timeout = self._effective_idle_timeout
+        if timeout <= 0:
+            return None
+        floor = 3 * self._loss.get_probe_timeout()
+        return now + max(timeout, floor)
+
     def handle_timer(self, now: float) -> None:
         """
         Handle the timer.
@@ -918,7 +992,7 @@ class QuicConnection:
         :param now: The current time.
         """
         # end of closing period or idle timeout
-        if now >= self._close_at:
+        if self._close_at is not None and now >= self._close_at:
             if self._close_event is None:
                 self._close_event = events.ConnectionTerminated(
                     error_code=QuicErrorCode.INTERNAL_ERROR,
@@ -956,6 +1030,23 @@ class QuicConnection:
         """
         # stop handling packets when closing
         if self._state in END_STATES:
+            # RFC 9000 10.2.1: while in CLOSING, an endpoint SHOULD send
+            # a packet containing a CONNECTION_CLOSE frame in response to
+            # received packets, but MUST limit the rate. Trigger a
+            # retransmission with exponential backoff (after 1, 2, 4, 8,
+            # ... incoming datagrams).
+            if (
+                self._state == QuicConnectionState.CLOSING
+                and self._close_event is not None
+            ):
+                self._close_packets_received_since_send += 1
+                if (
+                    self._close_packets_received_since_send
+                    >= self._close_packets_send_threshold
+                ):
+                    self._close_packets_received_since_send = 0
+                    self._close_packets_send_threshold *= 2
+                    self._close_pending = True
             return
 
         payload_length = len(data)
@@ -996,7 +1087,7 @@ class QuicConnection:
 
         # for servers, arm the idle timeout on the first datagram
         if self._close_at is None:
-            self._close_at = now + self._configuration.idle_timeout
+            self._close_at = self._idle_deadline(now)
 
         _data_len = len(data)
         _offset = 0
@@ -1119,9 +1210,24 @@ class QuicConnection:
 
             # decrypt packet
             try:
+                # remember key phase before decryption to detect rotation
+                _kp_before = (
+                    crypto.recv.key_phase
+                    if epoch in (tls.Epoch.ONE_RTT, tls.Epoch.ZERO_RTT)
+                    else None
+                )
+                # opportunistically expire previously retained recv keys
+                if _kp_before is not None:
+                    crypto.expire_previous_keys(now)
                 plain_header, plain_payload, packet_number = crypto.decrypt_packet(
                     data[start_off:end_off], encrypted_off, space.expected_packet_number
                 )
+                # if a key rotation just happened, schedule retention of
+                # the previous keys for 3*PTO (RFC 9001 6.5).
+                if _kp_before is not None and crypto.recv.key_phase != _kp_before:
+                    crypto.retain_previous_keys(
+                        now + 3 * self._loss.get_probe_timeout()
+                    )
             except KeyUnavailableError as exc:
                 self._logger.debug(exc)
                 if quic_logger is not None:
@@ -1155,6 +1261,18 @@ class QuicConnection:
                             "raw": {"length": _packet_length},
                         },
                     )
+                # RFC 9000 10.3: a UDP datagram whose trailing 16 bytes match
+                # a stateless reset token issued by the peer is a stateless
+                # reset and indicates the peer has lost connection state.
+                if self._is_stateless_reset(data):
+                    self._logger.info("Stateless reset received from peer")
+                    self._close_event = events.ConnectionTerminated(
+                        error_code=QuicErrorCode.NO_ERROR,
+                        frame_type=None,
+                        reason_phrase="Stateless reset",
+                    )
+                    self._close_end()
+                    return
                 continue
 
             # check reserved bits
@@ -1228,6 +1346,18 @@ class QuicConnection:
                     self._spin_bit = spin_bit
                 self._spin_highest_pn = packet_number
 
+            # RFC 9001 4.9.2: server discards Handshake keys upon receiving
+            # a 1-RTT packet from the client; this proves the client has
+            # installed 1-RTT keys and so will not retransmit Handshake
+            # CRYPTO any longer.
+            if (
+                not is_client
+                and self._handshake_keys_discard_pending
+                and epoch == tls.Epoch.ONE_RTT
+            ):
+                self._handshake_keys_discard_pending = False
+                self._discard_epoch(tls.Epoch.HANDSHAKE)
+
                 if quic_logger is not None:
                     quic_logger.log_event(
                         category="connectivity",
@@ -1259,7 +1389,8 @@ class QuicConnection:
                 return
 
             # update idle timeout
-            self._close_at = now + self._effective_idle_timeout
+            self._close_at = self._idle_deadline(now)
+            self._ack_eliciting_sent_since_receive = False
 
             # handle migration
             if (
@@ -1288,6 +1419,10 @@ class QuicConnection:
                 self._logger.debug("Network path %s promoted", network_path.addr)
                 self._network_paths.pop(idx)
                 self._network_paths.insert(0, network_path)
+                # RFC 9000 9.4 / RFC 9002 5.1: drop RTT samples gathered
+                # on the previous path; the new path may have very
+                # different latency.
+                self._loss.reset_for_new_path()
 
             # record packet as received
             if not space.discarded:
@@ -1302,7 +1437,11 @@ class QuicConnection:
         """
         Request an update of the encryption keys.
         """
-        assert self._handshake_complete, "cannot change key before handshake completes"
+        # RFC 9001 6.1: an endpoint MUST NOT initiate a key update until
+        # the handshake is confirmed.
+        assert self._handshake_confirmed, (
+            "cannot change key before handshake is confirmed"
+        )
         self._cryptos[tls.Epoch.ONE_RTT].update_key()
 
     def reset_stream(self, stream_id: int, error_code: int) -> None:
@@ -1489,7 +1628,7 @@ class QuicConnection:
         """
         assert self._is_client
 
-        self._close_at = now + self._configuration.idle_timeout
+        self._close_at = self._idle_deadline(now)
         self._initialize(self._peer_cid.cid)
 
         self.tls.handle_message(b"", self._crypto_buffers)
@@ -1508,6 +1647,25 @@ class QuicConnection:
                     crypto.teardown()
             self._loss.discard_space(self._spaces[epoch])
             self._spaces[epoch].discarded = True
+
+    def _discard_zero_rtt_keys(self) -> None:
+        """
+        RFC 9001 4.9.3: 0-RTT keys MUST be discarded once they are no
+        longer needed.
+
+        - A server MUST discard 0-RTT keys after receiving a 1-RTT
+          packet, or earlier if it has decided not to accept 0-RTT.
+        - A client MUST discard 0-RTT keys when it receives the
+          Handshake keys (or as soon as the handshake is confirmed).
+
+        0-RTT shares the 1-RTT packet-number space, so we only tear down
+        the crypto pair; there is no separate ``QuicPacketSpace`` to
+        discard.
+        """
+        zero_rtt = self._cryptos[tls.Epoch.ZERO_RTT]
+        if zero_rtt.send.is_valid() or zero_rtt.recv.is_valid():
+            self._logger.debug("Discarding 0-RTT keys")
+            zero_rtt.teardown()
 
     def _find_network_path(self, addr: NetworkAddress) -> QuicNetworkPath:
         # check existing network paths
@@ -1791,6 +1949,18 @@ class QuicConnection:
                 self._quic_logger.encode_ack_frame(ack_rangeset, ack_delay)
             )
 
+        # RFC 9000 19.3.1: a receiver MUST treat as a connection error of
+        # type PROTOCOL_VIOLATION any ACK that acknowledges a packet number
+        # that the receiver has never sent.
+        space = self._spaces[context.epoch]
+        largest_acked = ack_rangeset.bounds()[1] - 1
+        if largest_acked >= space.packet_number:
+            raise QuicConnectionError(
+                error_code=QuicErrorCode.PROTOCOL_VIOLATION,
+                frame_type=frame_type,
+                reason_phrase="ACK acknowledges unsent packet",
+            )
+
         # check whether peer completed address validation
         if not self._loss.peer_completed_address_validation and context.epoch in (
             tls.Epoch.HANDSHAKE,
@@ -1799,10 +1969,17 @@ class QuicConnection:
             self._loss.peer_completed_address_validation = True
 
         self._loss.on_ack_received(
-            space=self._spaces[context.epoch],
+            space=space,
             ack_rangeset=ack_rangeset,
             ack_delay=ack_delay,
             now=context.time,
+            # RFC 9002 6.2.1: a client MUST NOT reset its PTO backoff
+            # on an ACK that only acknowledges Initial packets, because
+            # it has no proof yet that the server has finished validating
+            # the client address.
+            reset_pto_count=not (
+                self._is_client and context.epoch == tls.Epoch.INITIAL
+            ),
         )
 
     def _handle_connection_close_frame(
@@ -1886,7 +2063,9 @@ class QuicConnection:
             self._crypto_frame_type = frame_type
             self._crypto_packet_version = context.version
             try:
-                self.tls.handle_message(event.data, self._crypto_buffers)
+                self.tls.handle_message(
+                    event.data, self._crypto_buffers, epoch=context.epoch
+                )
                 self._push_crypto_data()
             except tls.AlertECHRequired as exc:
                 # ECH was offered but rejected. Store retry_configs before
@@ -1913,9 +2092,23 @@ class QuicConnection:
 
                 # for servers, the handshake is now confirmed
                 if not self._is_client:
-                    self._discard_epoch(tls.Epoch.HANDSHAKE)
+                    # RFC 9001 4.9.2: defer Handshake key discard until we
+                    # have evidence the client received our Handshake keys.
+                    # We discard upon receiving any 1-RTT packet from the
+                    # client. This prevents losing client-retransmitted
+                    # Handshake CRYPTO that arrives after our handshake
+                    # completes (which would otherwise cause a client hang).
+                    self._handshake_keys_discard_pending = True
                     self._handshake_confirmed = True
                     self._handshake_done_pending = True
+                    # RFC 9002 6.2.1: max_ack_delay only applies after the
+                    # handshake is confirmed.
+                    self._loss.max_ack_delay = self._remote_max_ack_delay
+                    # RFC 9001 4.9.3: server discards 0-RTT receive keys
+                    # once the handshake is complete (no further 0-RTT
+                    # data can usefully arrive). We discard send keys too;
+                    # servers never send 0-RTT.
+                    self._discard_zero_rtt_keys()
 
                 self._replenish_connection_ids()
                 self._events.append(
@@ -1957,6 +2150,18 @@ class QuicConnection:
         if self._quic_logger is not None:
             context.quic_logger_frames.append(
                 self._quic_logger.encode_data_blocked_frame(limit=limit)
+            )
+
+        # RFC 9000 4.1: a DATA_BLOCKED at our advertised connection-level
+        # limit is a hint that the peer would benefit from more credit.
+        # Bump the local connection-level MAX_DATA so a fresh frame is
+        # sent on the next write.
+        if limit >= self._local_max_data.value:
+            self._local_max_data.value *= 2
+            self._logger.debug(
+                "Local %s raised to %d in response to DATA_BLOCKED",
+                self._local_max_data.name,
+                self._local_max_data.value,
             )
 
     def _handle_datagram_frame(
@@ -2015,6 +2220,13 @@ class QuicConnection:
             self._discard_epoch(tls.Epoch.HANDSHAKE)
             self._handshake_confirmed = True
             self._loss.peer_completed_address_validation = True
+            # RFC 9002 6.2.1: max_ack_delay only applies after the
+            # handshake is confirmed.
+            self._loss.max_ack_delay = self._remote_max_ack_delay
+            # RFC 9001 4.9.3: a client MUST discard its 0-RTT keys once
+            # the handshake is confirmed (Handshake keys received +
+            # HANDSHAKE_DONE).
+            self._discard_zero_rtt_keys()
 
     def _handle_max_data_frame(
         self, context: QuicReceiveContext, frame_type: int, buf: Buffer
@@ -2444,8 +2656,9 @@ class QuicConnection:
         self._assert_stream_can_send(frame_type, stream_id)
 
         # reset the stream
+        # RFC 9000 3.5: SHOULD copy error code from STOP_SENDING to RESET_STREAM
         stream = self._get_or_create_stream(frame_type, stream_id)
-        stream.sender.reset(error_code=QuicErrorCode.NO_ERROR)
+        stream.sender.reset(error_code=error_code)
 
         self._events.append(
             events.StopSendingReceived(error_code=error_code, stream_id=stream_id)
@@ -2529,7 +2742,25 @@ class QuicConnection:
         # check stream direction
         self._assert_stream_can_receive(frame_type, stream_id)
 
-        self._get_or_create_stream(frame_type, stream_id)
+        stream = self._get_or_create_stream(frame_type, stream_id)
+
+        # RFC 9000 4.1: STREAM_DATA_BLOCKED at the limit we advertised
+        # is a hint that the peer is wedged on flow control. If we still
+        # consider the stream live (not finished, not reset), grant more
+        # credit and queue a MAX_STREAM_DATA on the next write.
+        if (
+            not stream.receiver.is_finished
+            and stream.max_stream_data_local
+            and limit >= stream.max_stream_data_local
+        ):
+            stream.max_stream_data_local *= 2
+            self._logger.debug(
+                "Stream %d local max_stream_data raised to %d in response to "
+                "STREAM_DATA_BLOCKED",
+                stream_id,
+                stream.max_stream_data_local,
+            )
+            self._streams_dirty_limits.add(stream)
 
     def _handle_streams_blocked_frame(
         self, context: QuicReceiveContext, frame_type: int, buf: Buffer
@@ -2593,6 +2824,23 @@ class QuicConnection:
         """
         if delivery != QuicDeliveryState.ACKED:
             limit.sent = 0
+
+    def _on_streams_blocked_delivery(
+        self, delivery: QuicDeliveryState, is_unidirectional: bool
+    ) -> None:
+        """
+        Callback when a STREAMS_BLOCKED frame is acknowledged or lost.
+
+        Re-arms the pending flag on loss if blocked streams still exist,
+        per RFC 9000 13.3 (SHOULD retransmit if conditions persist).
+        """
+        if delivery != QuicDeliveryState.ACKED:
+            if is_unidirectional:
+                if self._streams_blocked_uni:
+                    self._streams_blocked_pending = True
+            else:
+                if self._streams_blocked_bidi:
+                    self._streams_blocked_pending = True
 
     def _on_handshake_done_delivery(self, delivery: QuicDeliveryState) -> None:
         """
@@ -2940,6 +3188,25 @@ class QuicConnection:
     def _send_probe(self) -> None:
         self._probe_pending = True
 
+    def _is_stateless_reset(self, datagram: bytes) -> bool:
+        """
+        RFC 9000 10.3.1: detect a stateless reset by matching the trailing
+        16 bytes of the UDP datagram against the stateless reset tokens
+        the peer has shared with us.
+        """
+        if len(datagram) < STATELESS_RESET_TOKEN_SIZE:
+            return False
+        token = datagram[-STATELESS_RESET_TOKEN_SIZE:]
+        if (
+            self._peer_cid.stateless_reset_token
+            and token == self._peer_cid.stateless_reset_token
+        ):
+            return True
+        for cid in self._peer_cid_available:
+            if cid.stateless_reset_token and token == cid.stateless_reset_token:
+                return True
+        return False
+
     def _parse_transport_parameters(
         self, data: bytes, from_session_ticket: bool = False
     ) -> None:
@@ -3091,11 +3358,17 @@ class QuicConnection:
         # store remote parameters
         if not from_session_ticket:
             if quic_transport_parameters.ack_delay_exponent is not None:
-                self._remote_ack_delay_exponent = self._remote_ack_delay_exponent
+                self._remote_ack_delay_exponent = (
+                    quic_transport_parameters.ack_delay_exponent
+                )
             if quic_transport_parameters.max_ack_delay is not None:
-                self._loss.max_ack_delay = (
+                self._remote_max_ack_delay = (
                     quic_transport_parameters.max_ack_delay / 1000.0
                 )
+                # RFC 9002 6.2.1: max_ack_delay MUST NOT be applied to PTO
+                # before the handshake is confirmed.
+                if self._handshake_confirmed:
+                    self._loss.max_ack_delay = self._remote_max_ack_delay
             if (
                 self._is_client
                 and self._peer_cid.sequence_number == 0
@@ -3116,14 +3389,19 @@ class QuicConnection:
             self._remote_max_idle_timeout = (
                 quic_transport_parameters.max_idle_timeout / 1000.0
             )
-            # RFC 9000 10.1: effective idle timeout is the minimum of the
-            # two advertised values. A zero value means the peer does not
-            # have a timeout.
-            if self._remote_max_idle_timeout > 0:
-                self._effective_idle_timeout = min(
-                    self._configuration.idle_timeout,
-                    self._remote_max_idle_timeout,
-                )
+            # RFC 9000 10.1: the effective idle timeout is the minimum of
+            # the values advertised by the two endpoints, treating a value
+            # of 0 as "no timeout". If both are 0, no idle timeout applies.
+            local = self._configuration.idle_timeout
+            remote = self._remote_max_idle_timeout
+            if local > 0 and remote > 0:
+                self._effective_idle_timeout = min(local, remote)
+            elif local > 0:
+                self._effective_idle_timeout = local
+            elif remote > 0:
+                self._effective_idle_timeout = remote
+            else:
+                self._effective_idle_timeout = 0.0
         self._remote_max_datagram_frame_size = (
             quic_transport_parameters.max_datagram_frame_size
         )
@@ -3296,8 +3574,12 @@ class QuicConnection:
         _quic_logger = self._quic_logger
 
         while True:
-            # apply pacing, except if we have ACKs to send
-            if space.ack_at is None or space.ack_at >= now:
+            # apply pacing, except if we have ACKs to send or a PTO probe
+            # is pending (RFC 9002 7.7: pacing MUST NOT delay packets sent
+            # in response to a PTO timer expiry).
+            if (
+                space.ack_at is None or space.ack_at >= now
+            ) and not self._probe_pending:
                 self._pacing_at = pacer.next_send_time(now=now)
                 if self._pacing_at is not None:
                     break
@@ -3368,7 +3650,7 @@ class QuicConnection:
                         )
                     self._streams_blocked_pending = False
 
-                # MAX_DATA and MAX_STREAMS - inlined from _write_connection_limits
+                # MAX_DATA and MAX_STREAMS
                 for limit in (
                     self._local_max_data,
                     self._local_max_streams_bidi,
@@ -3398,10 +3680,15 @@ class QuicConnection:
                                 )
                             )
 
-            # stream-level limits - inlined from _write_stream_limits
+            # stream-level limits
             dirty_limits = self._streams_dirty_limits
             if dirty_limits:
                 for stream in dirty_limits:
+                    # RFC 9000 3.2: once a stream's receive part is in
+                    # "Data Recvd" or "Reset Recvd", further flow-control
+                    # credit is meaningless and MUST NOT be sent.
+                    if stream.receiver.is_finished:
+                        continue
                     if (
                         stream.max_stream_data_local
                         and stream.receiver.highest_offset * 2
@@ -3624,9 +3911,29 @@ class QuicConnection:
         ack_delay = now - space.largest_received_time
         ack_delay_encoded = int(ack_delay * 1000000) >> self._local_ack_delay_exponent
 
+        # Dynamically size the ACK frame: header (largest_acked, ack_delay,
+        # range_count, first_range) takes up to 32 bytes; each additional
+        # range adds two varints, up to 16 bytes. Trim oldest ranges
+        # (RFC 9000 13.2.4 explicitly allows it) when the packet has
+        # insufficient room rather than dropping the entire ACK.
+        # We reserve 1 byte for the frame type, accounted for separately
+        # by start_frame.
+        ranges_count = len(space.ack_queue)
+        # remaining_buffer_space already excludes AEAD tag.
+        # subtract 1 for frame type byte.
+        max_payload = max(builder.remaining_buffer_space - 1, 0)
+        max_ranges_by_space = max((max_payload - 32) // 16, 0)
+        if ranges_count > max_ranges_by_space and max_ranges_by_space > 0:
+            # drop oldest ranges (lowest packet numbers); the peer will
+            # have to assume those were lost or already retired.
+            while len(space.ack_queue) > max_ranges_by_space:
+                space.ack_queue.shift()
+            ranges_count = len(space.ack_queue)
+        capacity = 32 + 16 * max(ranges_count, 1)
+
         buf = builder.start_frame(
             QuicFrameType.ACK,
-            capacity=ACK_FRAME_CAPACITY,
+            capacity=capacity,
             handler=self._on_ack_delivery,
             handler_args=(space, space.largest_received_packet),
         )
@@ -3689,39 +3996,6 @@ class QuicConnection:
                     reason_phrase=reason_phrase,
                 )
             )
-
-    def _write_connection_limits(
-        self, builder: QuicPacketBuilder, space: QuicPacketSpace
-    ) -> None:
-        """
-        Raise MAX_DATA or MAX_STREAMS if needed.
-        """
-        for limit in (
-            self._local_max_data,
-            self._local_max_streams_bidi,
-            self._local_max_streams_uni,
-        ):
-            if limit.used * 2 > limit.value:
-                limit.value *= 2
-                self._logger.debug("Local %s raised to %d", limit.name, limit.value)
-            if limit.value != limit.sent:
-                buf = builder.start_frame(
-                    limit.frame_type,
-                    capacity=CONNECTION_LIMIT_FRAME_CAPACITY,
-                    handler=self._on_connection_limit_delivery,
-                    handler_args=(limit,),
-                )
-                buf.push_uint_var(limit.value)
-                limit.sent = limit.value
-
-                # log frame
-                if self._quic_logger is not None:
-                    builder.quic_logger_frames.append(
-                        self._quic_logger.encode_connection_limit_frame(
-                            frame_type=limit.frame_type,
-                            maximum=limit.value,
-                        )
-                    )
 
     def _write_crypto_frame(
         self, builder: QuicPacketBuilder, space: QuicPacketSpace, stream: QuicStream
@@ -3827,6 +4101,11 @@ class QuicConnection:
         )
         buf.push_bytes(challenge)
 
+        # RFC 9000 8.2.1: datagrams containing PATH_CHALLENGE MUST be
+        # expanded to at least 1200 bytes (subject to the anti-amplification
+        # limit, which the builder already enforces via max_total_bytes).
+        builder.pad_datagram()
+
         # log frame
         if self._quic_logger is not None:
             builder.quic_logger_frames.append(
@@ -3840,6 +4119,10 @@ class QuicConnection:
             QuicFrameType.PATH_RESPONSE, capacity=PATH_RESPONSE_FRAME_CAPACITY
         )
         buf.push_bytes(challenge)
+
+        # RFC 9000 8.2.2: datagrams containing PATH_RESPONSE MUST be
+        # expanded to at least 1200 bytes.
+        builder.pad_datagram()
 
         # log frame
         if self._quic_logger is not None:
@@ -3931,93 +4214,16 @@ class QuicConnection:
                 )
             )
 
-    def _write_stream_frame(
-        self,
-        builder: QuicPacketBuilder,
-        space: QuicPacketSpace,
-        stream: QuicStream,
-        max_offset: int,
-    ) -> int:
-        sender = stream.sender
-        stream_id = stream.stream_id
-
-        flight_space = (
-            builder._flight_capacity - builder._buffer.tell() - builder._aead_tag_size
-        )
-        result = sender.prepare_stream_frame(flight_space, max_offset)
-
-        if result is not None:
-            (
-                f_data,
-                frame_type,
-                f_offset,
-                stop_offset,
-                previous_send_highest,
-                frame_overhead,
-            ) = result
-            buf = builder.start_frame(
-                frame_type,
-                frame_overhead,
-                sender.on_data_delivery,
-                (f_offset, stop_offset),
-            )
-            push_stream_frame_body(buf, stream_id, f_offset, f_data)
-
-            # log frame
-            if self._quic_logger is not None:
-                builder.quic_logger_frames.append(
-                    self._quic_logger.encode_stream_frame(
-                        bool(frame_type & 1), f_data, f_offset, stream_id=stream_id
-                    )
-                )
-
-            return sender.highest_offset - previous_send_highest
-        else:
-            return 0
-
-    def _write_stream_limits(
-        self, builder: QuicPacketBuilder, space: QuicPacketSpace, stream: QuicStream
-    ) -> None:
-        """
-        Raise MAX_STREAM_DATA if needed.
-
-        The only case where `stream.max_stream_data_local` is zero is for
-        locally created unidirectional streams. We skip such streams to avoid
-        spurious logging.
-        """
-        if (
-            stream.max_stream_data_local
-            and stream.receiver.highest_offset * 2 > stream.max_stream_data_local
-        ):
-            stream.max_stream_data_local *= 2
-            self._logger.debug(
-                "Stream %d local max_stream_data raised to %d",
-                stream.stream_id,
-                stream.max_stream_data_local,
-            )
-        if stream.max_stream_data_local_sent != stream.max_stream_data_local:
-            buf = builder.start_frame(
-                QuicFrameType.MAX_STREAM_DATA,
-                capacity=MAX_STREAM_DATA_FRAME_CAPACITY,
-                handler=self._on_max_stream_data_delivery,
-                handler_args=(stream,),
-            )
-            buf.push_uint_var(stream.stream_id)
-            buf.push_uint_var(stream.max_stream_data_local)
-            stream.max_stream_data_local_sent = stream.max_stream_data_local
-
-            # log frame
-            if self._quic_logger is not None:
-                builder.quic_logger_frames.append(
-                    self._quic_logger.encode_max_stream_data_frame(
-                        maximum=stream.max_stream_data_local, stream_id=stream.stream_id
-                    )
-                )
-
     def _write_streams_blocked_frame(
         self, builder: QuicPacketBuilder, frame_type: QuicFrameType, limit: int
     ) -> None:
-        buf = builder.start_frame(frame_type, capacity=STREAMS_BLOCKED_CAPACITY)
+        is_uni = frame_type == QuicFrameType.STREAMS_BLOCKED_UNI
+        buf = builder.start_frame(
+            frame_type,
+            capacity=STREAMS_BLOCKED_CAPACITY,
+            handler=self._on_streams_blocked_delivery,
+            handler_args=(is_uni,),
+        )
         buf.push_uint_var(limit)
 
         # log frame

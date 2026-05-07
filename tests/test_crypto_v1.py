@@ -408,6 +408,84 @@ class TestCrypto:
             self.create_hp(key=bytes(33))
         assert str(cm.value) == "Given key is not valid for chosen algorithm"
 
+    def test_previous_recv_decrypts_reordered_packet(self):
+        """
+        After a local key update, a packet that was sent before the rotation
+        must still decrypt via the retained previous receive context, and
+        doing so must NOT trigger another rotation on the receiver.
+
+        See RFC 9001 6.5.
+        """
+        pair1 = self.create_crypto(is_client=True)
+        pair2 = self.create_crypto(is_client=False)
+
+        def make_packet(key_phase, packet_number):
+            buf = Buffer(capacity=100)
+            buf.push_uint8(PACKET_FIXED_BIT | key_phase << 2 | 1)
+            buf.push_bytes(binascii.unhexlify("8394c8f03e515708"))
+            buf.push_uint16(packet_number)
+            return buf.data, b"\x00\x01\x02\x03"
+
+        # Initial roundtrip in phase 0.
+        plain_header_old, plain_payload_old = make_packet(
+            key_phase=pair1.key_phase, packet_number=0
+        )
+        encrypted_old = pair1.encrypt_packet(
+            plain_header_old, plain_payload_old, 0
+        )
+        recov_header, recov_payload, recov_pn = pair2.decrypt_packet(
+            encrypted_old, len(plain_header_old) - 2, 0
+        )
+        assert recov_header == plain_header_old
+        assert recov_payload == plain_payload_old
+        assert recov_pn == 0
+        assert pair2.key_phase == 0
+
+        # Pair 1 rotates and sends a fresh packet under phase 1; pair 2
+        # picks up the rotation and snapshots its phase-0 recv context.
+        pair1.update_key()
+        plain_header_new, plain_payload_new = make_packet(
+            key_phase=pair1.key_phase, packet_number=1
+        )
+        encrypted_new = pair1.encrypt_packet(
+            plain_header_new, plain_payload_new, 1
+        )
+        recov_header, recov_payload, recov_pn = pair2.decrypt_packet(
+            encrypted_new, len(plain_header_new) - 2, 1
+        )
+        assert recov_header == plain_header_new
+        assert recov_pn == 1
+        assert pair2.key_phase == 1
+        assert pair2._previous_recv is not None
+
+        # Connection layer would normally schedule expiry; emulate it.
+        pair2.retain_previous_keys(expires_at=999.0)
+
+        # Now a reordered phase-0 packet (sent before pair 1's update) arrives.
+        # It must decrypt via the snapshot WITHOUT toggling key_phase back.
+        plain_header_late, plain_payload_late = make_packet(
+            key_phase=0, packet_number=2
+        )
+        # Re-encrypt under a fresh phase-0 sender to simulate the
+        # in-flight packet that was emitted before the rotation.
+        late_sender = self.create_crypto(is_client=True)
+        encrypted_late = late_sender.encrypt_packet(
+            plain_header_late, plain_payload_late, 2
+        )
+        recov_header, recov_payload, recov_pn = pair2.decrypt_packet(
+            encrypted_late, len(plain_header_late) - 2, 2
+        )
+        assert recov_header == plain_header_late
+        assert recov_payload == plain_payload_late
+        assert recov_pn == 2
+        # Crucially: no spurious rotation back to phase 0.
+        assert pair2.key_phase == 1
+
+        # Snapshot is dropped once the 3*PTO timer expires.
+        pair2.expire_previous_keys(now=999.0)
+        assert pair2._previous_recv is None
+        assert pair2._previous_recv_expires_at is None
+
     def test_decrypt_short_server_packet_too_short(self):
         """Truncated packet must raise CryptoError, not panic."""
         pair = CryptoPair()

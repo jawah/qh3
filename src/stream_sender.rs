@@ -310,6 +310,11 @@ impl QuicStreamSender {
             self.reset_pending = true;
             // Prevent any more data from being sent or re-sent.
             self.buffer_is_empty = true;
+        } else if self.reset_pending {
+            // Allow updating the error code while RESET_STREAM hasn't been
+            // sent yet, so the application can override the default code set
+            // by _handle_stop_sending_frame.
+            self.reset_error_code = Some(error_code);
         }
     }
 

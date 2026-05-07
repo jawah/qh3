@@ -316,6 +316,16 @@ class TestParams:
         push_quic_transport_parameters(buf, params)
         assert buf.data == data
 
+    def test_pull_rejects_duplicate_param_id(self):
+        # RFC 9000 7.4: a parameter received twice MUST be treated as
+        # TRANSPORT_PARAMETER_ERROR. Send max_idle_timeout (id=0x01)
+        # twice and expect a ValueError.
+        data = binascii.unhexlify("01026710" "01026710")
+        buf = Buffer(data=data)
+        with pytest.raises(ValueError) as cm:
+            pull_quic_transport_parameters(buf)
+        assert "Duplicate transport parameter" in str(cm.value)
+
 
 class TestPrettyProtocolVersion:
     """Tests for pretty_protocol_version."""

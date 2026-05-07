@@ -474,6 +474,97 @@ class TestHighLevel:
         assert config1.certificate == config3.certificate
         assert config1.certificate == config4.certificate
 
+    @pytest.mark.asyncio
+    async def test_stream_reset_raises_on_reader(self):
+        """RFC 9000 3.5: a peer RESET_STREAM must surface to the
+        asyncio reader as an exception so the application does not hang
+        forever waiting for data that will never arrive."""
+
+        def reset_handler(reader, writer):
+            async def serve_one():
+                try:
+                    await reader.read(1)  # consume the trigger byte
+                    stream_id = writer.get_extra_info("stream_id")
+                    writer.transport.protocol._quic.reset_stream(stream_id, error_code=0x10c)
+                    writer.transport.protocol.transmit()
+                finally:
+                    writer.close()
+
+            asyncio.ensure_future(serve_one())
+
+        server_cfg = QuicConfiguration(is_client=False)
+        server_cfg.load_cert_chain(SERVER_CERTFILE, SERVER_KEYFILE)
+        server = await serve(
+            host="::",
+            port=0,
+            configuration=server_cfg,
+            stream_handler=reset_handler,
+        )
+        try:
+            server_port = server._transport.get_extra_info("sockname")[1]
+            configuration = QuicConfiguration(is_client=True)
+            configuration.load_verify_locations(cafile=SERVER_CACERTFILE)
+            async with connect(
+                self.server_host, server_port, configuration=configuration
+            ) as client:
+                await client.wait_connected()
+                reader, writer = await client.create_stream()
+                try:
+                    writer.write(b"x")
+                    with pytest.raises(ConnectionResetError):
+                        await asyncio.wait_for(reader.read(), timeout=5.0)
+                finally:
+                    # Explicitly close the writer so asyncio's
+                    # StreamWriter.__del__ does not run during GC and
+                    # surface an unraisable warning under Python 3.14.
+                    writer.close()
+        finally:
+            server.close()
+
+    @pytest.mark.asyncio
+    async def test_stop_sending_feeds_eof(self):
+        """RFC 9000 3.5: a peer STOP_SENDING tells us not to send any
+        more on that stream; surface EOF on the corresponding reader so
+        readers do not hang."""
+
+        def stop_handler(reader, writer):
+            async def serve_one():
+                try:
+                    await reader.read(1)
+                    stream_id = writer.get_extra_info("stream_id")
+                    writer.transport.protocol._quic.stop_stream(stream_id, error_code=0x10c)
+                    writer.transport.protocol.transmit()
+                finally:
+                    writer.close()
+
+            asyncio.ensure_future(serve_one())
+
+        server_cfg = QuicConfiguration(is_client=False)
+        server_cfg.load_cert_chain(SERVER_CERTFILE, SERVER_KEYFILE)
+        server = await serve(
+            host="::",
+            port=0,
+            configuration=server_cfg,
+            stream_handler=stop_handler,
+        )
+        try:
+            server_port = server._transport.get_extra_info("sockname")[1]
+            configuration = QuicConfiguration(is_client=True)
+            configuration.load_verify_locations(cafile=SERVER_CACERTFILE)
+            async with connect(
+                self.server_host, server_port, configuration=configuration
+            ) as client:
+                await client.wait_connected()
+                reader, writer = await client.create_stream()
+                try:
+                    writer.write(b"x")
+                    data = await asyncio.wait_for(reader.read(), timeout=5.0)
+                    assert data == b""
+                finally:
+                    writer.close()
+        finally:
+            server.close()
+
 
 class TestQuicStreamAdapter:
     """Tests for QuicStreamAdapter.write_eof idempotency + close."""
@@ -484,6 +575,12 @@ class TestQuicStreamAdapter:
         from unittest.mock import MagicMock
 
         protocol = MagicMock()
+        # The adapter inspects sender state before sending FIN; mock both
+        # flags as False so we exercise the active send path.
+        protocol._quic._streams.__getitem__.return_value.sender.is_finished = False
+        protocol._quic._streams.__getitem__.return_value.sender.reset_pending = False
+        protocol._quic._streams.get.return_value.sender.is_finished = False
+        protocol._quic._streams.get.return_value.sender.reset_pending = False
         adapter = QuicStreamAdapter(protocol=protocol, stream_id=0)
         assert not adapter._closing
 
@@ -505,11 +602,46 @@ class TestQuicStreamAdapter:
         from unittest.mock import MagicMock
 
         protocol = MagicMock()
+        protocol._quic._streams.get.return_value.sender.is_finished = False
+        protocol._quic._streams.get.return_value.sender.reset_pending = False
         adapter = QuicStreamAdapter(protocol=protocol, stream_id=4)
 
         adapter.close()
         assert adapter._closing
         protocol._quic.send_stream_data.assert_called_once_with(4, b"", end_stream=True)
+
+    def test_write_eof_skips_after_reset(self):
+        """RFC 9000 3.5: do not attempt to send a FIN once the peer has
+        reset (or we have stop_sending'd) the stream — the underlying
+        sender raises and the asyncio StreamWriter.__del__ would surface
+        the error as a PytestUnraisableExceptionWarning."""
+        from qh3.asyncio.protocol import QuicStreamAdapter
+        from unittest.mock import MagicMock
+
+        protocol = MagicMock()
+        # Simulate sender that has been reset.
+        protocol._quic._streams.get.return_value.sender.is_finished = False
+        protocol._quic._streams.get.return_value.sender.reset_pending = True
+        adapter = QuicStreamAdapter(protocol=protocol, stream_id=0)
+
+        adapter.write_eof()
+        assert adapter._closing  # marks closing for is_closing()
+        protocol._quic.send_stream_data.assert_not_called()
+        protocol._transmit_soon.assert_not_called()
+
+    def test_write_eof_skips_when_stream_gone(self):
+        """If the underlying stream has been removed from the connection
+        (e.g. after full RESET_STREAM cleanup), write_eof must no-op."""
+        from qh3.asyncio.protocol import QuicStreamAdapter
+        from unittest.mock import MagicMock
+
+        protocol = MagicMock()
+        protocol._quic._streams.get.return_value = None
+        adapter = QuicStreamAdapter(protocol=protocol, stream_id=0)
+
+        adapter.write_eof()
+        assert adapter._closing
+        protocol._quic.send_stream_data.assert_not_called()
 
 
 def _raise_not_implemented(*args, **kwargs):

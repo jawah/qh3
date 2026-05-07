@@ -196,6 +196,21 @@ class State(IntEnum):
     SERVER_POST_HANDSHAKE = 10
 
 
+# RFC 9001 4.1.3: expected encryption level for each TLS state.
+_STATE_EXPECTED_EPOCH: dict[int, int] = {
+    State.CLIENT_EXPECT_SERVER_HELLO: Epoch.INITIAL,
+    State.CLIENT_EXPECT_ENCRYPTED_EXTENSIONS: Epoch.HANDSHAKE,
+    State.CLIENT_EXPECT_CERTIFICATE_REQUEST_OR_CERTIFICATE: Epoch.HANDSHAKE,
+    State.CLIENT_EXPECT_CERTIFICATE_CERTIFICATE: Epoch.HANDSHAKE,
+    State.CLIENT_EXPECT_CERTIFICATE_VERIFY: Epoch.HANDSHAKE,
+    State.CLIENT_EXPECT_FINISHED: Epoch.HANDSHAKE,
+    State.CLIENT_POST_HANDSHAKE: Epoch.ONE_RTT,
+    State.SERVER_EXPECT_CLIENT_HELLO: Epoch.INITIAL,
+    State.SERVER_EXPECT_FINISHED: Epoch.HANDSHAKE,
+    State.SERVER_POST_HANDSHAKE: Epoch.ONE_RTT,
+}
+
+
 class HKDFExpand:
     def __init__(
         self,
@@ -1739,7 +1754,7 @@ class Context:
         return self._ech_retry_configs
 
     def handle_message(
-        self, input_data: bytes, output_buf: dict[Epoch, Buffer]
+        self, input_data: bytes, output_buf: dict[Epoch, Buffer], epoch: int = -1
     ) -> None:
         if self.state == State.CLIENT_HANDSHAKE_START:
             self._client_send_hello(output_buf[Epoch.INITIAL])
@@ -1760,6 +1775,13 @@ class Context:
             self._receive_buffer = self._receive_buffer[message_length:]
 
             input_buf = Buffer(data=message)
+
+            # Validate that the TLS message arrived at the expected
+            # encryption level (RFC 9001 4.1.3).
+            if epoch >= 0:
+                expected_epoch = _STATE_EXPECTED_EPOCH.get(self.state)
+                if expected_epoch is not None and epoch != expected_epoch:
+                    raise AlertUnexpectedMessage
 
             # client states
 

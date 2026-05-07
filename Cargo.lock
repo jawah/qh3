@@ -977,7 +977,7 @@ dependencies = [
 
 [[package]]
 name = "qh3"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "aws-lc-rs",
  "bincode",

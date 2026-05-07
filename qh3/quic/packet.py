@@ -404,10 +404,16 @@ def push_quic_version_information(
 
 def pull_quic_transport_parameters(buf: Buffer) -> QuicTransportParameters:
     params = QuicTransportParameters()
+    seen: set[int] = set()
     while not buf.eof():
         param_id = buf.pull_uint_var()
         param_len = buf.pull_uint_var()
         param_start = buf.tell()
+        # RFC 9000 7.4: an endpoint MUST NOT send a parameter more than
+        # once. Treat duplicates as TRANSPORT_PARAMETER_ERROR.
+        if param_id in seen:
+            raise ValueError(f"Duplicate transport parameter 0x{param_id:x}")
+        seen.add(param_id)
         if param_id in PARAMS:
             # parse known parameter
             param_name, param_type = PARAMS[param_id]

@@ -24,6 +24,14 @@ K_CUBIC_C = 0.4
 K_CUBIC_LOSS_REDUCTION_FACTOR = 0.7
 K_CUBIC_MAX_IDLE_TIME = 2.0  # seconds
 
+# HyStart++ constants (RFC 9406 4.2)
+K_HYSTART_MIN_RTT_THRESH = 0.004  # 4 ms
+K_HYSTART_MAX_RTT_THRESH = 0.016  # 16 ms
+K_HYSTART_MIN_RTT_DIVISOR = 8
+K_HYSTART_N_RTT_SAMPLE = 8
+K_HYSTART_CSS_GROWTH_DIVISOR = 4
+K_HYSTART_CSS_ROUNDS = 5
+
 
 def _cubic_root(x: float) -> float:
     if x < 0:
@@ -46,6 +54,9 @@ class QuicPacketSpace:
         self.largest_acked_packet = 0
         self.loss_time: float | None = None
         self.sent_packets: dict[int, QuicSentPacket] = {}
+        # RFC 9002 6.2.1: per-PN-space time of last sent ack-eliciting packet,
+        # used as the reference for PTO computation.
+        self.time_of_last_ack_eliciting_packet: float = 0.0
 
 
 class QuicCongestionControl:
@@ -73,6 +84,18 @@ class QuicCongestionControl:
         self._cwnd_epoch: int = 0
         self._t_epoch: float = 0.0
 
+        # HyStart++ state (RFC 9406). Enabled by default per spec
+        # recommendation for slow-start exit detection.
+        self.hystart_enabled: bool = True
+        self._hystart_in_css: bool = False
+        self._hystart_css_round: int = 0
+        self._hystart_css_baseline_min_rtt: float = math.inf
+        self._hystart_last_round_min_rtt: float = math.inf
+        self._hystart_current_round_min_rtt: float = math.inf
+        self._hystart_rtt_sample_count: int = 0
+        self._hystart_window_end: int | None = None
+        self._hystart_largest_sent_pn: int = -1
+
     def _W_cubic(self, t: float) -> int:
         W_max_segments = self._W_max / self._max_datagram_size
         target_segments = K_CUBIC_C * (t - self._K) ** 3 + W_max_segments
@@ -88,6 +111,21 @@ class QuicCongestionControl:
         self._W_est = 0
         self._cwnd_epoch = 0
         self._t_epoch = 0.0
+        self._hystart_reset()
+
+    def _hystart_reset(self) -> None:
+        """
+        Reset HyStart++ slow-start exit detector. Called when entering a
+        fresh slow-start phase: at construction, after idle restart, and
+        after persistent congestion collapse.
+        """
+        self._hystart_in_css = False
+        self._hystart_css_round = 0
+        self._hystart_css_baseline_min_rtt = math.inf
+        self._hystart_last_round_min_rtt = math.inf
+        self._hystart_current_round_min_rtt = math.inf
+        self._hystart_rtt_sample_count = 0
+        self._hystart_window_end = None
 
     def _start_epoch(self, now: float) -> None:
         self._t_epoch = now
@@ -101,9 +139,35 @@ class QuicCongestionControl:
         self.bytes_in_flight -= packet.sent_bytes
         self._last_ack = packet.sent_time
 
+        # HyStart++ round tracking (RFC 9406 4.3): a round ends when an
+        # ACK is received for a packet whose number is at or above the
+        # window-end PN recorded at the start of the round.
+        if (
+            self.hystart_enabled
+            and self.ssthresh is None
+            and self._hystart_window_end is not None
+            and packet.packet_number >= self._hystart_window_end
+        ):
+            self._hystart_last_round_min_rtt = self._hystart_current_round_min_rtt
+            self._hystart_current_round_min_rtt = math.inf
+            self._hystart_rtt_sample_count = 0
+            self._hystart_window_end = self._hystart_largest_sent_pn + 1
+            if self._hystart_in_css:
+                self._hystart_css_round += 1
+                if self._hystart_css_round >= K_HYSTART_CSS_ROUNDS:
+                    # Conservative slow start exhausted -> exit to CA.
+                    self.ssthresh = self.congestion_window
+                    self._hystart_in_css = False
+
         if self.ssthresh is None or self.congestion_window < self.ssthresh:
             # slow start
-            self.congestion_window += packet.sent_bytes
+            if self._hystart_in_css:
+                # Conservative Slow Start: dampened growth (RFC 9406 4.3).
+                self.congestion_window += (
+                    packet.sent_bytes // K_HYSTART_CSS_GROWTH_DIVISOR
+                )
+            else:
+                self.congestion_window += packet.sent_bytes
         else:
             # congestion avoidance
             if self._first_slow_start and not self._starting_congestion_avoidance:
@@ -148,6 +212,16 @@ class QuicCongestionControl:
 
     def on_packet_sent(self, packet: QuicSentPacket) -> None:
         self.bytes_in_flight += packet.sent_bytes
+        # Track largest sent PN and bootstrap the HyStart++ round window
+        # on the first packet sent during slow start.
+        if packet.packet_number > self._hystart_largest_sent_pn:
+            self._hystart_largest_sent_pn = packet.packet_number
+        if (
+            self.hystart_enabled
+            and self.ssthresh is None
+            and self._hystart_window_end is None
+        ):
+            self._hystart_window_end = packet.packet_number
         # reset cwnd after prolonged idle
         if self._last_ack > 0.0:
             elapsed_idle = packet.sent_time - self._last_ack
@@ -155,6 +229,18 @@ class QuicCongestionControl:
                 self._reset()
 
     def on_packets_expired(self, packets: Iterable[QuicSentPacket]) -> None:
+        for packet in packets:
+            self.bytes_in_flight -= packet.sent_bytes
+
+    def on_packets_rescheduled(self, packets: Iterable[QuicSentPacket]) -> None:
+        """
+        Mirror of on_packets_lost, but without congestion-control reduction.
+        Used by PTO probes (RFC 9002 6.2.4): a PTO timer expiration MUST NOT
+        cause prior unacknowledged packets to be marked as lost. We still
+        reclaim bytes_in_flight so the application is allowed to retransmit
+        the data on a fresh packet without being blocked by the congestion
+        window.
+        """
         for packet in packets:
             self.bytes_in_flight -= packet.sent_bytes
 
@@ -183,14 +269,89 @@ class QuicCongestionControl:
             )
             self.ssthresh = self.congestion_window
             self._starting_congestion_avoidance = True
+            # RFC 9406 4.2: loss/ECN during slow start or CSS sets
+            # ssthresh = cwnd and exits to congestion avoidance. Clear the
+            # HyStart++ CSS flag so a stale value can't influence growth
+            # if the connection later re-enters slow start (e.g. after
+            # idle resume)
+            self._hystart_in_css = False
 
     def on_rtt_measurement(self, latest_rtt: float, now: float) -> None:
         self._rtt = latest_rtt
-        # check whether we should exit slow start
-        if self.ssthresh is None and self._rtt_monitor.is_rtt_increasing(
-            latest_rtt, now
-        ):
-            self.ssthresh = self.congestion_window
+        if self.ssthresh is not None:
+            return
+
+        if self.hystart_enabled:
+            # HyStart++ slow-start exit detection (RFC 9406 4.3).
+            if latest_rtt < self._hystart_current_round_min_rtt:
+                self._hystart_current_round_min_rtt = latest_rtt
+            self._hystart_rtt_sample_count += 1
+
+            if (
+                self._hystart_rtt_sample_count >= K_HYSTART_N_RTT_SAMPLE
+                and math.isfinite(self._hystart_last_round_min_rtt)
+                and math.isfinite(self._hystart_current_round_min_rtt)
+            ):
+                rtt_thresh = max(
+                    K_HYSTART_MIN_RTT_THRESH,
+                    min(
+                        K_HYSTART_MAX_RTT_THRESH,
+                        self._hystart_last_round_min_rtt / K_HYSTART_MIN_RTT_DIVISOR,
+                    ),
+                )
+                if self._hystart_in_css:
+                    # In CSS: a sustained RTT improvement (current round
+                    # min rtt drops below the CSS baseline) indicates the
+                    # earlier RTT inflation was a false trigger; revert
+                    # to standard slow start (RFC 9406 4.3).
+                    if (
+                        self._hystart_current_round_min_rtt
+                        < self._hystart_css_baseline_min_rtt
+                    ):
+                        self._hystart_in_css = False
+                        self._hystart_css_round = 0
+                        self._hystart_css_baseline_min_rtt = math.inf
+                else:
+                    if (
+                        self._hystart_current_round_min_rtt
+                        >= self._hystart_last_round_min_rtt + rtt_thresh
+                    ):
+                        # Enter Conservative Slow Start.
+                        self._hystart_in_css = True
+                        self._hystart_css_baseline_min_rtt = (
+                            self._hystart_current_round_min_rtt
+                        )
+                        self._hystart_css_round = 0
+        else:
+            # Fallback: legacy RTT-monotonic-rise heuristic.
+            if self._rtt_monitor.is_rtt_increasing(latest_rtt, now):
+                self.ssthresh = self.congestion_window
+
+    def on_persistent_congestion(self, now: float) -> None:
+        """
+        RFC 9002 7.6: on persistent congestion the sender's cwnd is
+        collapsed to the minimum window and slow-start state is reset
+        so the controller re-probes capacity.
+
+        Set ``_congestion_recovery_start_time`` to ``now`` (the time of
+        the collapse), not 0.0. Otherwise, the very next packet declared
+        lost (e.g. a probe sent just after collapse) passes the
+        ``lost_largest_time > _congestion_recovery_start_time`` guard in
+        ``on_packets_lost`` and pins ``ssthresh = MINIMUM_WINDOW``,
+        terminating the new slow-start phase that this collapse was
+        meant to start.
+        """
+        self._congestion_recovery_start_time = now
+        self.congestion_window = self._max_datagram_size * K_MINIMUM_WINDOW
+        self.ssthresh = None
+        self._first_slow_start = True
+        self._starting_congestion_avoidance = False
+        self._K = 0.0
+        self._W_max = self.congestion_window
+        self._W_est = 0
+        self._cwnd_epoch = 0
+        self._t_epoch = 0.0
+        self._hystart_reset()
 
 
 class QuicPacketRecovery:
@@ -223,6 +384,11 @@ class QuicPacketRecovery:
         self._rtt_initial = initial_rtt
         self._rtt_initialized = False
         self._rtt_latest = 0.0
+        # RFC 9002 6.1.2: loss_delay uses the raw latest_rtt sample,
+        # i.e. the last RTT measurement not adjusted for ack delay.
+        # We retain it separately because `rtt_latest above is reduced
+        # by ack_delay for SRTT computation.
+        self._rtt_latest_raw = 0.0
         self._rtt_min = math.inf
         self._rtt_smoothed = 0.0
         self._rtt_variance = 0.0
@@ -264,15 +430,24 @@ class QuicPacketRecovery:
         if loss_space is not None:
             return loss_space.loss_time
 
-        # packet timer
-        if (
-            not self.peer_completed_address_validation
-            or sum(space.ack_eliciting_in_flight for space in self.spaces) > 0
-        ):
+        # PTO timer (RFC 9002 6.2.1): if address validation is incomplete,
+        # arm using the time of the last ack-eliciting packet sent across
+        # any space; otherwise pick the earliest per-space last-sent time
+        # among spaces that have ack-eliciting packets in flight.
+        if not self.peer_completed_address_validation:
             timeout = self.get_probe_timeout() * (2**self._pto_count)
             return self._time_of_last_sent_ack_eliciting_packet + timeout
 
-        return None
+        earliest: float | None = None
+        for space in self.spaces:
+            if space.ack_eliciting_in_flight > 0:
+                t = space.time_of_last_ack_eliciting_packet
+                if earliest is None or t < earliest:
+                    earliest = t
+        if earliest is None:
+            return None
+        timeout = self.get_probe_timeout() * (2**self._pto_count)
+        return earliest + timeout
 
     def get_probe_timeout(self) -> float:
         if not self._rtt_initialized:
@@ -283,15 +458,40 @@ class QuicPacketRecovery:
             + self.max_ack_delay
         )
 
+    def reset_for_new_path(self) -> None:
+        """
+        RFC 9000 9.4 / RFC 9002 5.1: when a path is changed, RTT samples
+        from the prior path are no longer representative. ``min_rtt`` in
+        particular MUST be reset because the new path may have higher
+        latency, and a stale ``min_rtt`` would cause spurious loss
+        declarations (since loss_delay scales with max(latest_rtt,
+        smoothed_rtt) but min_rtt feeds the ack-delay floor in
+        ``on_ack_received``). We additionally reset the smoothed RTT so a
+        fresh sample is taken on the new path.
+        """
+        self._rtt_initialized = False
+        self._rtt_latest = 0.0
+        self._rtt_latest_raw = 0.0
+        self._rtt_min = math.inf
+        self._rtt_smoothed = 0.0
+        self._rtt_variance = 0.0
+
     def on_ack_received(
         self,
         space: QuicPacketSpace,
         ack_rangeset: RangeSet,
         ack_delay: float,
         now: float,
+        reset_pto_count: bool = True,
     ) -> None:
         """
         Update metrics as the result of an ACK being received.
+
+        ``reset_pto_count`` MUST be False when the caller is a client
+        processing an ACK in the Initial packet space and the server has
+        not yet been confirmed to have validated the client's address
+        (RFC 9002 6.2.1). Resetting in that case would prematurely
+        clear the PTO backoff and let a stuck handshake under-probe.
         """
         is_ack_eliciting = False
         largest_acked = ack_rangeset.bounds()[1] - 1
@@ -309,7 +509,8 @@ class QuicPacketRecovery:
                 packet = space.sent_packets.pop(packet_number)
                 if packet.is_ack_eliciting:
                     is_ack_eliciting = True
-                    space.ack_eliciting_in_flight -= 1
+                    if not packet.is_pmtu_probe:
+                        space.ack_eliciting_in_flight -= 1
                 if packet.in_flight:
                     self._cc.on_packet_acked(packet)
                 largest_newly_acked = packet_number
@@ -334,9 +535,13 @@ class QuicPacketRecovery:
 
             # update RTT estimate, which cannot be < 1 ms
             self._rtt_latest = max(latest_rtt, 0.001)
+            # RFC 9002 6.1.2 keeps the *raw* sample (pre ack-delay
+            # subtraction) so the loss-detection time threshold is not
+            # artificially shortened for slow peers.
+            self._rtt_latest_raw = self._rtt_latest
             if self._rtt_latest < self._rtt_min:
                 self._rtt_min = self._rtt_latest
-            if self._rtt_latest > self._rtt_min + ack_delay:
+            if self._rtt_latest >= self._rtt_min + ack_delay:
                 self._rtt_latest -= ack_delay
 
             if not self._rtt_initialized:
@@ -345,7 +550,7 @@ class QuicPacketRecovery:
                 self._rtt_smoothed = latest_rtt
             else:
                 self._rtt_variance = 3 / 4 * self._rtt_variance + 1 / 4 * abs(
-                    self._rtt_min - self._rtt_latest
+                    self._rtt_smoothed - self._rtt_latest
                 )
                 self._rtt_smoothed = (
                     7 / 8 * self._rtt_smoothed + 1 / 8 * self._rtt_latest
@@ -364,7 +569,8 @@ class QuicPacketRecovery:
         self._detect_loss(space, now=now)
 
         # reset PTO count
-        self._pto_count = 0
+        if reset_pto_count:
+            self._pto_count = 0
 
         if self._quic_logger is not None:
             self._log_metrics_updated(log_rtt=log_rtt)
@@ -381,11 +587,16 @@ class QuicPacketRecovery:
     def on_packet_sent(self, packet: QuicSentPacket, space: QuicPacketSpace) -> None:
         space.sent_packets[packet.packet_number] = packet
 
-        if packet.is_ack_eliciting:
+        # RFC 9000 14.4: PMTU probes have their own probe
+        # timer and MUST NOT anchor the standard PTO / loss-detection timer.
+        # We exclude them from ack_eliciting_in_flight bookkeeping so they
+        # neither arm PTO nor inflate _pto_count on probe loss.
+        if packet.is_ack_eliciting and not packet.is_pmtu_probe:
             space.ack_eliciting_in_flight += 1
         if packet.in_flight:
-            if packet.is_ack_eliciting:
+            if packet.is_ack_eliciting and not packet.is_pmtu_probe:
                 self._time_of_last_sent_ack_eliciting_packet = packet.sent_time
+                space.time_of_last_ack_eliciting_packet = packet.sent_time
 
             # add packet to bytes in flight
             self._cc.on_packet_sent(packet)
@@ -395,17 +606,16 @@ class QuicPacketRecovery:
 
     def reschedule_data(self, now: float) -> None:
         """
-        Schedule some data for retransmission.
+        Schedule some data for retransmission upon PTO expiry.
 
-        Per RFC 9002 6.2.4, on PTO expiration the sender MUST send one or two
-        ack-eliciting packets. If application data is in flight, we declare
-        the oldest in-flight packets as lost so their stream data is
-        retransmitted in the same write cycle. This ensures that PTO
-        exponential backoff functions correctly: if the retransmission also
-        fails to elicit an ACK, _pto_count remains elevated and the next PTO
-        interval doubles. Without this, a small PING probe could be ACK'd
-        (resetting _pto_count to 0) while the larger retransmission packet is
-        persistently lost, defeating backoff entirely.
+        Per RFC 9002 6.2.4, on PTO the sender MUST send one or two
+        ack-eliciting packets. A PTO event MUST NOT mark prior packets as
+        lost or trigger a congestion-control reduction. Here we requeue
+        outstanding CRYPTO (or up to two oldest application data packets)
+        so their content is included with the probe; the bytes are
+        reclaimed via on_packets_rescheduled rather than on_packets_lost
+        to avoid an unwarranted cwnd reduction. If nothing was rescheduled
+        the caller emits a PING frame as the ack-eliciting probe.
         """
         # if there is any outstanding CRYPTO, retransmit it
         crypto_scheduled = False
@@ -414,14 +624,13 @@ class QuicPacketRecovery:
                 filter(lambda i: i.is_crypto_packet, space.sent_packets.values())
             )
             if packets:
-                self._on_packets_lost(packets, space=space, now=now)
+                self._on_packets_rescheduled(packets, space=space, now=now)
                 crypto_scheduled = True
         if crypto_scheduled and self._logger is not None:
             self._logger.debug("Scheduled CRYPTO data for retransmission")
 
-        # Reschedule oldest in-flight application data (up to 2 packets) so
-        # it is retransmitted with the probe rather than waiting an extra RTT
-        # for loss detection after the PING ACK.
+        # Reschedule oldest in-flight application data (up to 2 packets)
+        # so it is sent in the same write cycle as the PTO probe.
         app_rescheduled = False
         if not crypto_scheduled:
             for space in self.spaces:
@@ -435,7 +644,7 @@ class QuicPacketRecovery:
                         if len(to_reschedule) >= 2:
                             break
                 if to_reschedule:
-                    self._on_packets_lost(to_reschedule, space=space, now=now)
+                    self._on_packets_rescheduled(to_reschedule, space=space, now=now)
                     app_rescheduled = True
 
         # If no data was rescheduled, send a PING as the ack-eliciting probe
@@ -446,10 +655,18 @@ class QuicPacketRecovery:
         """
         Check whether any packets should be declared lost.
         """
-        loss_delay = K_TIME_THRESHOLD * (
-            max(self._rtt_latest, self._rtt_smoothed)
-            if self._rtt_initialized
-            else self._rtt_initial
+        # RFC 9002 6.1.2: loss_delay = kTimeThreshold * max(latest_rtt,
+        # smoothed_rtt). latest_rtt here is the most recent raw
+        # RTT sample (without the ack-delay subtraction applied to the
+        # SRTT-input _rtt_latest).
+        loss_delay = max(
+            K_TIME_THRESHOLD
+            * (
+                max(self._rtt_latest_raw, self._rtt_smoothed)
+                if self._rtt_initialized
+                else self._rtt_initial
+            ),
+            K_GRANULARITY,
         )
         packet_threshold = space.largest_acked_packet - K_PACKET_THRESHOLD
         time_threshold = now - loss_delay
@@ -509,9 +726,16 @@ class QuicPacketRecovery:
             del space.sent_packets[packet.packet_number]
 
             if packet.in_flight:
-                lost_packets_cc.append(packet)
+                if packet.is_pmtu_probe:
+                    # RFC 9000 14.4: loss of a PMTU probe MUST NOT trigger
+                    # a congestion control reaction. Reclaim bytes_in_flight
+                    # directly so the connection is not wedged, but skip the
+                    # congestion controller and persistent-congestion logic.
+                    self._cc.bytes_in_flight -= packet.sent_bytes
+                else:
+                    lost_packets_cc.append(packet)
 
-            if packet.is_ack_eliciting:
+            if packet.is_ack_eliciting and not packet.is_pmtu_probe:
                 space.ack_eliciting_in_flight -= 1
 
             if self._quic_logger is not None:
@@ -538,5 +762,66 @@ class QuicPacketRecovery:
                 congestion_window=self._cc.congestion_window,
                 smoothed_rtt=self._rtt_smoothed,
             )
+
+            # RFC 9002 7.6: detect persistent congestion. If at least two
+            # ack-eliciting packets sent over a duration longer than
+            # persistent_congestion_duration are lost, and an RTT sample
+            # has been obtained on this connection (so peer liveness is
+            # established), collapse the congestion window.
+            if self._rtt_initialized:
+                eliciting = [p for p in lost_packets_cc if p.is_ack_eliciting]
+                if len(eliciting) >= 2:
+                    pc_duration = (
+                        self._rtt_smoothed
+                        + max(4 * self._rtt_variance, K_GRANULARITY)
+                        + self.max_ack_delay
+                    ) * 3  # kPersistentCongestionThreshold
+                    span = max(p.sent_time for p in eliciting) - min(
+                        p.sent_time for p in eliciting
+                    )
+                    if span > pc_duration:
+                        if self._logger is not None:
+                            self._logger.debug(
+                                "Persistent congestion detected (span=%.3fs > %.3fs); "
+                                "collapsing cwnd",
+                                span,
+                                pc_duration,
+                            )
+                        self._cc.on_persistent_congestion(now)
+                        self._pacer.update_rate(
+                            congestion_window=self._cc.congestion_window,
+                            smoothed_rtt=self._rtt_smoothed,
+                        )
+            if self._quic_logger is not None:
+                self._log_metrics_updated()
+
+    def _on_packets_rescheduled(
+        self, packets: Iterable[QuicSentPacket], space: QuicPacketSpace, now: float
+    ) -> None:
+        """
+        Requeue the contents of in-flight packets without declaring loss.
+        Used by PTO probes (RFC 9002 6.2.4): the packet is removed from
+        sent_packets and its delivery_handlers fire LOST so the stream
+        sender re-enqueues the data, but congestion control is NOT informed
+        and bytes_in_flight is reclaimed without applying a reduction.
+        """
+        rescheduled_cc: list[QuicSentPacket] = []
+        for packet in packets:
+            del space.sent_packets[packet.packet_number]
+
+            if packet.in_flight:
+                rescheduled_cc.append(packet)
+
+            if packet.is_ack_eliciting and not packet.is_pmtu_probe:
+                space.ack_eliciting_in_flight -= 1
+
+            # trigger callbacks (so stream senders re-enqueue stream data)
+            dh = packet.delivery_handlers
+            if dh is not None:
+                for handler, args in dh:
+                    handler(QuicDeliveryState.LOST, *args)
+
+        if rescheduled_cc:
+            self._cc.on_packets_rescheduled(rescheduled_cc)
             if self._quic_logger is not None:
                 self._log_metrics_updated()

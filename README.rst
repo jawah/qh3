@@ -70,6 +70,7 @@ Features
 - OCSP Stapling (Client Only)
 - Encrypted Client Hello conforming with `RFC 9849`_
 - GRO/GSO support when available (Linux native and MacOS private batching API)
+- HyStart++ `RFC 9406`_
 
 Requirements
 ------------
@@ -95,5 +96,6 @@ License
 .. _RFC 9114: https://datatracker.ietf.org/doc/html/rfc9114
 .. _RFC 9369: https://datatracker.ietf.org/doc/html/rfc9369
 .. _RFC 9849: https://datatracker.ietf.org/doc/html/rfc9849
+.. _RFC 9406: https://datatracker.ietf.org/doc/html/rfc9406
 .. _niquests: https://github.com/jawah/niquests
 .. _urllib3.future: https://github.com/jawah/urllib3.future

@@ -486,7 +486,7 @@ class TestQuicConnection:
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 1280]
-            assert client.get_timer() == 0.2
+            assert client.get_timer() == pytest.approx(0.666)
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -496,7 +496,7 @@ class TestQuicConnection:
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
-            assert server.get_timer() == pytest.approx(0.25)
+            assert server.get_timer() == pytest.approx(0.716)
             self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
@@ -507,7 +507,7 @@ class TestQuicConnection:
             client.receive_datagram(items[2][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == CLIENT_HANDSHAKE_DATAGRAM_SIZES
-            assert client.get_timer() == pytest.approx(0.425)
+            assert client.get_timer() == pytest.approx(0.4)
             self.assertSentPackets(client, [0, 1, 1])
             self.assertEvents(
                 client, [events.ProtocolNegotiated] + HANDSHAKE_COMPLETED_EVENTS
@@ -543,7 +543,7 @@ class TestQuicConnection:
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 1280]
-            assert client.get_timer() == 0.2
+            assert client.get_timer() == pytest.approx(0.666)
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -552,7 +552,7 @@ class TestQuicConnection:
             client.handle_timer(now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 1280]
-            assert client.get_timer() == pytest.approx(0.6)
+            assert client.get_timer() == pytest.approx(1.998)
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -562,7 +562,7 @@ class TestQuicConnection:
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
-            assert server.get_timer() == pytest.approx(0.45)
+            assert server.get_timer() == pytest.approx(1.382)
             self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
@@ -573,7 +573,7 @@ class TestQuicConnection:
             client.receive_datagram(items[2][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == CLIENT_HANDSHAKE_DATAGRAM_SIZES
-            assert client.get_timer() == pytest.approx(0.625)
+            assert client.get_timer() == pytest.approx(1.066)
             self.assertSentPackets(client, [0, 1, 1])
             self.assertEvents(
                 client, [events.ProtocolNegotiated] + HANDSHAKE_COMPLETED_EVENTS
@@ -583,7 +583,7 @@ class TestQuicConnection:
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [229]
-            assert server.get_timer() == pytest.approx(0.625)
+            assert server.get_timer() == pytest.approx(1.091)
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS)
 
@@ -592,7 +592,7 @@ class TestQuicConnection:
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [32]
             # idle timeout
-            assert client.get_timer() == pytest.approx(60.4)
+            assert client.get_timer() == pytest.approx(60.866)
             self.assertSentPackets(client, [0, 0, 1])
             self.assertEvents(client, [])
 
@@ -610,7 +610,7 @@ class TestQuicConnection:
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 1280]
-            assert client.get_timer() == 0.2
+            assert client.get_timer() == pytest.approx(0.666)
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -621,7 +621,7 @@ class TestQuicConnection:
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
-            assert server.get_timer() == 0.25
+            assert server.get_timer() == pytest.approx(0.716)
             self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
@@ -630,7 +630,7 @@ class TestQuicConnection:
             client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 1280]
-            assert client.get_timer() == pytest.approx(0.3)
+            assert client.get_timer() == pytest.approx(0.766)
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -663,7 +663,7 @@ class TestQuicConnection:
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [229]
-            # self.assertAlmostEqual(server.get_timer(), 0.525)
+            assert server.get_timer() == pytest.approx(0.525)
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS)
 
@@ -691,7 +691,7 @@ class TestQuicConnection:
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 1280]
-            assert client.get_timer() == 0.2
+            assert client.get_timer() == pytest.approx(0.666)
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -701,7 +701,7 @@ class TestQuicConnection:
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
-            assert server.get_timer() == 0.25
+            assert server.get_timer() == pytest.approx(0.716)
             self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
@@ -710,7 +710,7 @@ class TestQuicConnection:
             client.handle_timer(now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 1280]
-            assert client.get_timer() == pytest.approx(0.6)
+            assert client.get_timer() == pytest.approx(1.998)
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -720,7 +720,7 @@ class TestQuicConnection:
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
-            assert server.get_timer() == 0.45
+            assert server.get_timer() == pytest.approx(1.382)
             self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [])
 
@@ -731,8 +731,8 @@ class TestQuicConnection:
             client.receive_datagram(items[2][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == CLIENT_HANDSHAKE_DATAGRAM_SIZES
-            assert client.get_timer() >= 0.5
-            assert client.get_timer() <= 0.63
+            assert client.get_timer() >= 1.0
+            assert client.get_timer() <= 1.1
             self.assertSentPackets(client, [0, 1, 1])
             self.assertEvents(
                 client, [events.ProtocolNegotiated] + HANDSHAKE_COMPLETED_EVENTS
@@ -742,7 +742,7 @@ class TestQuicConnection:
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [229]
-            assert server.get_timer() == pytest.approx(0.625)
+            assert server.get_timer() == pytest.approx(1.091)
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS)
 
@@ -751,7 +751,7 @@ class TestQuicConnection:
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [32]
             # idle timeout
-            assert client.get_timer() == pytest.approx(60.4)
+            assert client.get_timer() == pytest.approx(60.866)
             self.assertSentPackets(client, [0, 0, 1])
             self.assertEvents(client, [])
 
@@ -765,7 +765,7 @@ class TestQuicConnection:
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 1280]
-            assert client.get_timer() == 0.2
+            assert client.get_timer() == pytest.approx(0.666)
             self.assertSentPackets(client, [2, 0, 0])
             self.assertEvents(client, [])
 
@@ -776,7 +776,7 @@ class TestQuicConnection:
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
-            assert server.get_timer() == 0.25
+            assert server.get_timer() == pytest.approx(0.716)
             self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
@@ -786,7 +786,7 @@ class TestQuicConnection:
             client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280]
-            assert client.get_timer() == pytest.approx(0.325)
+            assert client.get_timer() == pytest.approx(0.3)
             self.assertSentPackets(client, [0, 1, 0])
             self.assertEvents(client, [events.ProtocolNegotiated])
 
@@ -795,7 +795,7 @@ class TestQuicConnection:
             client.handle_timer(now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [45]
-            assert client.get_timer() == pytest.approx(0.975)
+            assert client.get_timer() == pytest.approx(0.9)
             self.assertSentPackets(client, [0, 2, 0])
             self.assertEvents(client, [])
 
@@ -804,7 +804,7 @@ class TestQuicConnection:
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [48]
-            assert server.get_timer() == pytest.approx(0.25)
+            assert server.get_timer() == pytest.approx(0.716)
             self.assertSentPackets(server, [0, 3, 0])
             self.assertEvents(server, [])
 
@@ -813,7 +813,7 @@ class TestQuicConnection:
             server.handle_timer(now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 890]
-            assert server.get_timer() == pytest.approx(0.65)
+            assert server.get_timer() == pytest.approx(2.048)
             self.assertSentPackets(server, [0, 3, 0])
             self.assertEvents(server, [])
 
@@ -823,7 +823,7 @@ class TestQuicConnection:
             client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [313]
-            assert client.get_timer() == pytest.approx(0.95)
+            assert client.get_timer() == pytest.approx(1.366)
             self.assertSentPackets(client, [0, 3, 1])
             self.assertEvents(client, HANDSHAKE_COMPLETED_EVENTS)
 
@@ -831,7 +831,7 @@ class TestQuicConnection:
             server.receive_datagram(items[0][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [229]
-            assert server.get_timer() == pytest.approx(0.675)
+            assert server.get_timer() == pytest.approx(1.141)
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS)
 
@@ -840,7 +840,7 @@ class TestQuicConnection:
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [32]
             # idle timeout
-            assert client.get_timer() == pytest.approx(60.4)
+            assert client.get_timer() == pytest.approx(60.866)
             self.assertSentPackets(client, [0, 0, 1])
             self.assertEvents(client, [])
 
@@ -854,7 +854,7 @@ class TestQuicConnection:
             client.connect(SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 1280]
-            assert client.get_timer() == 0.2
+            assert client.get_timer() == pytest.approx(0.666)
 
             # server receives INITIAL, sends INITIAL + HANDSHAKE
             now += TICK
@@ -862,7 +862,7 @@ class TestQuicConnection:
             server.receive_datagram(items[1][0], CLIENT_ADDR, now=now)
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == SERVER_INITIAL_DATAGRAM_SIZES
-            assert server.get_timer() == 0.25
+            assert server.get_timer() == pytest.approx(0.716)
             self.assertSentPackets(server, [1, 2, 0])
             self.assertEvents(server, [events.ProtocolNegotiated])
 
@@ -873,7 +873,7 @@ class TestQuicConnection:
             client.receive_datagram(items[2][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == CLIENT_HANDSHAKE_DATAGRAM_SIZES
-            assert client.get_timer() == pytest.approx(0.425)
+            assert client.get_timer() == pytest.approx(0.4)
             self.assertSentPackets(client, [0, 1, 1])
             self.assertEvents(
                 client, [events.ProtocolNegotiated] + HANDSHAKE_COMPLETED_EVENTS
@@ -1439,6 +1439,10 @@ class TestQuicConnection:
     def test_handle_ack_frame_ecn(self):
         client = create_standalone_client(self)
 
+        # Pretend we have sent a 1-RTT packet so the ACK below is valid
+        # (RFC 9000 19.3.1: ACKs must not acknowledge unsent packets).
+        client._spaces[tls.Epoch.ONE_RTT].packet_number = 1
+
         client._handle_ack_frame(
             client_receive_context(client),
             QuicFrameType.ACK_ECN,
@@ -1499,7 +1503,20 @@ class TestQuicConnection:
             assert cm.value.frame_type == QuicFrameType.CRYPTO
             assert cm.value.reason_phrase == "offset + length cannot exceed 2^62 - 1"
 
-    def test_handle_data_blocked_frame(self):
+    def test_max_ack_delay_deferred_until_handshake_confirmed(self):
+        """RFC 9002 6.2.1: max_ack_delay only applies after the handshake
+        is confirmed. Before then loss-recovery computations MUST use a
+        max_ack_delay of 0."""
+        # Pre-handshake: brand-new client.
+        fresh = create_standalone_client(self)
+        assert fresh._loss.max_ack_delay == 0.0
+
+        # Post-handshake: client_and_server runs handshake to completion.
+        with client_and_server() as (client, server):
+            assert client._loss.max_ack_delay == client._remote_max_ack_delay
+            assert server._loss.max_ack_delay == server._remote_max_ack_delay
+
+
         with client_and_server() as (client, server):
             # client receives DATA_BLOCKED: 12345
             client._handle_data_blocked_frame(
@@ -1507,6 +1524,92 @@ class TestQuicConnection:
                 QuicFrameType.DATA_BLOCKED,
                 Buffer(data=encode_uint_var(12345)),
             )
+
+    def test_stateless_reset_terminates_connection(self):
+        """RFC 9000 10.3: a UDP datagram whose trailing 16 bytes match a
+        known peer stateless reset token MUST terminate the connection."""
+        with client_and_server() as (client, server):
+            token = client._peer_cid.stateless_reset_token
+            assert token is not None and len(token) == 16
+
+            # Synthesize a junk short-header datagram that uses the
+            # client's own host CID as the destination, fills a fake
+            # packet body, and ends with the peer-issued stateless reset
+            # token. AEAD will fail; the connection MUST then detect the
+            # trailing token and terminate.
+            cid = client.host_cid
+            junk = b"\x40" + cid + bytes(64) + token
+            client.receive_datagram(junk, SERVER_ADDR, now=time.time())
+
+            # Drain events to find ConnectionTerminated.
+            terminated = None
+            while True:
+                ev = client.next_event()
+                if ev is None:
+                    break
+                if isinstance(ev, events.ConnectionTerminated):
+                    terminated = ev
+            assert terminated is not None
+            assert terminated.reason_phrase == "Stateless reset"
+
+    def test_path_challenge_datagram_is_padded(self):
+        """RFC 9000 8.2.1: datagrams carrying PATH_CHALLENGE MUST be
+        padded to at least 1200 bytes (subject to anti-amplification).
+        We send enough bytes from the migrated path so anti-amplification
+        does not cap the response below 1200 bytes."""
+        with client_and_server() as (client, server):
+            # client appears to migrate; pump a few full datagrams of
+            # data from the new address so the server has > 400 bytes
+            # received and anti-amplification allows a >=1200 byte reply.
+            client.send_stream_data(0, b"x" * 4000)
+            for data, _addr in client.datagrams_to_send(now=time.time()):
+                server.receive_datagram(data, ("1.2.3.4", 2345), now=time.time())
+
+            datagrams = server.datagrams_to_send(now=time.time())
+            new_path_dgrams = [
+                d for d, addr in datagrams if addr == ("1.2.3.4", 2345)
+            ]
+            assert new_path_dgrams, "server did not send to migrated path"
+            # The PATH_CHALLENGE-carrying datagram must be padded.
+            assert any(len(d) >= 1200 for d in new_path_dgrams), [
+                len(d) for d in new_path_dgrams
+            ]
+
+    def test_connection_close_retransmits_on_repeated_input(self):
+        """RFC 9000 10.2.1: an endpoint in CLOSING state SHOULD send a
+        packet containing a CONNECTION_CLOSE frame in response to any
+        UDP datagram it receives, subject to rate limiting."""
+        with client_and_server() as (client, server):
+            # Server initiates close.
+            server.close(error_code=0x0)
+            close_dgrams = list(server.datagrams_to_send(now=time.time()))
+            assert close_dgrams, "server did not emit CONNECTION_CLOSE"
+            close_pkt = close_dgrams[0][0]
+
+            # Loopback the server's own CC bytes back to it; it can't
+            # decrypt them but the receive accounting still drives the
+            # exponential-backoff retransmit logic.
+            retransmits = 0
+            for _ in range(64):
+                server.receive_datagram(close_pkt, SERVER_ADDR, now=time.time())
+                emitted = list(server.datagrams_to_send(now=time.time()))
+                retransmits += len(emitted)
+            assert retransmits >= 4, (
+                f"expected at least 4 CONNECTION_CLOSE retransmissions, "
+                f"got {retransmits}"
+            )
+
+    def test_data_blocked_frame_at_limit_bumps_max_data(self):
+        """RFC 9000 4.1: a DATA_BLOCKED at our advertised connection-level
+        limit MUST cause us to extend credit so the peer can make progress."""
+        with client_and_server() as (client, server):
+            old_limit = client._local_max_data.value
+            client._handle_data_blocked_frame(
+                client_receive_context(client),
+                QuicFrameType.DATA_BLOCKED,
+                Buffer(data=encode_uint_var(old_limit)),
+            )
+            assert client._local_max_data.value == 2 * old_limit
 
     def test_handle_datagram_frame(self):
         client = create_standalone_client(self, max_datagram_frame_size=6)
@@ -2106,11 +2209,14 @@ class TestQuicConnection:
 
     def test_handle_reset_stream_frame_twice(self):
         stream_id = 3
+        # RFC 9000 4.5: RESET_STREAM Final Size MUST NOT be less than
+        # the bytes already received on the stream; the server has sent
+        # 5 bytes ("hello") below, so we declare final_size=5.
         reset_stream_data = (
             encode_uint_var(QuicFrameType.RESET_STREAM)
             + encode_uint_var(stream_id)
             + encode_uint_var(QuicErrorCode.INTERNAL_ERROR)
-            + encode_uint_var(0)
+            + encode_uint_var(5)
         )
         with client_and_server() as (client, server):
             # server creates unidirectional stream
@@ -2374,6 +2480,29 @@ class TestQuicConnection:
                 QuicFrameType.STREAM_DATA_BLOCKED,
                 Buffer(data=b"\x00\x01"),
             )
+
+    def test_stream_data_blocked_at_limit_bumps_max_stream_data(self):
+        """RFC 9000 4.1: STREAM_DATA_BLOCKED at the advertised stream
+        limit MUST grant more credit on a live stream."""
+        with client_and_server() as (client, server):
+            # peer (server) creates bidirectional stream 1 -> client receives.
+            # Easier: have the server send some data, which auto-creates
+            # stream 1 on the client with max_stream_data_local set.
+            server.send_stream_data(stream_id=1, data=b"hi")
+            roundtrip(server, client)
+            stream = client._streams[1]
+            old_limit = stream.max_stream_data_local
+            assert old_limit > 0
+
+            buf = Buffer(
+                data=encode_uint_var(1) + encode_uint_var(old_limit)
+            )
+            client._handle_stream_data_blocked_frame(
+                client_receive_context(client),
+                QuicFrameType.STREAM_DATA_BLOCKED,
+                buf,
+            )
+            assert stream.max_stream_data_local == 2 * old_limit
 
     def test_handle_stream_data_blocked_frame_send_only(self):
         with client_and_server() as (client, server):
