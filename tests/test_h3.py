@@ -24,10 +24,10 @@ from qh3.h3.connection import (
     validate_response_headers,
     validate_trailers,
 )
-from qh3.h3.events import DataReceived, HeadersReceived, PushPromiseReceived, InformationalHeadersReceived
+from qh3.h3.events import DataReceived, HeadersReceived, PushPromiseReceived, InformationalHeadersReceived, StreamReset as H3StreamReset, StopSending as H3StopSending
 from qh3.h3.exceptions import NoAvailablePushIDError
 from qh3.quic.configuration import QuicConfiguration
-from qh3.quic.events import StreamDataReceived
+from qh3.quic.events import StreamDataReceived, StreamReset as QuicStreamReset, StopSendingReceived
 from qh3.quic.logger import QuicLogger
 
 from .test_connection import client_and_server, transfer
@@ -382,6 +382,106 @@ class TestH3Connection:
                 ErrorCode.H3_STREAM_CREATION_ERROR,
                 "Only one control stream is allowed",
             )
+
+    def test_handle_stream_reset_emits_h3_event(self):
+        """RFC 9114: a peer reset of a request stream surfaces as
+        H3StreamReset to the application."""
+        with h3_client_and_server() as (quic_client, quic_server):
+            h3_client = H3Connection(quic_client)
+            h3_server = H3Connection(quic_server)
+
+            # send headers only (do NOT end stream so server-side state stays)
+            stream_id = quic_client.get_next_available_stream_id()
+            h3_client.send_headers(
+                stream_id=stream_id,
+                headers=[
+                    (b":method", b"POST"),
+                    (b":scheme", b"https"),
+                    (b":authority", b"localhost"),
+                    (b":path", b"/"),
+                ],
+            )
+            transfer(quic_client, quic_server)
+            # drain queued events
+            while quic_server.next_event() is not None:
+                pass
+
+            events = h3_server.handle_event(
+                QuicStreamReset(error_code=0x10c, stream_id=stream_id)
+            )
+            assert events == [
+                H3StreamReset(stream_id=stream_id, error_code=0x10c)
+            ]
+            assert stream_id not in h3_server._blocked_stream_map
+
+    def test_handle_stop_sending_emits_h3_event(self):
+        """RFC 9114: STOP_SENDING on a request stream surfaces as H3StopSending."""
+        with h3_client_and_server() as (quic_client, quic_server):
+            h3_client = H3Connection(quic_client)
+            h3_server = H3Connection(quic_server)
+
+            stream_id = quic_client.get_next_available_stream_id()
+            h3_client.send_headers(
+                stream_id=stream_id,
+                headers=[
+                    (b":method", b"POST"),
+                    (b":scheme", b"https"),
+                    (b":authority", b"localhost"),
+                    (b":path", b"/"),
+                ],
+            )
+            transfer(quic_client, quic_server)
+            while quic_server.next_event() is not None:
+                pass
+
+            events = h3_server.handle_event(
+                StopSendingReceived(error_code=0x10c, stream_id=stream_id)
+            )
+            assert events == [
+                H3StopSending(stream_id=stream_id, error_code=0x10c)
+            ]
+            assert stream_id not in h3_server._blocked_stream_map
+
+    def test_handle_critical_stream_reset_closes_connection(self):
+        """RFC 9114 6.2: a peer reset of a critical stream is fatal."""
+        quic_client = FakeQuicConnection(
+            configuration=QuicConfiguration(is_client=True)
+        )
+        h3_client = H3Connection(quic_client)
+
+        # register the peer (server) control stream
+        h3_client.handle_event(
+            StreamDataReceived(
+                stream_id=3,
+                data=encode_uint_var(StreamType.CONTROL)
+                + encode_frame(FrameType.SETTINGS, encode_settings(DUMMY_SETTINGS)),
+                end_stream=False,
+            )
+        )
+        assert quic_client.closed is None
+
+        # peer resets its control stream
+        h3_client.handle_event(QuicStreamReset(error_code=0, stream_id=3))
+        assert quic_client.closed == (
+            ErrorCode.H3_CLOSED_CRITICAL_STREAM,
+            "Critical stream 3 reset by peer",
+        )
+
+    def test_handle_critical_stream_stop_sending_closes_connection(self):
+        """RFC 9114 6.2: STOP_SENDING on a critical stream is fatal."""
+        quic_client = FakeQuicConnection(
+            configuration=QuicConfiguration(is_client=True)
+        )
+        h3_client = H3Connection(quic_client)
+        local_control = h3_client._local_control_stream_id
+
+        h3_client.handle_event(
+            StopSendingReceived(error_code=0, stream_id=local_control)
+        )
+        assert quic_client.closed == (
+            ErrorCode.H3_CLOSED_CRITICAL_STREAM,
+            f"Critical stream {local_control} stop-sending by peer",
+        )
 
     def test_handle_push_frame_wrong_frame_type(self):
         """

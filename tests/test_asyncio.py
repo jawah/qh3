@@ -474,6 +474,82 @@ class TestHighLevel:
         assert config1.certificate == config3.certificate
         assert config1.certificate == config4.certificate
 
+    @pytest.mark.asyncio
+    async def test_stream_reset_raises_on_reader(self):
+        """RFC 9000 3.5: a peer RESET_STREAM must surface to the
+        asyncio reader as an exception so the application does not hang
+        forever waiting for data that will never arrive."""
+
+        def reset_handler(reader, writer):
+            async def serve_one():
+                await reader.read(1)  # consume the trigger byte
+                stream_id = writer.get_extra_info("stream_id")
+                writer.transport.protocol._quic.reset_stream(stream_id, error_code=0x10c)
+                writer.transport.protocol.transmit()
+
+            asyncio.ensure_future(serve_one())
+
+        server_cfg = QuicConfiguration(is_client=False)
+        server_cfg.load_cert_chain(SERVER_CERTFILE, SERVER_KEYFILE)
+        server = await serve(
+            host="::",
+            port=0,
+            configuration=server_cfg,
+            stream_handler=reset_handler,
+        )
+        try:
+            server_port = server._transport.get_extra_info("sockname")[1]
+            configuration = QuicConfiguration(is_client=True)
+            configuration.load_verify_locations(cafile=SERVER_CACERTFILE)
+            async with connect(
+                self.server_host, server_port, configuration=configuration
+            ) as client:
+                await client.wait_connected()
+                reader, writer = await client.create_stream()
+                writer.write(b"x")
+                with pytest.raises(ConnectionResetError):
+                    await asyncio.wait_for(reader.read(), timeout=5.0)
+        finally:
+            server.close()
+
+    @pytest.mark.asyncio
+    async def test_stop_sending_feeds_eof(self):
+        """RFC 9000 3.5: a peer STOP_SENDING tells us not to send any
+        more on that stream; surface EOF on the corresponding reader so
+        readers do not hang."""
+
+        def stop_handler(reader, writer):
+            async def serve_one():
+                await reader.read(1)
+                stream_id = writer.get_extra_info("stream_id")
+                writer.transport.protocol._quic.stop_stream(stream_id, error_code=0x10c)
+                writer.transport.protocol.transmit()
+
+            asyncio.ensure_future(serve_one())
+
+        server_cfg = QuicConfiguration(is_client=False)
+        server_cfg.load_cert_chain(SERVER_CERTFILE, SERVER_KEYFILE)
+        server = await serve(
+            host="::",
+            port=0,
+            configuration=server_cfg,
+            stream_handler=stop_handler,
+        )
+        try:
+            server_port = server._transport.get_extra_info("sockname")[1]
+            configuration = QuicConfiguration(is_client=True)
+            configuration.load_verify_locations(cafile=SERVER_CACERTFILE)
+            async with connect(
+                self.server_host, server_port, configuration=configuration
+            ) as client:
+                await client.wait_connected()
+                reader, writer = await client.create_stream()
+                writer.write(b"x")
+                data = await asyncio.wait_for(reader.read(), timeout=5.0)
+                assert data == b""
+        finally:
+            server.close()
+
 
 class TestQuicStreamAdapter:
     """Tests for QuicStreamAdapter.write_eof idempotency + close."""

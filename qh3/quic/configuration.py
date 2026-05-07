@@ -104,7 +104,10 @@ class QuicConfiguration:
     certificate_chain: list[X509Certificate] = field(default_factory=list)
 
     cipher_suites: list[CipherSuite] | None = None
-    initial_rtt: float = 0.1
+    # RFC 9002 6.2.2: a sender SHOULD use kInitialRtt = 333 ms when no
+    # previous RTT is available. Previously this was 100 ms which leads
+    # to spurious early PTO probes in slow networks.
+    initial_rtt: float = 0.333
 
     max_datagram_frame_size: int | None = None
     original_version: int | None = None

@@ -235,6 +235,14 @@ class QuicPacketBuilder:
         """
         return self._flight_capacity - self._buffer.tell() - self._aead_tag_size
 
+    def pad_datagram(self) -> None:
+        """
+        Mark the current datagram as needing to be padded to the full
+        path MTU. Used to satisfy RFC 9000 8.2.1 (PATH_CHALLENGE /
+        PATH_RESPONSE) and similar requirements.
+        """
+        self._datagram_needs_padding = True
+
     def flush(self) -> tuple[list[bytes], list[QuicSentPacket]]:
         """
         Returns the assembled datagrams.

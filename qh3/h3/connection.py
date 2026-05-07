@@ -16,7 +16,13 @@ from .._hazmat import (
     encode_uint_var,
 )
 from ..quic.connection import QuicConnection, stream_is_unidirectional
-from ..quic.events import DatagramFrameReceived, QuicEvent, StreamDataReceived
+from ..quic.events import (
+    DatagramFrameReceived,
+    QuicEvent,
+    StopSendingReceived,
+    StreamDataReceived,
+    StreamReset,
+)
 from ..quic.logger import QuicLoggerTrace
 from .events import (
     DatagramReceived,
@@ -28,6 +34,12 @@ from .events import (
     InformationalHeadersReceived,
     PushPromiseReceived,
     WebTransportStreamDataReceived,
+)
+from .events import (
+    StopSending as H3StopSending,
+)
+from .events import (
+    StreamReset as H3StreamReset,
 )
 from .exceptions import NoAvailablePushIDError
 
@@ -307,9 +319,7 @@ def validate_response_headers(headers: Headers) -> int | None:
     try:
         return int(status_code)
     except ValueError:
-        raise MessageError(
-            f"Invalid :status value {status_code!r}"
-        ) from None
+        raise MessageError(f"Invalid :status value {status_code!r}") from None
 
 
 def validate_trailers(headers: Headers) -> None:
@@ -427,6 +437,10 @@ class H3Connection:
                     return self._receive_stream_data(event)
                 elif isinstance(event, DatagramFrameReceived):
                     return self._receive_datagram(event.data)
+                elif isinstance(event, StreamReset):
+                    return self._receive_stream_reset(event.stream_id, event.error_code)
+                elif isinstance(event, StopSendingReceived):
+                    return self._receive_stop_sending(event.stream_id, event.error_code)
             except ProtocolError as exc:
                 self._is_done = True
                 self._quic.close(
@@ -434,6 +448,62 @@ class H3Connection:
                 )
 
         return []
+
+    def _is_critical_stream(self, stream_id: int) -> bool:
+        """
+        RFC 9114 6.2: control, QPACK encoder, and QPACK decoder streams are
+        critical streams. Closure of any critical stream MUST be treated as
+        a connection error of type H3_CLOSED_CRITICAL_STREAM.
+        """
+        return stream_id in (
+            self._peer_control_stream_id,
+            self._peer_decoder_stream_id,
+            self._peer_encoder_stream_id,
+            self._local_control_stream_id,
+            self._local_decoder_stream_id,
+            self._local_encoder_stream_id,
+        )
+
+    def _receive_stream_reset(self, stream_id: int, error_code: int) -> list[H3Event]:
+        # RFC 9114 6.2.1: a peer-initiated reset of a critical stream is a
+        # connection error of type H3_CLOSED_CRITICAL_STREAM.
+        if self._is_critical_stream(stream_id):
+            raise ClosedCriticalStream(f"Critical stream {stream_id} reset by peer")
+
+        stream = self._stream.get(stream_id)
+        if stream is None:
+            return [H3StreamReset(stream_id=stream_id, error_code=error_code)]
+
+        # Drop the stream so it cannot accumulate further state and so any
+        # future cleanup (e.g. waiting on receiving_ended) is satisfied.
+        # Note: RFC 9204 2.2.2.2 Stream Cancellation is OPTIONAL and is
+        # only useful when the encoder uses the dynamic table; we omit it.
+        stream.receiving_ended = True
+        if stream.is_ended():
+            self._stream.pop(stream_id, None)
+        self._blocked_stream_map.pop(stream_id, None)
+
+        return [H3StreamReset(stream_id=stream_id, error_code=error_code)]
+
+    def _receive_stop_sending(self, stream_id: int, error_code: int) -> list[H3Event]:
+        # RFC 9114 6.2.1: a peer-initiated reset of a critical stream is a
+        # connection error of type H3_CLOSED_CRITICAL_STREAM.
+        if self._is_critical_stream(stream_id):
+            raise ClosedCriticalStream(
+                f"Critical stream {stream_id} stop-sending by peer"
+            )
+
+        stream = self._stream.get(stream_id)
+        if stream is not None:
+            stream.sending_ended = True
+            if stream.is_ended():
+                self._stream.pop(stream_id, None)
+        # The blocked-stream map references this stream by id; drop it so
+        # H3 does not retain state for a stream the application is no
+        # longer expected to write to.
+        self._blocked_stream_map.pop(stream_id, None)
+
+        return [H3StopSending(stream_id=stream_id, error_code=error_code)]
 
     def send_datagram(self, flow_id: int, data: bytes) -> None:
         """
@@ -638,6 +708,9 @@ class H3Connection:
     def _maybe_cleanup_stream(self, stream: H3Stream) -> None:
         if stream.is_ended():
             self._stream.pop(stream.stream_id, None)
+            # Defensive: a stream that completes while it was waiting on
+            # a QPACK dynamic-table update is no longer of interest.
+            self._blocked_stream_map.pop(stream.stream_id, None)
 
     def _get_local_settings(self) -> dict[int, int]:
         """

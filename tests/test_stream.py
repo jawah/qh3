@@ -224,6 +224,21 @@ class TestQuicStream:
             stream.receiver.handle_reset(final_size=5)
         assert str(cm.value) == "Cannot change final size"
 
+    def test_handle_reset_shrinks_final_size(self):
+        # RFC 9000 4.5: a RESET_STREAM whose Final Size is below what has
+        # already been received MUST be treated as FINAL_SIZE_ERROR.
+        stream = QuicStream(stream_id=0)
+        stream.receiver.handle_frame(0, b"0123456789")
+        assert stream.receiver.highest_offset == 10
+
+        with pytest.raises(FinalSizeError) as cm:
+            stream.receiver.handle_reset(final_size=4)
+        assert "below already-received" in str(cm.value)
+        # State must be unchanged on rejection.
+        assert stream.receiver._final_size is None
+        assert stream.receiver.highest_offset == 10
+        assert not stream.receiver.is_finished
+
     def test_receiver_stop(self):
         stream = QuicStream()
 

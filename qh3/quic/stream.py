@@ -41,7 +41,12 @@ class QuicStreamReceiver:
 
     def __init__(self, stream_id: int | None, readable: bool) -> None:
         self.highest_offset = 0  # the highest offset ever seen
-        self.is_finished = False
+        # RFC 9000 3.2: a send-only (outgoing unidirectional) stream has
+        # no receive part, so the receiver is "finished" at construction.
+        # Without this, ``QuicStream.is_finished`` would never become
+        # True for outgoing uni streams, leaking entries in
+        # ``QuicConnection._streams`` and ``_streams_finished``.
+        self.is_finished = not readable
         self.stop_pending = False
 
         self._buffer = bytearray()
@@ -130,6 +135,12 @@ class QuicStreamReceiver:
         """
         if self._final_size is not None and final_size != self._final_size:
             raise FinalSizeError("Cannot change final size")
+
+        # RFC 9000 4.5: a RESET_STREAM whose Final Size is smaller than
+        # what has already been received on the stream is a
+        # FINAL_SIZE_ERROR.
+        if final_size < self.highest_offset:
+            raise FinalSizeError("RESET_STREAM final size below already-received data")
 
         # we are done receiving
         self._final_size = final_size

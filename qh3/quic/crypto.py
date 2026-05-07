@@ -187,6 +187,8 @@ class CryptoPair:
         "recv",
         "send",
         "_update_key_requested",
+        "_previous_recv",
+        "_previous_recv_expires_at",
     )
 
     def __init__(
@@ -200,14 +202,57 @@ class CryptoPair:
         self.recv = CryptoContext(setup_cb=recv_setup_cb, teardown_cb=recv_teardown_cb)
         self.send = CryptoContext(setup_cb=send_setup_cb, teardown_cb=send_teardown_cb)
         self._update_key_requested = False
+        # RFC 9001 6.5: keep the previous receive context for 3*PTO so
+        # reordered packets sent under the previous key can be decrypted.
+        self._previous_recv: CryptoContext | None = None
+        self._previous_recv_expires_at: float | None = None
+
+    def expire_previous_keys(self, now: float) -> None:
+        """Drop the retained previous receive key once 3*PTO has elapsed."""
+        if (
+            self._previous_recv is not None
+            and self._previous_recv_expires_at is not None
+            and now >= self._previous_recv_expires_at
+        ):
+            self._previous_recv.teardown()
+            self._previous_recv = None
+            self._previous_recv_expires_at = None
 
     def decrypt_packet(
         self, packet: bytes, encrypted_offset: int, expected_packet_number: int
     ) -> tuple[bytes, bytes, int]:
-        plain_header, payload, packet_number, update_key = self.recv.decrypt_packet(
-            packet, encrypted_offset, expected_packet_number
-        )
+        try:
+            plain_header, payload, packet_number, update_key = self.recv.decrypt_packet(
+                packet, encrypted_offset, expected_packet_number
+            )
+        except CryptoError:
+            # AEAD failed — possibly a reordered packet sent under the
+            # previous key (RFC 9001 6.5). Try the retained snapshot
+            # before giving up; on success we MUST NOT rotate.
+            if self._previous_recv is not None:
+                plain_header, payload, packet_number, _ = (
+                    self._previous_recv.decrypt_packet(
+                        packet, encrypted_offset, expected_packet_number
+                    )
+                )
+                return plain_header, payload, packet_number
+            raise
         if update_key:
+            # The packet's key phase differs from our current one. It
+            # could be either (a) the peer initiating the next phase, or
+            # (b) a delayed packet sent before a previous local-initiated
+            # update. Try the retained previous key first to avoid
+            # spuriously rotating when (b) applies.
+            if self._previous_recv is not None:
+                try:
+                    plain_header2, payload2, pn2, _ = (
+                        self._previous_recv.decrypt_packet(
+                            packet, encrypted_offset, expected_packet_number
+                        )
+                    )
+                    return plain_header2, payload2, pn2
+                except CryptoError:
+                    pass
             self._update_key("remote_update")
         return plain_header, payload, packet_number
 
@@ -297,6 +342,30 @@ class CryptoPair:
             return self.recv.key_phase
 
     def _update_key(self, trigger: str) -> None:
+        # Snapshot the current receive context so we can keep decrypting
+        # reordered packets under the previous key for 3*PTO
+        # (RFC 9001 6.5). The caller is responsible for setting
+        # _previous_recv_expires_at via retain_previous_keys().
+        if self.recv.is_valid():
+            snapshot = CryptoContext(key_phase=self.recv.key_phase)
+            snapshot.setup(
+                cipher_suite=self.recv.cipher_suite,
+                secret=self.recv.secret,
+                version=self.recv.version,
+            )
+            # Replace any existing snapshot.
+            if self._previous_recv is not None:
+                self._previous_recv.teardown()
+            self._previous_recv = snapshot
+
         apply_key_phase(self.recv, next_key_phase(self.recv), trigger=trigger)
         apply_key_phase(self.send, next_key_phase(self.send), trigger=trigger)
         self._update_key_requested = False
+
+    def retain_previous_keys(self, expires_at: float) -> None:
+        """
+        Schedule the retained previous receive key to be discarded at
+        ``expires_at``. Called by the connection after a key update.
+        """
+        if self._previous_recv is not None:
+            self._previous_recv_expires_at = expires_at

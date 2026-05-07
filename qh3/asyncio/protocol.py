@@ -182,6 +182,28 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
             reader.feed_data(event.data)
             if event.end_stream:
                 reader.feed_eof()
+        elif isinstance(event, events.StreamReset):
+            # RFC 9000 3.5: peer abruptly terminated the stream. Surface
+            # this to any waiting reader as an exception/EOF so that
+            # callers do not hang forever waiting for data that will
+            # never arrive.
+            reader = self._stream_readers.get(event.stream_id, None)
+            if reader is not None:
+                reader.set_exception(
+                    ConnectionResetError(
+                        f"Stream {event.stream_id} reset by peer "
+                        f"(error code {event.error_code})"
+                    )
+                )
+                self._stream_readers.pop(event.stream_id, None)
+        elif isinstance(event, events.StopSendingReceived):
+            # RFC 9000 3.5: peer asked us to stop sending. Drop the
+            # reader so we no longer wait on it; the writer side is
+            # already torn down by the QUIC layer.
+            reader = self._stream_readers.get(event.stream_id, None)
+            if reader is not None:
+                reader.feed_eof()
+                self._stream_readers.pop(event.stream_id, None)
 
     # private
 
