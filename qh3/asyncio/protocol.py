@@ -293,7 +293,19 @@ class QuicStreamAdapter(asyncio.Transport):
         if self._closing:
             return
         self._closing = True
-        self.protocol._quic.send_stream_data(self.stream_id, b"", end_stream=True)
+        stream = self.protocol._quic._streams.get(self.stream_id)
+        if stream is None:
+            return
+        sender = stream.sender
+        if sender.is_finished or sender.reset_pending:
+            return
+        try:
+            self.protocol._quic.send_stream_data(self.stream_id, b"", end_stream=True)
+        except (
+            AssertionError,
+            KeyError,
+        ):  # Defensive: Lost a race with peer reset / connection teardown.
+            return
         self.protocol._transmit_soon()
 
     def close(self) -> None:
