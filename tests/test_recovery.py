@@ -10,6 +10,7 @@ from qh3._hazmat import RangeSet, QuicPacketPacer, QuicRttMonitor
 from qh3.quic.packet_builder import QuicDeliveryState
 from qh3.quic.recovery import (
     K_MINIMUM_WINDOW,
+    K_HYSTART_CSS_ROUNDS,
     QuicCongestionControl,
     QuicPacketRecovery,
     QuicPacketSpace,
@@ -385,6 +386,169 @@ class TestQuicPacketRecovery:
         cc.on_packet_sent(old)
         cc.on_packets_lost([old], now=101.0)
         assert cc.ssthresh is None  # slow-start still alive
+
+
+def _hystart_packet(pn: int, sent_time: float, size: int = 1280) -> QuicSentPacket:
+    return QuicSentPacket(
+        epoch=tls.Epoch.ONE_RTT,
+        in_flight=True,
+        is_ack_eliciting=True,
+        is_crypto_packet=False,
+        packet_number=pn,
+        packet_type=QuicPacketType.ONE_RTT,
+        sent_bytes=size,
+        sent_time=sent_time,
+    )
+
+
+class TestHyStartPlusPlus:
+    """RFC 9406 HyStart++ behavioural tests on QuicCongestionControl."""
+
+    def _drive_round(
+        self,
+        cc: QuicCongestionControl,
+        first_pn: int,
+        rtt: float,
+        n_acks: int = 8,
+        send_time: float = 0.0,
+    ) -> int:
+        """Send N packets and ACK each one, supplying rtt per ACK.
+
+        Mirrors qh3's real ``QuicPacketRecovery.on_ack_received`` ordering:
+        on_packet_acked is invoked per acked packet first, and
+        on_rtt_measurement is invoked once after the loop. We feed an
+        RTT sample per ACK here (HyStart++ is sample-driven). This keeps
+        the RFC 9406 ordering, round-end detection happens before a new
+        sample is added to the next round.
+
+        Returns the next PN to use for the following round.
+        """
+        for i in range(n_acks):
+            cc.on_packet_sent(_hystart_packet(first_pn + i, send_time + i * 0.0001))
+        now = send_time + 0.001
+        for i in range(n_acks):
+            cc.on_packet_acked(_hystart_packet(first_pn + i, send_time + i * 0.0001))
+            cc.on_rtt_measurement(rtt, now)
+        return first_pn + n_acks
+
+    def test_default_enabled(self):
+        cc = QuicCongestionControl(max_datagram_size=1280)
+        # Per RFC 9406 recommendation HyStart++ is on by default.
+        assert cc.hystart_enabled is True
+        assert cc._hystart_in_css is False
+        assert cc.ssthresh is None
+
+    def test_steady_rtt_keeps_slow_start_active(self):
+        """A flat RTT profile must NOT trip HyStart into CSS."""
+        cc = QuicCongestionControl(max_datagram_size=1280)
+        next_pn = 0
+        # 5 bursts (each closes the previous round), RTT pinned at 50 ms.
+        for r in range(5):
+            next_pn = self._drive_round(
+                cc, next_pn, rtt=0.050, send_time=r * 0.1
+            )
+        assert cc._hystart_in_css is False
+        assert cc.ssthresh is None  # still in slow start
+
+    def test_rtt_inflation_enters_css(self):
+        """An RTT jump above the threshold must enter CSS.
+
+        Each burst closes the round of the prior burst, so three bursts
+        are required: burst-1 (baseline) populates round-1, burst-2's
+        first ACK propagates last_round_min_rtt to baseline, burst-3
+        at the inflated RTT trips the SS-exit check.
+        """
+        cc = QuicCongestionControl(max_datagram_size=1280)
+        # Burst 1: baseline 20 ms; populates round-1 samples.
+        next_pn = self._drive_round(cc, 0, rtt=0.020, send_time=0.0)
+        # Burst 2: still 20 ms; closes round-1 (last_min = 0.020), fills round-2.
+        next_pn = self._drive_round(cc, next_pn, rtt=0.020, send_time=0.1)
+        assert cc._hystart_last_round_min_rtt == pytest.approx(0.020)
+        assert cc._hystart_in_css is False
+        # Burst 3: inflated to 50 ms (well above the 4 ms threshold).
+        next_pn = self._drive_round(cc, next_pn, rtt=0.050, send_time=0.2)
+        assert cc._hystart_in_css is True
+        assert cc.ssthresh is None  # CSS keeps cwnd in slow-start regime
+
+    def test_css_growth_uses_divisor(self):
+        """In CSS, cwnd grows by sent_bytes/4 instead of sent_bytes."""
+        cc = QuicCongestionControl(max_datagram_size=1280)
+        # Force CSS without going through full RTT-sample dance.
+        cc._hystart_in_css = True
+        cc._hystart_window_end = 1_000_000  # well above any acked PN below
+        cwnd0 = cc.congestion_window
+        pkt = _hystart_packet(pn=0, sent_time=0.0, size=1280)
+        cc.on_packet_sent(pkt)
+        cc.on_packet_acked(pkt)
+        # 1280 // 4 == 320
+        assert cc.congestion_window == cwnd0 + 320
+
+    def test_css_completes_after_five_rounds_then_exits_to_ca(self):
+        cc = QuicCongestionControl(max_datagram_size=1280)
+        # Bursts 1+2: baseline 20 ms (sets last_round_min_rtt = 0.020).
+        next_pn = self._drive_round(cc, 0, rtt=0.020, send_time=0.0)
+        next_pn = self._drive_round(cc, next_pn, rtt=0.020, send_time=0.1)
+        # Burst 3: inflated -> CSS.
+        next_pn = self._drive_round(cc, next_pn, rtt=0.050, send_time=0.2)
+        assert cc._hystart_in_css is True
+        # Now drive CSS_ROUNDS+1 additional bursts at the inflated RTT
+        # (each new burst closes the prior round; one extra is needed to
+        # close the final CSS round).
+        send_t = 0.3
+        for _ in range(K_HYSTART_CSS_ROUNDS + 1):
+            next_pn = self._drive_round(cc, next_pn, rtt=0.050, send_time=send_t)
+            send_t += 0.1
+        # CSS budget exhausted -> ssthresh pinned, in_css cleared.
+        # cwnd may grow slightly past ssthresh between the SS exit and
+        # the CA path taking over on subsequent ACKs.
+        assert cc._hystart_in_css is False
+        assert cc.ssthresh is not None
+        assert cc.ssthresh <= cc.congestion_window
+
+    def test_css_false_trigger_returns_to_slow_start(self):
+        """CSS must abandon and revert to SS when current round RTT
+        falls back below the CSS baseline (false trigger detection,
+        RFC 9406 4.3)."""
+        cc = QuicCongestionControl(max_datagram_size=1280)
+        # Bursts 1+2: baseline 20 ms.
+        next_pn = self._drive_round(cc, 0, rtt=0.020, send_time=0.0)
+        next_pn = self._drive_round(cc, next_pn, rtt=0.020, send_time=0.1)
+        # Burst 3: inflated -> CSS.
+        next_pn = self._drive_round(cc, next_pn, rtt=0.050, send_time=0.2)
+        assert cc._hystart_in_css is True
+        baseline = cc._hystart_css_baseline_min_rtt
+        # Burst 4 at improved RTT (well below CSS baseline) closes round
+        # 3 (which was inflated); burst 5 fills a CSS round with the
+        # improved RTT and triggers the false-trigger path.
+        next_pn = self._drive_round(
+            cc, next_pn, rtt=baseline - 0.010, send_time=0.3
+        )
+        self._drive_round(
+            cc, next_pn, rtt=baseline - 0.010, send_time=0.4
+        )
+        assert cc._hystart_in_css is False
+        assert cc.ssthresh is None  # back to standard slow start
+
+    def test_disable_falls_back_to_legacy_monitor(self):
+        cc = QuicCongestionControl(max_datagram_size=1280)
+        cc.hystart_enabled = False
+        # Even with rtt inflation HyStart++ state stays untouched...
+        cc.on_rtt_measurement(0.050, now=1.0)
+        assert cc._hystart_rtt_sample_count == 0
+        assert cc._hystart_in_css is False
+
+    def test_persistent_congestion_resets_hystart(self):
+        cc = QuicCongestionControl(max_datagram_size=1280)
+        # Drive into CSS first (3 bursts: baseline, baseline, inflated).
+        next_pn = self._drive_round(cc, 0, rtt=0.020, send_time=0.0)
+        next_pn = self._drive_round(cc, next_pn, rtt=0.020, send_time=0.1)
+        self._drive_round(cc, next_pn, rtt=0.050, send_time=0.2)
+        assert cc._hystart_in_css is True
+        cc.on_persistent_congestion(now=200.0)
+        assert cc._hystart_in_css is False
+        assert cc._hystart_window_end is None
+        assert cc._hystart_rtt_sample_count == 0
+        assert math.isinf(cc._hystart_last_round_min_rtt)
 
 
 class TestQuicRttMonitor:

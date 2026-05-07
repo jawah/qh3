@@ -24,6 +24,14 @@ K_CUBIC_C = 0.4
 K_CUBIC_LOSS_REDUCTION_FACTOR = 0.7
 K_CUBIC_MAX_IDLE_TIME = 2.0  # seconds
 
+# HyStart++ constants (RFC 9406 4.2)
+K_HYSTART_MIN_RTT_THRESH = 0.004  # 4 ms
+K_HYSTART_MAX_RTT_THRESH = 0.016  # 16 ms
+K_HYSTART_MIN_RTT_DIVISOR = 8
+K_HYSTART_N_RTT_SAMPLE = 8
+K_HYSTART_CSS_GROWTH_DIVISOR = 4
+K_HYSTART_CSS_ROUNDS = 5
+
 
 def _cubic_root(x: float) -> float:
     if x < 0:
@@ -76,6 +84,18 @@ class QuicCongestionControl:
         self._cwnd_epoch: int = 0
         self._t_epoch: float = 0.0
 
+        # HyStart++ state (RFC 9406). Enabled by default per spec
+        # recommendation for slow-start exit detection.
+        self.hystart_enabled: bool = True
+        self._hystart_in_css: bool = False
+        self._hystart_css_round: int = 0
+        self._hystart_css_baseline_min_rtt: float = math.inf
+        self._hystart_last_round_min_rtt: float = math.inf
+        self._hystart_current_round_min_rtt: float = math.inf
+        self._hystart_rtt_sample_count: int = 0
+        self._hystart_window_end: int | None = None
+        self._hystart_largest_sent_pn: int = -1
+
     def _W_cubic(self, t: float) -> int:
         W_max_segments = self._W_max / self._max_datagram_size
         target_segments = K_CUBIC_C * (t - self._K) ** 3 + W_max_segments
@@ -91,6 +111,21 @@ class QuicCongestionControl:
         self._W_est = 0
         self._cwnd_epoch = 0
         self._t_epoch = 0.0
+        self._hystart_reset()
+
+    def _hystart_reset(self) -> None:
+        """
+        Reset HyStart++ slow-start exit detector. Called when entering a
+        fresh slow-start phase: at construction, after idle restart, and
+        after persistent congestion collapse.
+        """
+        self._hystart_in_css = False
+        self._hystart_css_round = 0
+        self._hystart_css_baseline_min_rtt = math.inf
+        self._hystart_last_round_min_rtt = math.inf
+        self._hystart_current_round_min_rtt = math.inf
+        self._hystart_rtt_sample_count = 0
+        self._hystart_window_end = None
 
     def _start_epoch(self, now: float) -> None:
         self._t_epoch = now
@@ -104,9 +139,35 @@ class QuicCongestionControl:
         self.bytes_in_flight -= packet.sent_bytes
         self._last_ack = packet.sent_time
 
+        # HyStart++ round tracking (RFC 9406 4.3): a round ends when an
+        # ACK is received for a packet whose number is at or above the
+        # window-end PN recorded at the start of the round.
+        if (
+            self.hystart_enabled
+            and self.ssthresh is None
+            and self._hystart_window_end is not None
+            and packet.packet_number >= self._hystart_window_end
+        ):
+            self._hystart_last_round_min_rtt = self._hystart_current_round_min_rtt
+            self._hystart_current_round_min_rtt = math.inf
+            self._hystart_rtt_sample_count = 0
+            self._hystart_window_end = self._hystart_largest_sent_pn + 1
+            if self._hystart_in_css:
+                self._hystart_css_round += 1
+                if self._hystart_css_round >= K_HYSTART_CSS_ROUNDS:
+                    # Conservative slow start exhausted -> exit to CA.
+                    self.ssthresh = self.congestion_window
+                    self._hystart_in_css = False
+
         if self.ssthresh is None or self.congestion_window < self.ssthresh:
             # slow start
-            self.congestion_window += packet.sent_bytes
+            if self._hystart_in_css:
+                # Conservative Slow Start: dampened growth (RFC 9406 4.3).
+                self.congestion_window += (
+                    packet.sent_bytes // K_HYSTART_CSS_GROWTH_DIVISOR
+                )
+            else:
+                self.congestion_window += packet.sent_bytes
         else:
             # congestion avoidance
             if self._first_slow_start and not self._starting_congestion_avoidance:
@@ -151,6 +212,16 @@ class QuicCongestionControl:
 
     def on_packet_sent(self, packet: QuicSentPacket) -> None:
         self.bytes_in_flight += packet.sent_bytes
+        # Track largest sent PN and bootstrap the HyStart++ round window
+        # on the first packet sent during slow start.
+        if packet.packet_number > self._hystart_largest_sent_pn:
+            self._hystart_largest_sent_pn = packet.packet_number
+        if (
+            self.hystart_enabled
+            and self.ssthresh is None
+            and self._hystart_window_end is None
+        ):
+            self._hystart_window_end = packet.packet_number
         # reset cwnd after prolonged idle
         if self._last_ack > 0.0:
             elapsed_idle = packet.sent_time - self._last_ack
@@ -198,14 +269,63 @@ class QuicCongestionControl:
             )
             self.ssthresh = self.congestion_window
             self._starting_congestion_avoidance = True
+            # RFC 9406 4.2: loss/ECN during slow start or CSS sets
+            # ssthresh = cwnd and exits to congestion avoidance. Clear the
+            # HyStart++ CSS flag so a stale value can't influence growth
+            # if the connection later re-enters slow start (e.g. after
+            # idle resume)
+            self._hystart_in_css = False
 
     def on_rtt_measurement(self, latest_rtt: float, now: float) -> None:
         self._rtt = latest_rtt
-        # check whether we should exit slow start
-        if self.ssthresh is None and self._rtt_monitor.is_rtt_increasing(
-            latest_rtt, now
-        ):
-            self.ssthresh = self.congestion_window
+        if self.ssthresh is not None:
+            return
+
+        if self.hystart_enabled:
+            # HyStart++ slow-start exit detection (RFC 9406 4.3).
+            if latest_rtt < self._hystart_current_round_min_rtt:
+                self._hystart_current_round_min_rtt = latest_rtt
+            self._hystart_rtt_sample_count += 1
+
+            if (
+                self._hystart_rtt_sample_count >= K_HYSTART_N_RTT_SAMPLE
+                and math.isfinite(self._hystart_last_round_min_rtt)
+                and math.isfinite(self._hystart_current_round_min_rtt)
+            ):
+                rtt_thresh = max(
+                    K_HYSTART_MIN_RTT_THRESH,
+                    min(
+                        K_HYSTART_MAX_RTT_THRESH,
+                        self._hystart_last_round_min_rtt / K_HYSTART_MIN_RTT_DIVISOR,
+                    ),
+                )
+                if self._hystart_in_css:
+                    # In CSS: a sustained RTT improvement (current round
+                    # min rtt drops below the CSS baseline) indicates the
+                    # earlier RTT inflation was a false trigger; revert
+                    # to standard slow start (RFC 9406 4.3).
+                    if (
+                        self._hystart_current_round_min_rtt
+                        < self._hystart_css_baseline_min_rtt
+                    ):
+                        self._hystart_in_css = False
+                        self._hystart_css_round = 0
+                        self._hystart_css_baseline_min_rtt = math.inf
+                else:
+                    if (
+                        self._hystart_current_round_min_rtt
+                        >= self._hystart_last_round_min_rtt + rtt_thresh
+                    ):
+                        # Enter Conservative Slow Start.
+                        self._hystart_in_css = True
+                        self._hystart_css_baseline_min_rtt = (
+                            self._hystart_current_round_min_rtt
+                        )
+                        self._hystart_css_round = 0
+        else:
+            # Fallback: legacy RTT-monotonic-rise heuristic.
+            if self._rtt_monitor.is_rtt_increasing(latest_rtt, now):
+                self.ssthresh = self.congestion_window
 
     def on_persistent_congestion(self, now: float) -> None:
         """
@@ -231,6 +351,7 @@ class QuicCongestionControl:
         self._W_est = 0
         self._cwnd_epoch = 0
         self._t_epoch = 0.0
+        self._hystart_reset()
 
 
 class QuicPacketRecovery:
