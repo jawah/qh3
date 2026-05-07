@@ -3646,7 +3646,7 @@ class QuicConnection:
                         )
                     self._streams_blocked_pending = False
 
-                # MAX_DATA and MAX_STREAMS - inlined from _write_connection_limits
+                # MAX_DATA and MAX_STREAMS
                 for limit in (
                     self._local_max_data,
                     self._local_max_streams_bidi,
@@ -3676,7 +3676,7 @@ class QuicConnection:
                                 )
                             )
 
-            # stream-level limits - inlined from _write_stream_limits
+            # stream-level limits
             dirty_limits = self._streams_dirty_limits
             if dirty_limits:
                 for stream in dirty_limits:
@@ -3993,39 +3993,6 @@ class QuicConnection:
                 )
             )
 
-    def _write_connection_limits(
-        self, builder: QuicPacketBuilder, space: QuicPacketSpace
-    ) -> None:
-        """
-        Raise MAX_DATA or MAX_STREAMS if needed.
-        """
-        for limit in (
-            self._local_max_data,
-            self._local_max_streams_bidi,
-            self._local_max_streams_uni,
-        ):
-            if limit.used * 2 > limit.value:
-                limit.value *= 2
-                self._logger.debug("Local %s raised to %d", limit.name, limit.value)
-            if limit.value != limit.sent:
-                buf = builder.start_frame(
-                    limit.frame_type,
-                    capacity=CONNECTION_LIMIT_FRAME_CAPACITY,
-                    handler=self._on_connection_limit_delivery,
-                    handler_args=(limit,),
-                )
-                buf.push_uint_var(limit.value)
-                limit.sent = limit.value
-
-                # log frame
-                if self._quic_logger is not None:
-                    builder.quic_logger_frames.append(
-                        self._quic_logger.encode_connection_limit_frame(
-                            frame_type=limit.frame_type,
-                            maximum=limit.value,
-                        )
-                    )
-
     def _write_crypto_frame(
         self, builder: QuicPacketBuilder, space: QuicPacketSpace, stream: QuicStream
     ) -> bool:
@@ -4242,93 +4209,6 @@ class QuicConnection:
                     error_code=frame.error_code, stream_id=frame.stream_id
                 )
             )
-
-    def _write_stream_frame(
-        self,
-        builder: QuicPacketBuilder,
-        space: QuicPacketSpace,
-        stream: QuicStream,
-        max_offset: int,
-    ) -> int:
-        sender = stream.sender
-        stream_id = stream.stream_id
-
-        flight_space = (
-            builder._flight_capacity - builder._buffer.tell() - builder._aead_tag_size
-        )
-        result = sender.prepare_stream_frame(flight_space, max_offset)
-
-        if result is not None:
-            (
-                f_data,
-                frame_type,
-                f_offset,
-                stop_offset,
-                previous_send_highest,
-                frame_overhead,
-            ) = result
-            buf = builder.start_frame(
-                frame_type,
-                frame_overhead,
-                sender.on_data_delivery,
-                (f_offset, stop_offset),
-            )
-            push_stream_frame_body(buf, stream_id, f_offset, f_data)
-
-            # log frame
-            if self._quic_logger is not None:
-                builder.quic_logger_frames.append(
-                    self._quic_logger.encode_stream_frame(
-                        bool(frame_type & 1), f_data, f_offset, stream_id=stream_id
-                    )
-                )
-
-            return sender.highest_offset - previous_send_highest
-        else:
-            return 0
-
-    def _write_stream_limits(
-        self, builder: QuicPacketBuilder, space: QuicPacketSpace, stream: QuicStream
-    ) -> None:
-        """
-        Raise MAX_STREAM_DATA if needed.
-
-        The only case where `stream.max_stream_data_local` is zero is for
-        locally created unidirectional streams. We skip such streams to avoid
-        spurious logging.
-        """
-        # RFC 9000 3.2: do not advertise additional credit on streams
-        # whose receive part is in "Data Recvd" or "Reset Recvd".
-        if stream.receiver.is_finished:
-            return
-        if (
-            stream.max_stream_data_local
-            and stream.receiver.highest_offset * 2 > stream.max_stream_data_local
-        ):
-            stream.max_stream_data_local *= 2
-            self._logger.debug(
-                "Stream %d local max_stream_data raised to %d",
-                stream.stream_id,
-                stream.max_stream_data_local,
-            )
-        if stream.max_stream_data_local_sent != stream.max_stream_data_local:
-            buf = builder.start_frame(
-                QuicFrameType.MAX_STREAM_DATA,
-                capacity=MAX_STREAM_DATA_FRAME_CAPACITY,
-                handler=self._on_max_stream_data_delivery,
-                handler_args=(stream,),
-            )
-            buf.push_uint_var(stream.stream_id)
-            buf.push_uint_var(stream.max_stream_data_local)
-            stream.max_stream_data_local_sent = stream.max_stream_data_local
-
-            # log frame
-            if self._quic_logger is not None:
-                builder.quic_logger_frames.append(
-                    self._quic_logger.encode_max_stream_data_frame(
-                        maximum=stream.max_stream_data_local, stream_id=stream.stream_id
-                    )
-                )
 
     def _write_streams_blocked_frame(
         self, builder: QuicPacketBuilder, frame_type: QuicFrameType, limit: int
