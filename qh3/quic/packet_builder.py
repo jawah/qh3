@@ -53,6 +53,7 @@ class QuicSentPacket:
         "in_flight",
         "is_ack_eliciting",
         "is_crypto_packet",
+        "is_pmtu_probe",
         "packet_number",
         "packet_type",
         "sent_time",
@@ -71,11 +72,13 @@ class QuicSentPacket:
         packet_type: QuicPacketType,
         sent_time: float | None = None,
         sent_bytes: int = 0,
+        is_pmtu_probe: bool = False,
     ) -> None:
         self.epoch = epoch
         self.in_flight = in_flight
         self.is_ack_eliciting = is_ack_eliciting
         self.is_crypto_packet = is_crypto_packet
+        self.is_pmtu_probe = is_pmtu_probe
         self.packet_number = packet_number
         self.packet_type = packet_type
         self.sent_time = sent_time
@@ -91,6 +94,7 @@ class QuicSentPacket:
             and self.in_flight == other.in_flight
             and self.is_ack_eliciting == other.is_ack_eliciting
             and self.is_crypto_packet == other.is_crypto_packet
+            and self.is_pmtu_probe == other.is_pmtu_probe
             and self.packet_number == other.packet_number
             and self.packet_type == other.packet_type
             and self.sent_bytes == other.sent_bytes

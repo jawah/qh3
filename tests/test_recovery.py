@@ -388,6 +388,184 @@ class TestQuicPacketRecovery:
         assert cc.ssthresh is None  # slow-start still alive
 
 
+class TestPmtuProbeLossDetection:
+    """RFC 9000 14.4: PMTU probe loss MUST NOT trigger CC reaction."""
+
+    def setup_method(self):
+        self.INITIAL_SPACE = QuicPacketSpace()
+        self.HANDSHAKE_SPACE = QuicPacketSpace()
+        self.ONE_RTT_SPACE = QuicPacketSpace()
+        self.recovery = QuicPacketRecovery(
+            initial_rtt=0.1,
+            peer_completed_address_validation=True,
+            send_probe=send_probe,
+            max_datagram_size=1280,
+        )
+        self.recovery.spaces = [
+            self.INITIAL_SPACE,
+            self.HANDSHAKE_SPACE,
+            self.ONE_RTT_SPACE,
+        ]
+
+    def _probe_packet(self, pn: int, sent_time: float, size: int = 1452):
+        pkt = QuicSentPacket(
+            epoch=tls.Epoch.ONE_RTT,
+            in_flight=True,
+            is_ack_eliciting=True,
+            is_crypto_packet=False,
+            packet_number=pn,
+            packet_type=QuicPacketType.ONE_RTT,
+            sent_bytes=size,
+            sent_time=sent_time,
+            is_pmtu_probe=True,
+        )
+        return pkt
+
+    def test_pmtu_probe_loss_does_not_reduce_cwnd(self):
+        cc = self.recovery._cc
+        baseline_cwnd = cc.congestion_window
+        assert cc.ssthresh is None  # slow-start
+
+        probe = self._probe_packet(pn=0, sent_time=0.0)
+        self.recovery.on_packet_sent(probe, self.ONE_RTT_SPACE)
+        assert cc.bytes_in_flight == 1452
+
+        # Probe declared lost, must NOT trigger congestion reaction.
+        self.recovery._on_packets_lost(
+            [probe], space=self.ONE_RTT_SPACE, now=1.0
+        )
+        assert cc.bytes_in_flight == 0  # bytes reclaimed
+        assert cc.congestion_window == baseline_cwnd  # cwnd unchanged
+        assert cc.ssthresh is None  # slow-start preserved
+        assert self.ONE_RTT_SPACE.ack_eliciting_in_flight == 0
+        assert 0 not in self.ONE_RTT_SPACE.sent_packets
+
+    def test_pmtu_probe_loss_fires_delivery_handler(self):
+        captured: list[QuicDeliveryState] = []
+
+        def handler(state: QuicDeliveryState, *args) -> None:
+            captured.append(state)
+
+        probe = self._probe_packet(pn=0, sent_time=0.0)
+        probe.delivery_handlers = [(handler, ())]
+        self.recovery.on_packet_sent(probe, self.ONE_RTT_SPACE)
+
+        self.recovery._on_packets_lost(
+            [probe], space=self.ONE_RTT_SPACE, now=1.0
+        )
+        assert captured == [QuicDeliveryState.LOST]
+
+    def test_pmtu_probe_excluded_from_persistent_congestion(self):
+        # Two PMTU probes lost over a long span MUST NOT trigger
+        # persistent-congestion collapse.
+        cc = self.recovery._cc
+        # Establish RTT sample so persistent-congestion eligibility is met.
+        normal = QuicSentPacket(
+            epoch=tls.Epoch.ONE_RTT,
+            in_flight=True,
+            is_ack_eliciting=True,
+            is_crypto_packet=False,
+            packet_number=100,
+            packet_type=QuicPacketType.ONE_RTT,
+            sent_bytes=1280,
+            sent_time=0.0,
+        )
+        self.recovery.on_packet_sent(normal, self.ONE_RTT_SPACE)
+        rs = RangeSet()
+        rs.add(100, 101)
+        self.recovery.on_ack_received(
+            self.ONE_RTT_SPACE, ack_rangeset=rs, ack_delay=0.0, now=0.05
+        )
+        baseline_cwnd = cc.congestion_window
+        assert self.recovery._rtt_initialized
+
+        p1 = self._probe_packet(pn=200, sent_time=10.0)
+        p2 = self._probe_packet(pn=201, sent_time=20.0)
+        self.recovery.on_packet_sent(p1, self.ONE_RTT_SPACE)
+        self.recovery.on_packet_sent(p2, self.ONE_RTT_SPACE)
+
+        self.recovery._on_packets_lost(
+            [p1, p2], space=self.ONE_RTT_SPACE, now=21.0
+        )
+        # No collapse, no halving, slow-start preserved, cwnd unchanged.
+        assert cc.ssthresh is None
+        assert cc.congestion_window == baseline_cwnd
+        assert cc.bytes_in_flight == 0
+
+    def test_non_probe_loss_still_reduces_cwnd(self):
+        # Sanity: regular ack-eliciting in-flight loss DOES reduce cwnd.
+        cc = self.recovery._cc
+        baseline_cwnd = cc.congestion_window
+
+        regular = QuicSentPacket(
+            epoch=tls.Epoch.ONE_RTT,
+            in_flight=True,
+            is_ack_eliciting=True,
+            is_crypto_packet=False,
+            packet_number=0,
+            packet_type=QuicPacketType.ONE_RTT,
+            sent_bytes=1280,
+            sent_time=10.0,
+        )
+        self.recovery.on_packet_sent(regular, self.ONE_RTT_SPACE)
+        self.recovery._on_packets_lost(
+            [regular], space=self.ONE_RTT_SPACE, now=11.0
+        )
+        assert cc.congestion_window < baseline_cwnd
+        assert cc.ssthresh is not None
+
+    def test_pmtu_probe_does_not_arm_pto(self):
+        # RFC 9000 14.4: a PMTU probe MUST NOT anchor
+        # the standard loss-detection / PTO timer.
+        probe = self._probe_packet(pn=0, sent_time=0.0)
+        self.recovery.on_packet_sent(probe, self.ONE_RTT_SPACE)
+
+        # Only a PMTU probe is in flight: ack_eliciting_in_flight stays 0,
+        # so get_loss_detection_time returns None (no PTO armed).
+        assert self.ONE_RTT_SPACE.ack_eliciting_in_flight == 0
+        assert self.recovery.get_loss_detection_time() is None
+        # Bytes are still in flight (probe consumes cwnd).
+        assert self.recovery.bytes_in_flight == 1452
+
+    def test_regular_packet_alongside_probe_drives_pto(self):
+        # If a regular ack-eliciting packet is in flight alongside the
+        # probe, PTO is anchored on the regular packet only.
+        regular = QuicSentPacket(
+            epoch=tls.Epoch.ONE_RTT,
+            in_flight=True,
+            is_ack_eliciting=True,
+            is_crypto_packet=False,
+            packet_number=10,
+            packet_type=QuicPacketType.ONE_RTT,
+            sent_bytes=1280,
+            sent_time=5.0,
+        )
+        probe = self._probe_packet(pn=11, sent_time=99.0)
+        self.recovery.on_packet_sent(regular, self.ONE_RTT_SPACE)
+        self.recovery.on_packet_sent(probe, self.ONE_RTT_SPACE)
+
+        assert self.ONE_RTT_SPACE.ack_eliciting_in_flight == 1
+        # PTO time anchored on regular (sent_time=5.0), not probe (99.0).
+        pto = self.recovery.get_loss_detection_time()
+        assert pto is not None
+        assert pto < 99.0
+
+    def test_pmtu_probe_ack_does_not_underflow_counter(self):
+        # Symmetric accounting: ACKing the probe must not decrement
+        # ack_eliciting_in_flight below zero.
+        probe = self._probe_packet(pn=0, sent_time=0.0)
+        self.recovery.on_packet_sent(probe, self.ONE_RTT_SPACE)
+        assert self.ONE_RTT_SPACE.ack_eliciting_in_flight == 0
+
+        rs = RangeSet()
+        rs.add(0, 1)
+        self.recovery.on_ack_received(
+            self.ONE_RTT_SPACE, ack_rangeset=rs, ack_delay=0.0, now=0.05
+        )
+        assert self.ONE_RTT_SPACE.ack_eliciting_in_flight == 0
+        assert self.recovery.bytes_in_flight == 0
+
+
 def _hystart_packet(pn: int, sent_time: float, size: int = 1280) -> QuicSentPacket:
     return QuicSentPacket(
         epoch=tls.Epoch.ONE_RTT,

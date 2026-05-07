@@ -10,6 +10,7 @@
   - fix(h3): surface StreamReset / StopSending events; enforce critical stream closure
   - fix(packet): reject duplicate transport parameters
   - fix(recovery): implement missing HyStart++
+  - fix(recovery): MTU probe through ping frame mistaken as real loss
   - chore: raise initial_rtt default to 333 ms
 
 1.8.0 (2026-05-03)

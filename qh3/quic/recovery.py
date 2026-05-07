@@ -509,7 +509,8 @@ class QuicPacketRecovery:
                 packet = space.sent_packets.pop(packet_number)
                 if packet.is_ack_eliciting:
                     is_ack_eliciting = True
-                    space.ack_eliciting_in_flight -= 1
+                    if not packet.is_pmtu_probe:
+                        space.ack_eliciting_in_flight -= 1
                 if packet.in_flight:
                     self._cc.on_packet_acked(packet)
                 largest_newly_acked = packet_number
@@ -586,10 +587,14 @@ class QuicPacketRecovery:
     def on_packet_sent(self, packet: QuicSentPacket, space: QuicPacketSpace) -> None:
         space.sent_packets[packet.packet_number] = packet
 
-        if packet.is_ack_eliciting:
+        # RFC 9000 14.4: PMTU probes have their own probe
+        # timer and MUST NOT anchor the standard PTO / loss-detection timer.
+        # We exclude them from ack_eliciting_in_flight bookkeeping so they
+        # neither arm PTO nor inflate _pto_count on probe loss.
+        if packet.is_ack_eliciting and not packet.is_pmtu_probe:
             space.ack_eliciting_in_flight += 1
         if packet.in_flight:
-            if packet.is_ack_eliciting:
+            if packet.is_ack_eliciting and not packet.is_pmtu_probe:
                 self._time_of_last_sent_ack_eliciting_packet = packet.sent_time
                 space.time_of_last_ack_eliciting_packet = packet.sent_time
 
@@ -721,9 +726,16 @@ class QuicPacketRecovery:
             del space.sent_packets[packet.packet_number]
 
             if packet.in_flight:
-                lost_packets_cc.append(packet)
+                if packet.is_pmtu_probe:
+                    # RFC 9000 14.4: loss of a PMTU probe MUST NOT trigger
+                    # a congestion control reaction. Reclaim bytes_in_flight
+                    # directly so the connection is not wedged, but skip the
+                    # congestion controller and persistent-congestion logic.
+                    self._cc.bytes_in_flight -= packet.sent_bytes
+                else:
+                    lost_packets_cc.append(packet)
 
-            if packet.is_ack_eliciting:
+            if packet.is_ack_eliciting and not packet.is_pmtu_probe:
                 space.ack_eliciting_in_flight -= 1
 
             if self._quic_logger is not None:
@@ -800,7 +812,7 @@ class QuicPacketRecovery:
             if packet.in_flight:
                 rescheduled_cc.append(packet)
 
-            if packet.is_ack_eliciting:
+            if packet.is_ack_eliciting and not packet.is_pmtu_probe:
                 space.ack_eliciting_in_flight -= 1
 
             # trigger callbacks (so stream senders re-enqueue stream data)

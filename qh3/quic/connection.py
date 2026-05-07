@@ -828,6 +828,10 @@ class QuicConnection:
                 probe_builder._buffer.push_bytes(bytes(pad_size))
             probe_datagrams, probe_packets = probe_builder.flush()
             if probe_datagrams:
+                # RFC 9000 14.4: tag probe packets so loss detection
+                # does not trigger a congestion control reaction.
+                for probe_pkt in probe_packets:
+                    probe_pkt.is_pmtu_probe = True
                 datagrams.extend(probe_datagrams)
                 packets.extend(probe_packets)
                 builder = probe_builder
