@@ -26,7 +26,7 @@ class QuicServer(asyncio.DatagramProtocol):
         self,
         *,
         configuration: QuicConfiguration,
-        create_protocol: Callable = QuicConnectionProtocol,
+        create_protocol: Callable[[QuicConnection, QuicStreamHandler | None], QuicConnectionProtocol] = QuicConnectionProtocol,
         session_ticket_fetcher: SessionTicketFetcher | None = None,
         session_ticket_handler: SessionTicketHandler | None = None,
         retry: bool = False,
@@ -47,7 +47,7 @@ class QuicServer(asyncio.DatagramProtocol):
         else:
             self._retry = None
 
-    def close(self):
+    def close(self) -> None:
         for protocol in set(self._protocols.values()):
             protocol.close()
         self._protocols.clear()
@@ -169,7 +169,7 @@ class QuicServer(asyncio.DatagramProtocol):
         if protocol is not None:
             protocol.datagram_received(data, addr)
 
-    def _connection_id_issued(self, cid: bytes, protocol: QuicConnectionProtocol):
+    def _connection_id_issued(self, cid: bytes, protocol: QuicConnectionProtocol) -> None:
         self._protocols[cid] = protocol
 
     def _connection_id_retired(
@@ -189,11 +189,11 @@ async def serve(
     port: int,
     *,
     configuration: QuicConfiguration,
-    create_protocol: Callable = QuicConnectionProtocol,
+    create_protocol: Callable[[QuicConnection, QuicStreamHandler | None], QuicConnectionProtocol] = QuicConnectionProtocol,
     session_ticket_fetcher: SessionTicketFetcher | None = None,
     session_ticket_handler: SessionTicketHandler | None = None,
     retry: bool = False,
-    stream_handler: QuicStreamHandler = None,
+    stream_handler: QuicStreamHandler | None = None,
 ) -> QuicServer:
     """
     Start a QUIC server at the given `host` and `port`.

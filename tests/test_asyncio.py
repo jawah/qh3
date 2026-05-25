@@ -566,6 +566,26 @@ class TestHighLevel:
             server.close()
 
 
+class TestQuicConnectionProtocol:
+    """Tests for QuicConnectionProtocol close idempotency."""
+
+    def test_close_idempotent(self):
+        """Closing an already-closed QuicConnectionProtocol should be a no-op."""
+        from unittest.mock import MagicMock
+
+        quic = MagicMock()
+        protocol = QuicConnectionProtocol(quic)
+        protocol._transport = MagicMock()
+
+        protocol.close()
+        assert protocol._close_called is True
+        quic.close.assert_called_once()
+
+        quic.reset_mock()
+        protocol.close()
+        quic.close.assert_not_called()
+
+
 class TestQuicStreamAdapter:
     """Tests for QuicStreamAdapter.write_eof idempotency + close."""
 

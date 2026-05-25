@@ -25,7 +25,7 @@ async def connect(
     port: int,
     *,
     configuration: QuicConfiguration | None = None,
-    create_protocol: Callable | None = QuicConnectionProtocol,
+    create_protocol: Callable[[QuicConnection, QuicStreamHandler | None], QuicConnectionProtocol] | None = QuicConnectionProtocol,
     session_ticket_handler: SessionTicketHandler | None = None,
     stream_handler: QuicStreamHandler | None = None,
     wait_connected: bool = True,

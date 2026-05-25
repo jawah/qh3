@@ -16,6 +16,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
     ):
         loop = asyncio.get_running_loop()
 
+        self._close_called = False
         self._closed = asyncio.Event()
         self._connected = False
         self._connected_waiter: asyncio.Future[None] | None = None
@@ -52,6 +53,9 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         """
         Close the connection.
         """
+        if self._close_called:
+            return
+        self._close_called = True
         self._quic.close()
         self.transmit()
 
