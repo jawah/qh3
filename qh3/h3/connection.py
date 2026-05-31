@@ -210,7 +210,8 @@ def encode_settings(settings: dict[int, int]) -> bytes:
 def parse_max_push_id(data: bytes) -> int:
     buf = Buffer(data=data)
     max_push_id = buf.pull_uint_var()
-    assert buf.eof()
+    if not buf.eof():
+        raise FrameError("MAX_PUSH_ID frame has extra trailing bytes")
     return max_push_id
 
 
@@ -752,6 +753,8 @@ class H3Connection:
         elif frame_type == FrameType.GOAWAY:
             buf = Buffer(data=frame_data)
             goaway_id = buf.pull_uint_var()
+            if not buf.eof():
+                raise FrameError("GOAWAY frame has extra trailing bytes")
             return [GoawayReceived(stream_id=goaway_id)]
         elif frame_type == FrameType.MAX_PUSH_ID:
             if self._is_client:

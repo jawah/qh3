@@ -137,6 +137,10 @@ class AlertCertificateExpired(Alert):
     description = AlertDescription.certificate_expired
 
 
+class AlertDecodeError(Alert):
+    description = AlertDescription.decode_error
+
+
 class AlertDecryptError(Alert):
     description = AlertDescription.decrypt_error
 
@@ -544,6 +548,10 @@ class HandshakeType(IntEnum):
     MESSAGE_HASH = 254
 
 
+class NameType(IntEnum):
+    HOST_NAME = 0
+
+
 class PskKeyExchangeMode(IntEnum):
     PSK_KE = 0
     PSK_DHE_KE = 1
@@ -579,7 +587,9 @@ def pull_block(buf: Buffer, capacity: int) -> Generator:
     length = int.from_bytes(buf.pull_bytes(capacity), byteorder="big")
     end = buf.tell() + length
     yield length
-    assert buf.tell() == end
+    if buf.tell() != end:
+        # There was trailing garbage or our parsing was bad.
+        raise AlertDecodeError("extra bytes at the end of a block")
 
 
 @contextmanager
@@ -645,6 +655,23 @@ def push_extension(buf: Buffer, extension_type: int) -> Generator:
     buf.push_uint16(extension_type)
     with push_block(buf, 2):
         yield
+
+
+def pull_server_name(buf: Buffer) -> str:
+    with pull_block(buf, 2):
+        name_type = buf.pull_uint8()
+        if name_type != NameType.HOST_NAME:
+            # We don't know this name_type.
+            raise AlertIllegalParameter(
+                f"ServerName has an unknown name type {name_type}"
+            )
+        return pull_opaque(buf, 2).decode("ascii")
+
+
+def push_server_name(buf: Buffer, server_name: str) -> None:
+    with push_block(buf, 2):
+        buf.push_uint8(NameType.HOST_NAME)
+        push_opaque(buf, 2, server_name.encode("ascii"))
 
 
 # KeyShareEntry
@@ -787,7 +814,10 @@ def parse_ech_config_list(data: bytes) -> list[ECHConfig]:
                 public_name = pull_opaque(buf, 1).decode("ascii")
                 extensions = pull_opaque(buf, 2)
 
-                assert buf.tell() == contents_end
+                if buf.tell() != contents_end:
+                    raise AlertDecodeError(
+                        "extra bytes at the end of an ECHConfig contents"
+                    )
 
                 # raw includes version(2) + length(2) + contents
                 config_end = buf.tell()
@@ -906,10 +936,26 @@ class ClientHello:
     grease_extension2: int | None = None
 
 
+def pull_handshake_type(buf: Buffer, expected_type: HandshakeType) -> None:
+    """
+    Pull the message type and check it is the expected one.
+
+    The message type is always pulled (even when running under `python -O`)
+    so that framing is preserved. If it is not the expected type, we have a
+    programming error in the dispatch logic.
+    """
+    message_type = buf.pull_uint8()
+    if message_type != expected_type:
+        raise AlertDecodeError(
+            f"unexpected handshake type {message_type}, expected {expected_type}"
+        )
+
+
 def pull_client_hello(buf: Buffer) -> ClientHello:
-    assert buf.pull_uint8() == HandshakeType.CLIENT_HELLO
+    pull_handshake_type(buf, HandshakeType.CLIENT_HELLO)
     with pull_block(buf, 3):
-        assert buf.pull_uint16() == TLS_VERSION_1_2
+        if buf.pull_uint16() != TLS_VERSION_1_2:
+            raise AlertDecodeError("ClientHello version is not 1.2")
 
         hello = ClientHello(
             random=buf.pull_bytes(32),
@@ -924,7 +970,9 @@ def pull_client_hello(buf: Buffer) -> ClientHello:
         def pull_extension() -> None:
             # pre_shared_key MUST be last
             nonlocal after_psk
-            assert not after_psk
+            if after_psk:
+                # the alert is Illegal Parameter per RFC 8446 section 4.2.11.
+                raise AlertIllegalParameter("PreSharedKey is not the last extension")
 
             extension_type = buf.pull_uint16()
             extension_length = buf.pull_uint16()
@@ -939,9 +987,7 @@ def pull_client_hello(buf: Buffer) -> ClientHello:
             elif extension_type == ExtensionType.PSK_KEY_EXCHANGE_MODES:
                 hello.psk_key_exchange_modes = pull_list(buf, 1, buf.pull_uint8)
             elif extension_type == ExtensionType.SERVER_NAME:
-                with pull_block(buf, 2):
-                    assert buf.pull_uint8() == 0
-                    hello.server_name = pull_opaque(buf, 2).decode("ascii")
+                hello.server_name = pull_server_name(buf)
             elif extension_type == ExtensionType.ALPN:
                 hello.alpn_protocols = pull_list(
                     buf, 2, partial(pull_alpn_protocol, buf)
@@ -1004,9 +1050,7 @@ def push_client_hello(buf: Buffer, hello: ClientHello) -> None:
 
             if hello.server_name is not None:
                 with push_extension(buf, ExtensionType.SERVER_NAME):
-                    with push_block(buf, 2):
-                        buf.push_uint8(0)
-                        push_opaque(buf, 2, hello.server_name.encode("ascii"))
+                    push_server_name(buf, hello.server_name)
 
             if hello.alpn_protocols is not None:
                 with push_extension(buf, ExtensionType.ALPN):
@@ -1066,9 +1110,10 @@ class ServerHello:
 
 
 def pull_server_hello(buf: Buffer) -> ServerHello:
-    assert buf.pull_uint8() == HandshakeType.SERVER_HELLO
+    pull_handshake_type(buf, HandshakeType.SERVER_HELLO)
     with pull_block(buf, 3):
-        assert buf.pull_uint16() == TLS_VERSION_1_2
+        if buf.pull_uint16() != TLS_VERSION_1_2:
+            raise AlertDecodeError("ServerHello version is not 1.2")
 
         hello = ServerHello(
             random=buf.pull_bytes(32),
@@ -1141,7 +1186,7 @@ class NewSessionTicket:
 def pull_new_session_ticket(buf: Buffer) -> NewSessionTicket:
     new_session_ticket = NewSessionTicket()
 
-    assert buf.pull_uint8() == HandshakeType.NEW_SESSION_TICKET
+    pull_handshake_type(buf, HandshakeType.NEW_SESSION_TICKET)
     with pull_block(buf, 3):
         new_session_ticket.ticket_lifetime = buf.pull_uint32()
         new_session_ticket.ticket_age_add = buf.pull_uint32()
@@ -1193,7 +1238,7 @@ class EncryptedExtensions:
 def pull_encrypted_extensions(buf: Buffer) -> EncryptedExtensions:
     extensions = EncryptedExtensions()
 
-    assert buf.pull_uint8() == HandshakeType.ENCRYPTED_EXTENSIONS
+    pull_handshake_type(buf, HandshakeType.ENCRYPTED_EXTENSIONS)
     with pull_block(buf, 3):
 
         def pull_extension() -> None:
@@ -1259,7 +1304,7 @@ class CertificateRequest:
 def pull_certificate(buf: Buffer) -> Certificate:
     certificate = Certificate()
 
-    assert buf.pull_uint8() == HandshakeType.CERTIFICATE
+    pull_handshake_type(buf, HandshakeType.CERTIFICATE)
     with pull_block(buf, 3):
         certificate.request_context = pull_opaque(buf, 1)
 
@@ -1278,7 +1323,7 @@ def pull_certificate(buf: Buffer) -> Certificate:
 def pull_certificate_request(buf: Buffer) -> CertificateRequest:
     certificate_request = CertificateRequest()
 
-    assert buf.pull_uint8() == HandshakeType.CERTIFICATE_REQUEST
+    pull_handshake_type(buf, HandshakeType.CERTIFICATE_REQUEST)
     with pull_block(buf, 3):
         certificate_request.request_context = pull_opaque(buf, 1)
 
@@ -1320,7 +1365,7 @@ class CertificateVerify:
 
 
 def pull_certificate_verify(buf: Buffer) -> CertificateVerify:
-    assert buf.pull_uint8() == HandshakeType.CERTIFICATE_VERIFY
+    pull_handshake_type(buf, HandshakeType.CERTIFICATE_VERIFY)
     with pull_block(buf, 3):
         algorithm = buf.pull_uint16()
         signature = pull_opaque(buf, 2)
@@ -1343,7 +1388,7 @@ class Finished:
 def pull_finished(buf: Buffer) -> Finished:
     finished = Finished()
 
-    assert buf.pull_uint8() == HandshakeType.FINISHED
+    pull_handshake_type(buf, HandshakeType.FINISHED)
     finished.verify_data = pull_opaque(buf, 3)
 
     return finished
@@ -1838,7 +1883,11 @@ class Context:
             elif self.state == State.SERVER_POST_HANDSHAKE:
                 raise AlertUnexpectedMessage
 
-            assert input_buf.eof()
+            # If the message contained any extra bytes, the `pull_block`
+            # inside the message parser would already have raised
+            # `AlertDecodeError`, so by this point the buffer must be at EOF.
+            if not input_buf.eof():
+                raise AlertDecodeError("extra bytes at the end of a handshake message")
 
     def _build_session_ticket(
         self, new_session_ticket: NewSessionTicket, other_extensions: list[Extension]
@@ -2443,8 +2492,14 @@ class Context:
             AlertHandshakeFailure("Unsupported cipher suite"),
             excl_fn=_is_grease_value,
         )
-        assert peer_hello.compression_method in self._legacy_compression_methods
-        assert peer_hello.supported_version in self._supported_versions
+        if peer_hello.compression_method not in self._legacy_compression_methods:
+            raise AlertIllegalParameter(
+                "ServerHello has a compression method we did not advertise"
+            )
+        if peer_hello.supported_version not in self._supported_versions:
+            raise AlertIllegalParameter(
+                "ServerHello has a version we did not advertise"
+            )
 
         # ECH acceptance detection (RFC 9849 Section 6.1.4 / 7.2)
         # If we offered real ECH, check if the server accepted it by
@@ -2506,7 +2561,13 @@ class Context:
         ):
             shared_key = self._ec_p521_private_key.exchange(peer_public_key)
 
-        assert shared_key is not None
+        if shared_key is None:
+            # The server selected a group we did not offer (or for which we
+            # hold no private key). Reject rather than feed None into the key
+            # schedule (which would happen silently under `python -O`).
+            raise AlertIllegalParameter(
+                "ServerHello selected a key share group we did not offer"
+            )
 
         if self._ech_accepted:
             # When ECH is accepted, the transcript uses the inner ClientHello.
@@ -2605,7 +2666,10 @@ class Context:
     def _client_handle_certificate_verify(self, input_buf: Buffer) -> None:
         verify = pull_certificate_verify(input_buf)
 
-        assert verify.algorithm in self._signature_algorithms
+        if verify.algorithm not in self._signature_algorithms:
+            raise AlertDecryptError(
+                "CertificateVerify has a signature algorithm we did not advertise"
+            )
 
         # check signature
         try:
@@ -2957,7 +3021,10 @@ class Context:
                 group_kx = Group.SECP521R1
                 break
 
-        assert shared_key is not None
+        if shared_key is None:
+            # None of the client's offered key shares used a group we support.
+            # Reject rather than feed None into the key schedule.
+            raise AlertHandshakeFailure("No supported key share group in ClientHello")
 
         # send hello
         hello = ServerHello(

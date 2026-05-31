@@ -126,7 +126,8 @@ def get_retry_integrity_tag(
     buf.push_uint8(len(original_destination_cid))
     buf.push_bytes(original_destination_cid)
     buf.push_bytes(packet_without_tag)
-    assert buf.eof()
+    if not buf.eof():
+        raise ValueError("Retry pseudo packet was not fully built")
 
     if version == QuicProtocolVersion.VERSION_2:
         aead_key = RETRY_AEAD_KEY_VERSION_2
@@ -138,7 +139,8 @@ def get_retry_integrity_tag(
     # run AES-128-GCM
     aead = AeadAes128Gcm(aead_key, b"null!12bytes")
     integrity_tag = aead.encrypt_with_nonce(aead_nonce, b"", buf.data)
-    assert len(integrity_tag) == RETRY_INTEGRITY_TAG_SIZE
+    if len(integrity_tag) != RETRY_INTEGRITY_TAG_SIZE:
+        raise ValueError("Retry integrity tag has an unexpected size")
     return integrity_tag
 
 
@@ -239,7 +241,8 @@ def encode_quic_retry(
     buf.push_bytes(
         get_retry_integrity_tag(buf.data, original_destination_cid, version=version)
     )
-    assert buf.eof()
+    if not buf.eof():
+        raise ValueError("Retry packet was not fully built")
     return buf.data
 
 
