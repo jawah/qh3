@@ -22,6 +22,8 @@
   unstable and often lost datagrams.
 - Swapped bare ``assert`` statement in favor of unavoidable hard checks and raises.
 - H3 trailers event handler did not check for trailing data.
+- A trailing FIN on a stream already torn down by reset / stop-sending could resurrect it,
+  delivering a spurious duplicate stream and leaking its asyncio ``StreamWriter``.
 
 1.8.1 (2026-05-07)
 ==================
