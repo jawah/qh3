@@ -50,12 +50,16 @@ from ._hazmat import (
 _HASHED_CERT_FILENAME_RE = re.compile(r"^[0-9a-fA-F]{8}\.[0-9]$")
 
 # Optional Brotli support for the compress_certificate (RFC 8879) extension.
-# When the "brotli" package is unavailable, the extension is dropped entirely
+# "brotli" (CPython) is preferred, with "brotlicffi" (PyPy and CPython) as a
+# fallback. When neither is available, the extension is dropped entirely
 # rather than relying on a native implementation.
 try:
     import brotli as _brotli
 except ImportError:
-    _brotli = None
+    try:
+        import brotlicffi as _brotli
+    except ImportError:
+        _brotli = None
 
 # RFC 8879 certificate compression algorithm identifier for Brotli.
 CERTIFICATE_COMPRESSION_BROTLI = 2
