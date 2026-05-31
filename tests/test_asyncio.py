@@ -17,6 +17,7 @@ from qh3.asyncio.protocol import QuicConnectionProtocol
 from qh3.asyncio.server import serve
 from qh3.quic.configuration import QuicConfiguration
 from qh3.quic.logger import QuicLogger
+from qh3.tls import SignatureAlgorithm
 
 from .utils import (
     SERVER_CACERTFILE,
@@ -134,7 +135,9 @@ class TestHighLevel:
             response = await self.run_client(host="::1", port=server_port)
             assert response == b"gnip"
 
-    async def _test_connect_and_serve_with_certificate(self, certificate, private_key):
+    async def _test_connect_and_serve_with_certificate(
+        self, certificate, private_key, client_signature_algorithms=None
+    ):
         inner_certificate = InnerCertificate(
             certificate.public_bytes(serialization.Encoding.DER)
         )
@@ -165,10 +168,17 @@ class TestHighLevel:
                 is_client=False,
             )
         ) as server_port:
+            client_configuration = None
+            if client_signature_algorithms is not None:
+                client_configuration = QuicConfiguration(
+                    is_client=True,
+                    signature_algorithms=client_signature_algorithms,
+                )
             response = await self.run_client(
                 cadata=certificate.public_bytes(serialization.Encoding.PEM),
                 cafile=None,
                 port=server_port,
+                configuration=client_configuration,
             )
             assert response == b"gnip"
 
@@ -182,10 +192,18 @@ class TestHighLevel:
 
     @pytest.mark.asyncio
     async def test_connect_and_serve_with_ed25519_certificate(self):
+        # The default advertised signature_algorithms omit EdDSA, so the
+        # Ed25519-only server cannot sign. Re-enable it via the escape hatch.
         await self._test_connect_and_serve_with_certificate(
             *generate_ed25519_certificate(
                 common_name="localhost", alternative_names=["localhost"]
-            )
+            ),
+            client_signature_algorithms=[
+                SignatureAlgorithm.ED25519,
+                SignatureAlgorithm.ECDSA_SECP256R1_SHA256,
+                SignatureAlgorithm.RSA_PSS_RSAE_SHA256,
+                SignatureAlgorithm.RSA_PKCS1_SHA256,
+            ],
         )
 
     @pytest.mark.asyncio

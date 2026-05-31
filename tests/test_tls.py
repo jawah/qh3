@@ -421,6 +421,14 @@ class TestContext:
             cafile=None,
         )
 
+        # An Ed25519 server certificate requires the client to advertise the
+        # Ed25519 signature algorithm, which the default (Chrome-like) profile
+        # omits. Exercise the escape hatch that re-enables it.
+        if not hasattr(private_key, "curve"):
+            client._signature_algorithms = [
+                tls.SignatureAlgorithm.ED25519
+            ] + client._signature_algorithms
+
         self._handshake(client, server)
 
         # check ALPN matches
@@ -483,6 +491,7 @@ class TestContext:
     def test_handshake_with_grease_group(self):
         client = self.create_client()
         client._supported_groups = [tls.Group.GREASE, tls.Group.SECP256R1]
+        client._offer_ec_key_shares = True
         server = self.create_server()
 
         self._handshake(client, server)
@@ -758,8 +767,10 @@ class TestTls:
         buf = Buffer(1000)
         push_client_hello(buf, hello)
         # The fixture contains a GREASE extension (0x0A0A, 4 bytes) that is
-        # stripped during parsing, so re-serialized output is 4 bytes smaller.
-        assert len(buf.data) == len(load("tls_client_hello_with_alpn.bin")) - 4
+        # stripped during parsing, and a status_request extension (9 bytes)
+        # that the serializer no longer emits, so the re-serialized output is
+        # 13 bytes smaller.
+        assert len(buf.data) == len(load("tls_client_hello_with_alpn.bin")) - 4 - 9
 
     def test_pull_client_hello_with_psk(self):
         buf = Buffer(data=load("tls_client_hello_with_psk.bin"))
@@ -792,8 +803,10 @@ class TestTls:
         buf = Buffer(1000)
         push_client_hello(buf, hello)
         # The fixture contains a GREASE extension (0x0A0A, 4 bytes) that is
-        # stripped during parsing, so re-serialized output is 4 bytes smaller.
-        assert len(buf.data) == len(load("tls_client_hello_with_psk.bin")) - 4
+        # stripped during parsing, and a status_request extension (9 bytes)
+        # that the serializer no longer emits, so the re-serialized output is
+        # 13 bytes smaller.
+        assert len(buf.data) == len(load("tls_client_hello_with_psk.bin")) - 4 - 9
 
     def test_pull_client_hello_with_sni(self):
         buf = Buffer(data=load("tls_client_hello_with_sni.bin"))
@@ -845,8 +858,10 @@ class TestTls:
         buf = Buffer(1000)
         push_client_hello(buf, hello)
         # The fixture contains a GREASE extension (0x0A0A, 4 bytes) that is
-        # stripped during parsing, so re-serialized output is 4 bytes smaller.
-        assert len(buf.data) == len(load("tls_client_hello_with_sni.bin")) - 4
+        # stripped during parsing, and a status_request extension (9 bytes)
+        # that the serializer no longer emits, so the re-serialized output is
+        # 13 bytes smaller.
+        assert len(buf.data) == len(load("tls_client_hello_with_sni.bin")) - 4 - 9
 
     def test_push_client_hello(self):
         hello = ClientHello(
@@ -1840,6 +1855,7 @@ class TestHandshakeWithP384P521:
         )
         # Force client to offer SECP384R1
         client._supported_groups = [tls.Group.SECP384R1]
+        client._offer_ec_key_shares = True
 
         self._handshake(client, server)
 
@@ -1887,6 +1903,7 @@ class TestHandshakeWithP384P521:
         )
         # Force client to offer SECP521R1 group AND include the P521 signature algorithm
         client._supported_groups = [tls.Group.SECP521R1]
+        client._offer_ec_key_shares = True
         client._signature_algorithms = [
             tls.SignatureAlgorithm.ECDSA_SECP521R1_SHA512,
         ] + client._signature_algorithms

@@ -37,7 +37,10 @@ DUMMY_SETTINGS = {
     Setting.QPACK_BLOCKED_STREAMS: 16,
     Setting.DUMMY: 1,
 }
-QUIC_CONFIGURATION_OPTIONS = {"alpn_protocols": H3_ALPN}
+QUIC_CONFIGURATION_OPTIONS = {
+    "alpn_protocols": H3_ALPN,
+    "max_datagram_frame_size": 65536,
+}
 
 
 def h3_client_and_server(options=QUIC_CONFIGURATION_OPTIONS):
