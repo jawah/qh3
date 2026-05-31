@@ -126,7 +126,8 @@ def get_retry_integrity_tag(
     buf.push_uint8(len(original_destination_cid))
     buf.push_bytes(original_destination_cid)
     buf.push_bytes(packet_without_tag)
-    assert buf.eof()
+    if not buf.eof():
+        raise ValueError("Retry pseudo packet was not fully built")
 
     if version == QuicProtocolVersion.VERSION_2:
         aead_key = RETRY_AEAD_KEY_VERSION_2
@@ -138,7 +139,8 @@ def get_retry_integrity_tag(
     # run AES-128-GCM
     aead = AeadAes128Gcm(aead_key, b"null!12bytes")
     integrity_tag = aead.encrypt_with_nonce(aead_nonce, b"", buf.data)
-    assert len(integrity_tag) == RETRY_INTEGRITY_TAG_SIZE
+    if len(integrity_tag) != RETRY_INTEGRITY_TAG_SIZE:
+        raise ValueError("Retry integrity tag has an unexpected size")
     return integrity_tag
 
 
@@ -239,7 +241,8 @@ def encode_quic_retry(
     buf.push_bytes(
         get_retry_integrity_tag(buf.data, original_destination_cid, version=version)
     )
-    assert buf.eof()
+    if not buf.eof():
+        raise ValueError("Retry packet was not fully built")
     return buf.data
 
 
@@ -302,30 +305,36 @@ class QuicTransportParameters:
     version_information: QuicVersionInformation | None = None
     max_datagram_frame_size: int | None = None
     quantum_readiness: bytes | None = None
+    # used to control A/B testing targeting(...) Google servers.
+    google_connection_options: bytes | None = None
+    # A GREASE transport parameter (id, value). The id is dynamic (reserved
+    # form 31*N+27) so it is carried alongside its value rather than via PARAMS.
+    greased_transport_parameter: tuple[int, bytes] | None = None
 
 
 PARAMS = {
-    0x00: ("original_destination_connection_id", bytes),
-    0x01: ("max_idle_timeout", int),
-    0x02: ("stateless_reset_token", bytes),
-    0x03: ("max_udp_payload_size", int),
+    0x0F: ("initial_source_connection_id", bytes),
     0x04: ("initial_max_data", int),
-    0x05: ("initial_max_stream_data_bidi_local", int),
-    0x06: ("initial_max_stream_data_bidi_remote", int),
+    0x01: ("max_idle_timeout", int),
+    0x03: ("max_udp_payload_size", int),
     0x07: ("initial_max_stream_data_uni", int),
-    0x08: ("initial_max_streams_bidi", int),
+    # https://datatracker.ietf.org/doc/html/rfc9368#section-3
+    0x11: ("version_information", QuicVersionInformation),
+    0x0020: ("max_datagram_frame_size", int),
+    0x06: ("initial_max_stream_data_bidi_remote", int),
     0x09: ("initial_max_streams_uni", int),
+    0x3128: ("google_connection_options", bytes),
+    0x08: ("initial_max_streams_bidi", int),
+    0x05: ("initial_max_stream_data_bidi_local", int),
+    # remaining parameters (parsed and, where relevant, emitted by servers)
+    0x00: ("original_destination_connection_id", bytes),
+    0x02: ("stateless_reset_token", bytes),
     0x0A: ("ack_delay_exponent", int),
     0x0B: ("max_ack_delay", int),
     0x0C: ("disable_active_migration", bool),
     0x0D: ("preferred_address", QuicPreferredAddress),
     0x0E: ("active_connection_id_limit", int),
-    0x0F: ("initial_source_connection_id", bytes),
     0x10: ("retry_source_connection_id", bytes),
-    # https://datatracker.ietf.org/doc/html/rfc9368#section-3
-    0x11: ("version_information", QuicVersionInformation),
-    # extensions
-    0x0020: ("max_datagram_frame_size", int),
     0x0C37: ("quantum_readiness", bytes),
 }
 
@@ -445,6 +454,15 @@ def push_quic_transport_parameters(
     buf: Buffer, params: QuicTransportParameters
 ) -> None:
     for param_id, (param_name, param_type) in PARAMS.items():
+        # The GREASE transport parameter has a dynamic id, so it is emitted
+        # just before the version information parameter rather than via PARAMS.
+        if param_id == 0x11 and params.greased_transport_parameter is not None:
+            grease_id, grease_value = params.greased_transport_parameter
+            buf.push_uint_var(grease_id)
+            buf.push_uint_var(len(grease_value))
+            if grease_value:
+                buf.push_bytes(grease_value)
+
         param_value = getattr(params, param_name)
         if param_value is not None and param_value is not False:
             param_buf = Buffer(capacity=65536)

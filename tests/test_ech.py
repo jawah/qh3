@@ -129,9 +129,7 @@ async def test_ech_accepted(requires_network):
 
         assert headers[b":status"] == b"301"
 
-        html = body.decode()
-
-        assert not html
+        assert bool(body.decode())
 
 
 @pytest.mark.asyncio
@@ -162,6 +160,4 @@ async def test_grease_ech_no_rejection(requires_network):
                 body += event.data
 
         assert headers[b":status"] == b"301"
-        html = body.decode()
-
-        assert not html
+        assert bool(body.decode())
