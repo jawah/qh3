@@ -367,8 +367,8 @@ class H3Connection:
 
     def __init__(self, quic: QuicConnection, enable_webtransport: bool = False) -> None:
         # settings
-        self._max_table_capacity = 4096
-        self._blocked_streams = 16
+        self._max_table_capacity = 65536
+        self._blocked_streams = 100
         self._enable_webtransport = enable_webtransport
 
         self._is_client = quic.configuration.is_client
@@ -719,12 +719,12 @@ class H3Connection:
         """
         settings: dict[int, int] = {
             Setting.QPACK_MAX_TABLE_CAPACITY: self._max_table_capacity,
+            Setting.MAX_FIELD_SECTION_SIZE: 262144,
             Setting.QPACK_BLOCKED_STREAMS: self._blocked_streams,
-            Setting.ENABLE_CONNECT_PROTOCOL: 1,
+            Setting.H3_DATAGRAM: 1,
             Setting.DUMMY: 1,
         }
         if self._enable_webtransport:
-            settings[Setting.H3_DATAGRAM] = 1
             settings[Setting.ENABLE_WEBTRANSPORT] = 1
         return settings
 
