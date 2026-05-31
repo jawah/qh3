@@ -144,8 +144,8 @@ class QuicConfiguration:
     Override the advertised active_connection_id_limit transport parameter.
 
     When ``None`` (default), a client omits the parameter from its transport
-    parameters, so peers fall back to the protocol default of 2. 
-    Set an explicit value (>= 2) to advertise it and allow the peer to issue 
+    parameters, so peers fall back to the protocol default of 2.
+    Set an explicit value (>= 2) to advertise it and allow the peer to issue
     more connection IDs.
 
     .. note:: Client side only; servers always advertise their limit.
