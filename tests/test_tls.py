@@ -449,6 +449,105 @@ class TestContext:
             )
         )
 
+    def _build_compressed_certificate(
+        self, algorithm, uncompressed_length, compressed
+    ):
+        buf = Buffer(capacity=len(compressed) + 32)
+        buf.push_uint8(tls.HandshakeType.COMPRESSED_CERTIFICATE)
+        with push_block(buf, 3):
+            buf.push_uint16(algorithm)
+            buf.push_bytes(uncompressed_length.to_bytes(3, "big"))
+            push_opaque(buf, 3, compressed)
+        return Buffer(data=buf.data)
+
+    def _server_certificate_with_status(self, server, ocsp_response=b""):
+        if tls._brotli is None:
+            pytest.skip("brotli/brotlicffi not available")
+
+        leaf_der = server.certificate.public_bytes()
+
+        leaf_extensions = b""
+        if ocsp_response is not None and len(ocsp_response):
+            leaf_extensions = (
+                tls.ExtensionType.STATUS_REQUEST.to_bytes(2, "big")
+                + (1 + 3 + len(ocsp_response)).to_bytes(2, "big")
+                + b"\x01"  # status_type = ocsp(1)
+                + len(ocsp_response).to_bytes(3, "big")
+                + ocsp_response
+            )
+
+        certificate = Certificate(
+            request_context=b"",
+            certificates=[(leaf_der, leaf_extensions)],
+        )
+
+        cert_buf = Buffer(capacity=len(leaf_der) + len(leaf_extensions) + 64)
+        push_certificate(cert_buf, certificate)
+        # Strip the handshake header (type byte + 3 length bytes); the
+        # remaining payload is what RFC 8879 compresses.
+        certificate_body = cert_buf.data[4:]
+        compressed = tls._brotli.compress(certificate_body)
+        return certificate_body, compressed
+
+    def test_client_handle_compressed_certificate(self):
+        client = self.create_client()
+        server = self.create_server()
+        self._handshake(client, server)
+
+        ocsp_response = b"\xde\xad\xbe\xef"
+        body, compressed = self._server_certificate_with_status(server, ocsp_response)
+
+        input_buf = self._build_compressed_certificate(
+            tls.CERTIFICATE_COMPRESSION_BROTLI, len(body), compressed
+        )
+        client._client_handle_compressed_certificate(input_buf)
+
+        assert client._peer_certificate is not None
+        assert client._ocsp_response == ocsp_response
+        assert client.state == State.CLIENT_EXPECT_CERTIFICATE_VERIFY
+
+    def test_client_handle_compressed_certificate_unsupported_algorithm(self):
+        client = self.create_client()
+        server = self.create_server()
+
+        body, compressed = self._server_certificate_with_status(server)
+
+        input_buf = self._build_compressed_certificate(
+            0x0001, len(body), compressed  # zlib, not supported here
+        )
+        with pytest.raises(tls.AlertBadCertificate):
+            client._client_handle_compressed_certificate(input_buf)
+
+    def test_client_handle_compressed_certificate_decompress_failure(self):
+        client = self.create_client()
+
+        input_buf = self._build_compressed_certificate(
+            tls.CERTIFICATE_COMPRESSION_BROTLI, 32, b"not-valid-brotli"
+        )
+        with pytest.raises(tls.AlertBadCertificate):
+            client._client_handle_compressed_certificate(input_buf)
+
+    def test_client_handle_compressed_certificate_length_mismatch(self):
+        client = self.create_client()
+        server = self.create_server()
+
+        body, compressed = self._server_certificate_with_status(server)
+
+        input_buf = self._build_compressed_certificate(
+            tls.CERTIFICATE_COMPRESSION_BROTLI, len(body) + 1, compressed
+        )
+        with pytest.raises(tls.AlertBadCertificate):
+            client._client_handle_compressed_certificate(input_buf)
+
+    def test_client_hello_with_certificate_status_request(self):
+        client = self.create_client(offer_certificate_status_request=True)
+        client_buf = create_buffers()
+        client.handle_message(b"", client_buf)
+        hello = merge_buffers(client_buf)
+        # The status_request extension (type 5) must be present in the
+        # ClientHello when the escape hatch is enabled.
+        assert b"\x00\x05\x00\x05\x01\x00\x00\x00\x00" in hello
+
     def test_handshake_with_alpn(self):
         client = self.create_client(alpn_protocols=["hq-20"])
         server = self.create_server(alpn_protocols=["hq-20", "h3-20"])
