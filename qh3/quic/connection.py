@@ -295,6 +295,8 @@ class QuicConnection:
         "_host_cid_seq",
         "_local_ack_delay_exponent",
         "_local_active_connection_id_limit",
+        "_local_grease_quic_version",
+        "_local_grease_transport_parameter",
         "_local_challenges",
         "_local_initial_source_connection_id",
         "_local_max_data",
@@ -435,7 +437,21 @@ class QuicConnection:
         self._has_unsent_cids = False
         self._host_cid_seq = 1
         self._local_ack_delay_exponent = 3
-        self._local_active_connection_id_limit = 8
+        self._local_active_connection_id_limit = (
+            configuration.active_connection_id_limit
+            if configuration.active_connection_id_limit is not None
+            else 8
+        )
+        # A GREASE QUIC version (reserved form 0x?a?a?a?a) advertised alongside
+        # the real version, and a GREASE transport parameter (reserved id of the
+        # form 31*N+27) sent with an empty body. Both follow RFC 9287/9000 and
+        # exercise the peer's forward-compatibility handling.
+        self._local_grease_quic_version = (
+            (int.from_bytes(os.urandom(1), "big") << 24) | 0x0A0A0A0A
+        ) & 0xFFFFFFFF
+        self._local_grease_transport_parameter = (
+            31 * int.from_bytes(os.urandom(4), "big") + 27
+        )
         self._local_challenges: dict[bytes, QuicNetworkPath] = {}
         self._local_initial_source_connection_id = self._host_cids[0].cid
         self._local_max_data = Limit(
@@ -449,10 +465,10 @@ class QuicConnection:
         self._local_max_streams_bidi = Limit(
             frame_type=QuicFrameType.MAX_STREAMS_BIDI,
             name="max_streams_bidi",
-            value=128,
+            value=100,
         )
         self._local_max_streams_uni = Limit(
-            frame_type=QuicFrameType.MAX_STREAMS_UNI, name="max_streams_uni", value=128
+            frame_type=QuicFrameType.MAX_STREAMS_UNI, name="max_streams_uni", value=103
         )
         self._local_next_stream_id_bidi = 0 if self._is_client else 1
         self._local_next_stream_id_uni = 2 if self._is_client else 3
@@ -1189,9 +1205,20 @@ class QuicConnection:
 
             # server initialization
             if not is_client and self._state is QuicConnectionState.FIRSTFLIGHT:
-                assert _packet_type == QuicPacketType.INITIAL, (
-                    "first packet must be INITIAL"
-                )
+                if _packet_type != QuicPacketType.INITIAL:
+                    # A server's first received packet must be an INITIAL
+                    # packet. Drop anything else.
+                    # connection initialization with attacker-controlled input.
+                    if quic_logger is not None:
+                        quic_logger.log_event(
+                            category="transport",
+                            event="packet_dropped",
+                            data={
+                                "trigger": "first_packet_not_initial",
+                                "raw": {"length": _packet_length},
+                            },
+                        )
+                    return
                 crypto_frame_required = True
                 self._network_paths = [network_path]
                 self._version = _version
@@ -1810,6 +1837,11 @@ class QuicConnection:
             assert_fingerprint=self._configuration.assert_fingerprint,
             verify_hostname=self._configuration.verify_hostname,
             ech_config_list=self._configuration.ech_config_list,
+            signature_algorithms=self._configuration.signature_algorithms,
+            offer_ec_key_shares=self._configuration.offer_ec_key_shares,
+            offer_certificate_status_request=(
+                self._configuration.offer_certificate_status_request
+            ),
         )
         if self._configuration.certificate is not None and not isinstance(
             self._configuration.certificate, X509Certificate
@@ -3457,7 +3489,31 @@ class QuicConnection:
                 available_versions=self._configuration.supported_versions,
             ),
         )
-        if not self._is_client:
+        if self._is_client:
+            # A client advertises a smaller, fixed parameter set: it omits the
+            # parameters left at their protocol defaults (ack delay exponent,
+            # max ack delay, active connection id limit, stateless reset token)
+            # and adds the maximum UDP payload it is willing to receive, a
+            # datagram frame size, Google's connection-options parameter, a
+            # GREASE parameter and a GREASE entry in the advertised versions.
+            quic_transport_parameters.ack_delay_exponent = None
+            quic_transport_parameters.max_ack_delay = None
+            quic_transport_parameters.active_connection_id_limit = (
+                self._configuration.active_connection_id_limit
+            )
+            quic_transport_parameters.stateless_reset_token = None
+            quic_transport_parameters.max_udp_payload_size = 1472
+            quic_transport_parameters.max_datagram_frame_size = 65536
+            quic_transport_parameters.google_connection_options = b"ORIG"
+            quic_transport_parameters.greased_transport_parameter = (
+                self._local_grease_transport_parameter,
+                b"",
+            )
+            quic_transport_parameters.version_information.available_versions = [
+                self._local_grease_quic_version,
+                *self._configuration.supported_versions,
+            ]
+        else:
             quic_transport_parameters.original_destination_connection_id = (
                 self._original_destination_connection_id
             )

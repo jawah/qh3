@@ -36,7 +36,7 @@ class QuicConfiguration:
     The length in bytes of local connection IDs.
     """
 
-    idle_timeout: float = 60.0
+    idle_timeout: float = 30.0
     """
     The idle timeout in seconds.
 
@@ -48,7 +48,7 @@ class QuicConfiguration:
     Whether this is the client side of the QUIC connection.
     """
 
-    max_data: int = 1048576
+    max_data: int = 15728640
     """
     Connection-wide flow control limit.
     """
@@ -63,7 +63,7 @@ class QuicConfiguration:
     Enable path MTU discovery. Client-only.
     """
 
-    max_stream_data: int = 1048576
+    max_stream_data: int = 6291456
     """
     Per-stream flow control limit.
     """
@@ -104,6 +104,52 @@ class QuicConfiguration:
     certificate_chain: list[X509Certificate] = field(default_factory=list)
 
     cipher_suites: list[CipherSuite] | None = None
+
+    signature_algorithms: list[int] | None = None
+    """
+    Override the advertised TLS 1.3 signature_algorithms (escape hatch).
+
+    The default list intentionally omits EdDSA. Callers that must connect to
+    Ed25519-only peers can supply their own ordered list (e.g. the default plus
+    ``SignatureAlgorithm.ED25519``) to re-enable it.
+
+    .. note:: Client side only!
+    """
+
+    offer_ec_key_shares: bool = False
+    """
+    Also generate key shares for the NIST P-curves (escape hatch).
+
+    By default only X25519MLKEM768 + X25519 key shares are offered; the P-curves
+    are advertised in supported_groups but without a key share (the peer must
+    request one via HelloRetryRequest). Enable this to eagerly offer
+    P-256/P-384/P-521 key shares, e.g. when restricting supported_groups to
+    those curves only.
+
+    .. note:: Client side only!
+    """
+
+    offer_certificate_status_request: bool = False
+    """
+    Advertise the TLS ``status_request`` (OCSP, ext 5) extension (escape hatch).
+
+    Disabled by default: Enable this to request OCSP stapling in
+    the QUIC handshake.
+
+    .. note:: Client side only!
+    """
+
+    active_connection_id_limit: int | None = None
+    """
+    Override the advertised active_connection_id_limit transport parameter.
+
+    When ``None`` (default), a client omits the parameter from its transport
+    parameters, so peers fall back to the protocol default of 2.
+    Set an explicit value (>= 2) to advertise it and allow the peer to issue
+    more connection IDs.
+
+    .. note:: Client side only; servers always advertise their limit.
+    """
     # RFC 9002 6.2.2: a sender SHOULD use kInitialRtt = 333 ms when no
     # previous RTT is available. Previously this was 100 ms which leads
     # to spurious early PTO probes in slow networks.
@@ -120,9 +166,13 @@ class QuicConfiguration:
     supported_versions: list[int] = field(
         default_factory=lambda: [
             QuicProtocolVersion.VERSION_1,
-            QuicProtocolVersion.VERSION_2,
         ]
     )
+    """
+    The QUIC versions to advertise and accept, most preferred first.
+    Defaults to VERSION_1 only. Append ``QuicProtocolVersion.VERSION_2`` to
+    additionally negotiate RFC 9369 (v2).
+    """
     verify_mode: int | None = None
 
     ech_config_list: bytes | None = None

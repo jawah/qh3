@@ -1,3 +1,30 @@
+1.9.0 (2026-05-31)
+==================
+
+**Changed**
+- Total refresh of default QUIC and HTTP3 parameters to better blend in with mainstream browser traffic.
+  - Key shares are now only sent for X25519MLKEM768 and X25519. The NIST P-curves (secp256r1, secp384r1)
+    remain advertised but a share is only generated on demand.
+  - Ed25519 is no longer advertised in ``signature_algorithms`` by default.
+  - ``supported_versions`` now defaults to QUIC v1 only. v2 become opt-in.
+  - The TLS ``status_request`` (OCSP) extension is no longer offered.
+  - ``active_connection_id_limit`` is no longer advertised by default.
+- Updated aws-lc-rs v1.16.3 to v1.17.0
+
+**Added**
+- Certificate compression (RFC 8879) on receive using Brotli, enabled when the ``brotli`` (CPython) or ``brotlicffi`` (PyPy) package is installed.
+- Escape hatches in ``QuicConfiguration`` to opt back into the former behaviors: ``signature_algorithms``,
+  ``offer_ec_key_shares``, ``offer_certificate_status_request`` and ``active_connection_id_limit``.
+
+**Fixed**
+- Disabled Apple private batch recv/send calls by default until further investigate.
+  Private reports found that in some specialized networking environment it would induce
+  unstable and often lost datagrams.
+- Swapped bare ``assert`` statement in favor of unavoidable hard checks and raises.
+- H3 trailers event handler did not check for trailing data.
+- A trailing FIN on a stream already torn down by reset / stop-sending could resurrect it,
+  delivering a spurious duplicate stream and leaking its asyncio ``StreamWriter``.
+
 1.8.1 (2026-05-07)
 ==================
 

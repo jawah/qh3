@@ -49,6 +49,21 @@ from ._hazmat import (
 
 _HASHED_CERT_FILENAME_RE = re.compile(r"^[0-9a-fA-F]{8}\.[0-9]$")
 
+# Optional Brotli support for the compress_certificate (RFC 8879) extension.
+# "brotli" (CPython) is preferred, with "brotlicffi" (PyPy and CPython) as a
+# fallback. When neither is available, the extension is dropped entirely
+# rather than relying on a native implementation.
+try:
+    import brotli as _brotli
+except ImportError:
+    try:
+        import brotlicffi as _brotli
+    except ImportError:
+        _brotli = None
+
+# RFC 8879 certificate compression algorithm identifier for Brotli.
+CERTIFICATE_COMPRESSION_BROTLI = 2
+
 TLS_VERSION_1_2 = 0x0303
 TLS_VERSION_1_3 = 0x0304
 
@@ -135,6 +150,10 @@ class AlertBadCertificate(Alert):
 
 class AlertCertificateExpired(Alert):
     description = AlertDescription.certificate_expired
+
+
+class AlertDecodeError(Alert):
+    description = AlertDescription.decode_error
 
 
 class AlertDecryptError(Alert):
@@ -512,6 +531,7 @@ class ExtensionType(IntEnum):
     PSK_KEY_EXCHANGE_MODES = 45
     KEY_SHARE = 51
     QUIC_TRANSPORT_PARAMETERS = 0x0039
+    APPLICATION_SETTINGS = 17613
     ENCRYPTED_SERVER_NAME = 65486
     ECH_OUTER_EXTENSIONS = 0xFD00
     ENCRYPTED_CLIENT_HELLO = 0xFE0D
@@ -542,6 +562,10 @@ class HandshakeType(IntEnum):
     KEY_UPDATE = 24
     COMPRESSED_CERTIFICATE = 25
     MESSAGE_HASH = 254
+
+
+class NameType(IntEnum):
+    HOST_NAME = 0
 
 
 class PskKeyExchangeMode(IntEnum):
@@ -579,7 +603,9 @@ def pull_block(buf: Buffer, capacity: int) -> Generator:
     length = int.from_bytes(buf.pull_bytes(capacity), byteorder="big")
     end = buf.tell() + length
     yield length
-    assert buf.tell() == end
+    if buf.tell() != end:
+        # There was trailing garbage or our parsing was bad.
+        raise AlertDecodeError("extra bytes at the end of a block")
 
 
 @contextmanager
@@ -645,6 +671,23 @@ def push_extension(buf: Buffer, extension_type: int) -> Generator:
     buf.push_uint16(extension_type)
     with push_block(buf, 2):
         yield
+
+
+def pull_server_name(buf: Buffer) -> str:
+    with pull_block(buf, 2):
+        name_type = buf.pull_uint8()
+        if name_type != NameType.HOST_NAME:
+            # We don't know this name_type.
+            raise AlertIllegalParameter(
+                f"ServerName has an unknown name type {name_type}"
+            )
+        return pull_opaque(buf, 2).decode("ascii")
+
+
+def push_server_name(buf: Buffer, server_name: str) -> None:
+    with push_block(buf, 2):
+        buf.push_uint8(NameType.HOST_NAME)
+        push_opaque(buf, 2, server_name.encode("ascii"))
 
 
 # KeyShareEntry
@@ -787,7 +830,10 @@ def parse_ech_config_list(data: bytes) -> list[ECHConfig]:
                 public_name = pull_opaque(buf, 1).decode("ascii")
                 extensions = pull_opaque(buf, 2)
 
-                assert buf.tell() == contents_end
+                if buf.tell() != contents_end:
+                    raise AlertDecodeError(
+                        "extra bytes at the end of an ECHConfig contents"
+                    )
 
                 # raw includes version(2) + length(2) + contents
                 config_end = buf.tell()
@@ -895,6 +941,11 @@ class ClientHello:
     signature_algorithms: list[int] | None = None
     supported_groups: list[int] | None = None
     supported_versions: list[int] | None = None
+    alps_protocols: list[str] | None = None
+    compress_certificate_algorithms: list[int] | None = None
+
+    # status_request (OCSP, ext 5).
+    certificate_status_request: bool = False
 
     other_extensions: list[Extension] = field(default_factory=list)
 
@@ -906,10 +957,26 @@ class ClientHello:
     grease_extension2: int | None = None
 
 
+def pull_handshake_type(buf: Buffer, expected_type: HandshakeType) -> None:
+    """
+    Pull the message type and check it is the expected one.
+
+    The message type is always pulled (even when running under `python -O`)
+    so that framing is preserved. If it is not the expected type, we have a
+    programming error in the dispatch logic.
+    """
+    message_type = buf.pull_uint8()
+    if message_type != expected_type:
+        raise AlertDecodeError(
+            f"unexpected handshake type {message_type}, expected {expected_type}"
+        )
+
+
 def pull_client_hello(buf: Buffer) -> ClientHello:
-    assert buf.pull_uint8() == HandshakeType.CLIENT_HELLO
+    pull_handshake_type(buf, HandshakeType.CLIENT_HELLO)
     with pull_block(buf, 3):
-        assert buf.pull_uint16() == TLS_VERSION_1_2
+        if buf.pull_uint16() != TLS_VERSION_1_2:
+            raise AlertDecodeError("ClientHello version is not 1.2")
 
         hello = ClientHello(
             random=buf.pull_bytes(32),
@@ -924,7 +991,9 @@ def pull_client_hello(buf: Buffer) -> ClientHello:
         def pull_extension() -> None:
             # pre_shared_key MUST be last
             nonlocal after_psk
-            assert not after_psk
+            if after_psk:
+                # the alert is Illegal Parameter per RFC 8446 section 4.2.11.
+                raise AlertIllegalParameter("PreSharedKey is not the last extension")
 
             extension_type = buf.pull_uint16()
             extension_length = buf.pull_uint16()
@@ -939,9 +1008,7 @@ def pull_client_hello(buf: Buffer) -> ClientHello:
             elif extension_type == ExtensionType.PSK_KEY_EXCHANGE_MODES:
                 hello.psk_key_exchange_modes = pull_list(buf, 1, buf.pull_uint8)
             elif extension_type == ExtensionType.SERVER_NAME:
-                with pull_block(buf, 2):
-                    assert buf.pull_uint8() == 0
-                    hello.server_name = pull_opaque(buf, 2).decode("ascii")
+                hello.server_name = pull_server_name(buf)
             elif extension_type == ExtensionType.ALPN:
                 hello.alpn_protocols = pull_list(
                     buf, 2, partial(pull_alpn_protocol, buf)
@@ -981,52 +1048,97 @@ def push_client_hello(buf: Buffer, hello: ClientHello) -> None:
 
         # extensions
         with push_block(buf, 2):
+            # Separate the dynamically-supplied extensions (ECH and the QUIC
+            # transport parameters)
+            ech_extension: tuple[int, bytes] | None = None
+            quic_tp_extension: tuple[int, bytes] | None = None
+            remaining_extensions: list[tuple[int, bytes]] = []
+            for extension_type, extension_value in hello.other_extensions:
+                if extension_type == ExtensionType.ENCRYPTED_CLIENT_HELLO:
+                    ech_extension = (extension_type, extension_value)
+                elif extension_type == ExtensionType.QUIC_TRANSPORT_PARAMETERS:
+                    quic_tp_extension = (extension_type, extension_value)
+                else:
+                    remaining_extensions.append((extension_type, extension_value))
+
             # GREASE extension 1: first extension, empty body
             if hello.grease_extension1 is not None:
                 with push_extension(buf, hello.grease_extension1):
                     pass
 
-            with push_extension(buf, ExtensionType.KEY_SHARE):
-                push_list(buf, 2, partial(push_key_share, buf), hello.key_share)
-
-            with push_extension(buf, ExtensionType.SUPPORTED_VERSIONS):
-                push_list(buf, 1, buf.push_uint16, hello.supported_versions)
-
+            # signature_algorithms (13)
             with push_extension(buf, ExtensionType.SIGNATURE_ALGORITHMS):
                 push_list(buf, 2, buf.push_uint16, hello.signature_algorithms)
 
-            with push_extension(buf, ExtensionType.SUPPORTED_GROUPS):
-                push_list(buf, 2, buf.push_uint16, hello.supported_groups)
+            # application_settings / ALPS new (17613)
+            if hello.alps_protocols is not None:
+                with push_extension(buf, ExtensionType.APPLICATION_SETTINGS):
+                    push_list(
+                        buf, 2, partial(push_alpn_protocol, buf), hello.alps_protocols
+                    )
 
-            if hello.psk_key_exchange_modes is not None:
-                with push_extension(buf, ExtensionType.PSK_KEY_EXCHANGE_MODES):
-                    push_list(buf, 1, buf.push_uint8, hello.psk_key_exchange_modes)
+            # key_share (51)
+            with push_extension(buf, ExtensionType.KEY_SHARE):
+                push_list(buf, 2, partial(push_key_share, buf), hello.key_share)
 
-            if hello.server_name is not None:
-                with push_extension(buf, ExtensionType.SERVER_NAME):
-                    with push_block(buf, 2):
-                        buf.push_uint8(0)
-                        push_opaque(buf, 2, hello.server_name.encode("ascii"))
+            # compress_certificate (27)
+            if hello.compress_certificate_algorithms is not None:
+                with push_extension(buf, ExtensionType.COMPRESS_CERTIFICATE):
+                    push_list(
+                        buf, 1, buf.push_uint16, hello.compress_certificate_algorithms
+                    )
 
+            # status_request (5): OCSP. Escape hatch, off by default. Body is
+            # CertificateStatusRequest{ status_type=ocsp(1), responder_id_list
+            # (empty), request_extensions (empty) }.
+            if hello.certificate_status_request:
+                with push_extension(buf, ExtensionType.STATUS_REQUEST):
+                    buf.push_uint8(1)  # status_type = ocsp
+                    buf.push_uint16(0)  # responder_id_list (empty)
+                    buf.push_uint16(0)  # request_extensions (empty)
+
+            # ALPN (16)
             if hello.alpn_protocols is not None:
                 with push_extension(buf, ExtensionType.ALPN):
                     push_list(
                         buf, 2, partial(push_alpn_protocol, buf), hello.alpn_protocols
                     )
 
-            for extension_type, extension_value in hello.other_extensions:
+            # encrypted_client_hello (65037)
+            if ech_extension is not None:
+                with push_extension(buf, ech_extension[0]):
+                    buf.push_bytes(ech_extension[1])
+
+            # psk_key_exchange_modes (45)
+            if hello.psk_key_exchange_modes is not None:
+                with push_extension(buf, ExtensionType.PSK_KEY_EXCHANGE_MODES):
+                    push_list(buf, 1, buf.push_uint8, hello.psk_key_exchange_modes)
+
+            # server_name (0)
+            if hello.server_name is not None:
+                with push_extension(buf, ExtensionType.SERVER_NAME):
+                    push_server_name(buf, hello.server_name)
+
+            # supported_versions (43)
+            with push_extension(buf, ExtensionType.SUPPORTED_VERSIONS):
+                push_list(buf, 1, buf.push_uint16, hello.supported_versions)
+
+            # supported_groups (10)
+            with push_extension(buf, ExtensionType.SUPPORTED_GROUPS):
+                push_list(buf, 2, buf.push_uint16, hello.supported_groups)
+
+            # quic_transport_parameters (57)
+            if quic_tp_extension is not None:
+                with push_extension(buf, quic_tp_extension[0]):
+                    buf.push_bytes(quic_tp_extension[1])
+
+            # any remaining handshake extensions
+            for extension_type, extension_value in remaining_extensions:
                 with push_extension(buf, extension_type):
                     buf.push_bytes(extension_value)
 
             if hello.early_data:
                 with push_extension(buf, ExtensionType.EARLY_DATA):
-                    pass
-
-            with push_extension(buf, ExtensionType.STATUS_REQUEST):
-                buf.push_uint8(1)  # OCSP
-                with push_block(buf, 2):  # empty responder_id_list
-                    pass
-                with push_block(buf, 2):  # empty extensions
                     pass
 
             # GREASE extension 2: last before PSK, 1-byte body (\x00)
@@ -1066,9 +1178,10 @@ class ServerHello:
 
 
 def pull_server_hello(buf: Buffer) -> ServerHello:
-    assert buf.pull_uint8() == HandshakeType.SERVER_HELLO
+    pull_handshake_type(buf, HandshakeType.SERVER_HELLO)
     with pull_block(buf, 3):
-        assert buf.pull_uint16() == TLS_VERSION_1_2
+        if buf.pull_uint16() != TLS_VERSION_1_2:
+            raise AlertDecodeError("ServerHello version is not 1.2")
 
         hello = ServerHello(
             random=buf.pull_bytes(32),
@@ -1141,7 +1254,7 @@ class NewSessionTicket:
 def pull_new_session_ticket(buf: Buffer) -> NewSessionTicket:
     new_session_ticket = NewSessionTicket()
 
-    assert buf.pull_uint8() == HandshakeType.NEW_SESSION_TICKET
+    pull_handshake_type(buf, HandshakeType.NEW_SESSION_TICKET)
     with pull_block(buf, 3):
         new_session_ticket.ticket_lifetime = buf.pull_uint32()
         new_session_ticket.ticket_age_add = buf.pull_uint32()
@@ -1193,7 +1306,7 @@ class EncryptedExtensions:
 def pull_encrypted_extensions(buf: Buffer) -> EncryptedExtensions:
     extensions = EncryptedExtensions()
 
-    assert buf.pull_uint8() == HandshakeType.ENCRYPTED_EXTENSIONS
+    pull_handshake_type(buf, HandshakeType.ENCRYPTED_EXTENSIONS)
     with pull_block(buf, 3):
 
         def pull_extension() -> None:
@@ -1259,7 +1372,7 @@ class CertificateRequest:
 def pull_certificate(buf: Buffer) -> Certificate:
     certificate = Certificate()
 
-    assert buf.pull_uint8() == HandshakeType.CERTIFICATE
+    pull_handshake_type(buf, HandshakeType.CERTIFICATE)
     with pull_block(buf, 3):
         certificate.request_context = pull_opaque(buf, 1)
 
@@ -1278,7 +1391,7 @@ def pull_certificate(buf: Buffer) -> Certificate:
 def pull_certificate_request(buf: Buffer) -> CertificateRequest:
     certificate_request = CertificateRequest()
 
-    assert buf.pull_uint8() == HandshakeType.CERTIFICATE_REQUEST
+    pull_handshake_type(buf, HandshakeType.CERTIFICATE_REQUEST)
     with pull_block(buf, 3):
         certificate_request.request_context = pull_opaque(buf, 1)
 
@@ -1320,7 +1433,7 @@ class CertificateVerify:
 
 
 def pull_certificate_verify(buf: Buffer) -> CertificateVerify:
-    assert buf.pull_uint8() == HandshakeType.CERTIFICATE_VERIFY
+    pull_handshake_type(buf, HandshakeType.CERTIFICATE_VERIFY)
     with pull_block(buf, 3):
         algorithm = buf.pull_uint16()
         signature = pull_opaque(buf, 2)
@@ -1343,7 +1456,7 @@ class Finished:
 def pull_finished(buf: Buffer) -> Finished:
     finished = Finished()
 
-    assert buf.pull_uint8() == HandshakeType.FINISHED
+    pull_handshake_type(buf, HandshakeType.FINISHED)
     finished.verify_data = pull_opaque(buf, 3)
 
     return finished
@@ -1592,6 +1705,9 @@ class Context:
         assert_fingerprint: str | None = None,
         verify_hostname: bool = True,
         ech_config_list: bytes | None = None,
+        signature_algorithms: list[int] | None = None,
+        offer_ec_key_shares: bool = False,
+        offer_certificate_status_request: bool = False,
     ):
         # configuration
         self._alpn_protocols = alpn_protocols
@@ -1648,8 +1764,8 @@ class Context:
             self._cipher_suites = [
                 self._grease_cipher,  # type: ignore[list-item]
                 CipherSuite.AES_128_GCM_SHA256,
-                CipherSuite.CHACHA20_POLY1305_SHA256,
                 CipherSuite.AES_256_GCM_SHA384,
+                CipherSuite.CHACHA20_POLY1305_SHA256,
             ]
         self._legacy_compression_methods: list[int] = [CompressionMethod.NULL]
         self._psk_key_exchange_modes: list[int] = [PskKeyExchangeMode.PSK_DHE_KE]
@@ -1662,8 +1778,24 @@ class Context:
             SignatureAlgorithm.RSA_PKCS1_SHA384,
             SignatureAlgorithm.RSA_PSS_RSAE_SHA512,
             SignatureAlgorithm.RSA_PKCS1_SHA512,
-            SignatureAlgorithm.ED25519,
+            SignatureAlgorithm.RSA_PKCS1_SHA1,
         ]
+
+        # Opt-in override of advertised signature_algorithms. The default list
+        # above intentionally omits EdDSA; callers that must interoperate with
+        # Ed25519-only peers can pass their own list (e.g. the default plus
+        # SignatureAlgorithm.ED25519) to re-enable it.
+        if signature_algorithms is not None:
+            self._signature_algorithms = list(signature_algorithms)
+
+        # Opt-in: also generate ECDH(E) key shares for the SECP* groups. The
+        # default only key-shares X25519MLKEM768 + X25519; enabling this lets a
+        # caller offer P-256/P-384/P-521 key shares (e.g. when restricting
+        # supported_groups to those curves only).
+        self._offer_ec_key_shares = offer_ec_key_shares
+
+        # Opt-in: advertise the status_request (OCSP, ext 5) extension.
+        self._offer_certificate_status_request = offer_certificate_status_request
 
         self._supported_groups = [
             self._grease_group,
@@ -1674,6 +1806,15 @@ class Context:
         ]
 
         self._supported_versions = [self._grease_version, TLS_VERSION_1_3]
+
+        # compress_certificate (RFC 8879): only advertised when Brotli is
+        # available so we can actually decompress a CompressedCertificate.
+        if _brotli is not None:
+            self._compress_certificate_algorithms: list[int] | None = [
+                CERTIFICATE_COMPRESSION_BROTLI
+            ]
+        else:
+            self._compress_certificate_algorithms = None
 
         # state
         self.alpn_negotiated: str | None = None
@@ -1798,6 +1939,8 @@ class Context:
             elif self.state == State.CLIENT_EXPECT_CERTIFICATE_REQUEST_OR_CERTIFICATE:
                 if message_type == HandshakeType.CERTIFICATE:
                     self._client_handle_certificate(input_buf)
+                elif message_type == HandshakeType.COMPRESSED_CERTIFICATE:
+                    self._client_handle_compressed_certificate(input_buf)
                 elif message_type == HandshakeType.CERTIFICATE_REQUEST:
                     self._client_handle_certificate_request(input_buf)
                 else:
@@ -1838,7 +1981,11 @@ class Context:
             elif self.state == State.SERVER_POST_HANDSHAKE:
                 raise AlertUnexpectedMessage
 
-            assert input_buf.eof()
+            # If the message contained any extra bytes, the `pull_block`
+            # inside the message parser would already have raised
+            # `AlertDecodeError`, so by this point the buffer must be at EOF.
+            if not input_buf.eof():
+                raise AlertDecodeError("extra bytes at the end of a handshake message")
 
     def _build_session_ticket(
         self, new_session_ticket: NewSessionTicket, other_extensions: list[Extension]
@@ -1872,22 +2019,25 @@ class Context:
 
         for group in self._supported_groups:
             if group == Group.SECP256R1:
-                self._ec_p256_private_key = ECDHP256KeyExchange()
-                key_share.append(
-                    (Group.SECP256R1, self._ec_p256_private_key.public_key())
-                )
+                if self._offer_ec_key_shares:
+                    self._ec_p256_private_key = ECDHP256KeyExchange()
+                    key_share.append(
+                        (Group.SECP256R1, self._ec_p256_private_key.public_key())
+                    )
                 supported_groups.append(Group.SECP256R1)
             elif group == Group.SECP384R1:
-                self._ec_p384_private_key = ECDHP384KeyExchange()
-                key_share.append(
-                    (Group.SECP384R1, self._ec_p384_private_key.public_key())
-                )
+                if self._offer_ec_key_shares:
+                    self._ec_p384_private_key = ECDHP384KeyExchange()
+                    key_share.append(
+                        (Group.SECP384R1, self._ec_p384_private_key.public_key())
+                    )
                 supported_groups.append(Group.SECP384R1)
             elif group == Group.SECP521R1:
-                self._ec_p521_private_key = ECDHP521KeyExchange()
-                key_share.append(
-                    (Group.SECP521R1, self._ec_p521_private_key.public_key())
-                )
+                if self._offer_ec_key_shares:
+                    self._ec_p521_private_key = ECDHP521KeyExchange()
+                    key_share.append(
+                        (Group.SECP521R1, self._ec_p521_private_key.public_key())
+                    )
                 supported_groups.append(Group.SECP521R1)
             elif group == Group.X25519:
                 self._x25519_private_key = X25519KeyExchange()
@@ -1975,15 +2125,14 @@ class Context:
             legacy_compression_methods=self._legacy_compression_methods,
             alpn_protocols=self._alpn_protocols,
             key_share=key_share,
-            psk_key_exchange_modes=(
-                self._psk_key_exchange_modes
-                if (self.session_ticket or self.new_session_ticket_cb is not None)
-                else None
-            ),
+            psk_key_exchange_modes=self._psk_key_exchange_modes,
             server_name=outer_server_name,
             signature_algorithms=self._signature_algorithms,
             supported_groups=supported_groups,
             supported_versions=self._supported_versions,
+            alps_protocols=self._alpn_protocols,
+            compress_certificate_algorithms=self._compress_certificate_algorithms,
+            certificate_status_request=self._offer_certificate_status_request,
             other_extensions=extensions,
             grease_extension1=self._grease_extension1,
             grease_extension2=self._grease_extension2,
@@ -2078,26 +2227,32 @@ class Context:
         enc = self._ech_hpke_context.enc()
 
         # Determine which outer extensions to compress via ech_outer_extensions.
-        # Order must match the outer CH extension order from push_client_hello():
-        #   grease_ext1, KEY_SHARE, SUPPORTED_VERSIONS, SIGNATURE_ALGORITHMS,
-        #   SUPPORTED_GROUPS, PSK_KEY_EXCHANGE_MODES, ALPN, handshake_exts...,
-        #   STATUS_REQUEST, grease_ext2
+        # RFC 9849 requires the referenced extensions to appear in the same
+        # relative order as in the ClientHelloOuter, so this must mirror the
+        # extension order emitted by push_client_hello() exactly, excluding the
+        # two that differ between inner and outer (SERVER_NAME and the ECH
+        # extension itself).
         compressed_types: list[int] = []
         compressed_types.append(self._grease_extension1)
-        compressed_types.extend(
-            [
-                ExtensionType.KEY_SHARE,
-                ExtensionType.SUPPORTED_VERSIONS,
-                ExtensionType.SIGNATURE_ALGORITHMS,
-                ExtensionType.SUPPORTED_GROUPS,
-            ]
-        )
-        if self.session_ticket or self.new_session_ticket_cb is not None:
-            compressed_types.append(ExtensionType.PSK_KEY_EXCHANGE_MODES)
+        compressed_types.append(ExtensionType.SIGNATURE_ALGORITHMS)
+        if self._alpn_protocols is not None:
+            compressed_types.append(ExtensionType.APPLICATION_SETTINGS)
+        compressed_types.append(ExtensionType.KEY_SHARE)
+        if self._compress_certificate_algorithms is not None:
+            compressed_types.append(ExtensionType.COMPRESS_CERTIFICATE)
         if self._alpn_protocols is not None:
             compressed_types.append(ExtensionType.ALPN)
+        compressed_types.append(ExtensionType.PSK_KEY_EXCHANGE_MODES)
+        compressed_types.append(ExtensionType.SUPPORTED_VERSIONS)
+        compressed_types.append(ExtensionType.SUPPORTED_GROUPS)
+        # push_client_hello emits QUIC_TRANSPORT_PARAMETERS before any other
+        # handshake extensions, then the remaining handshake extensions in order.
         for ext_type, _ in self.handshake_extensions:
-            compressed_types.append(ext_type)
+            if ext_type == ExtensionType.QUIC_TRANSPORT_PARAMETERS:
+                compressed_types.append(ext_type)
+        for ext_type, _ in self.handshake_extensions:
+            if ext_type != ExtensionType.QUIC_TRANSPORT_PARAMETERS:
+                compressed_types.append(ext_type)
         compressed_types.append(self._grease_extension2)
 
         # Build ech_outer_extensions value: uint8 len + list of uint16 extension types
@@ -2182,15 +2337,13 @@ class Context:
             legacy_compression_methods=self._legacy_compression_methods,
             alpn_protocols=self._alpn_protocols,
             key_share=key_share,
-            psk_key_exchange_modes=(
-                self._psk_key_exchange_modes
-                if (self.session_ticket or self.new_session_ticket_cb is not None)
-                else None
-            ),
+            psk_key_exchange_modes=self._psk_key_exchange_modes,
             server_name=self._ech_config.public_name,
             signature_algorithms=self._signature_algorithms,
             supported_groups=supported_groups,
             supported_versions=self._supported_versions,
+            alps_protocols=self._alpn_protocols,
+            compress_certificate_algorithms=self._compress_certificate_algorithms,
             other_extensions=aad_extensions,
             grease_extension1=self._grease_extension1,
             grease_extension2=self._grease_extension2,
@@ -2226,8 +2379,11 @@ class Context:
         # The inner CH extension order is:
         #   - Extensions before ech_outer_extensions (SERVER_NAME, ECH indicator)
         #   - The outer extensions referenced by ech_outer_extensions
-        #     (in outer CH order: KEY_SHARE, SUPPORTED_VERSIONS,
-        #      SIGNATURE_ALGORITHMS, SUPPORTED_GROUPS, ...)
+        #     (in outer CH order, mirroring compressed_types exactly:
+        #      grease1, SIGNATURE_ALGORITHMS, [APPLICATION_SETTINGS], KEY_SHARE,
+        #      [COMPRESS_CERTIFICATE], [ALPN], PSK_KEY_EXCHANGE_MODES,
+        #      SUPPORTED_VERSIONS, SUPPORTED_GROUPS, QUIC_TRANSPORT_PARAMETERS,
+        #      remaining handshake_extensions, grease2)
         #
         # Serialized WITH the Handshake header, since TLS transcript hashes
         # always include Handshake headers.
@@ -2269,33 +2425,20 @@ class Context:
                 with push_extension(inner_ch_buf, ExtensionType.ENCRYPTED_CLIENT_HELLO):
                     inner_ch_buf.push_uint8(1)  # type = inner
 
-                # 2. Extensions from outer CH, replacing ech_outer_extensions
-                # These are in the ORDER they appear in the outer ClientHello
-                # (which is the push_client_hello serialization order):
-                #   grease_ext1, KEY_SHARE, SUPPORTED_VERSIONS,
-                #   SIGNATURE_ALGORITHMS, SUPPORTED_GROUPS,
-                #   PSK_KEY_EXCHANGE_MODES, ALPN, handshake_extensions...,
+                # 2. Extensions referenced by ech_outer_extensions, taking their
+                # VALUES from the outer ClientHello. RFC 9849 requires these to
+                # appear in the same relative order as in the ClientHelloOuter,
+                # so this MUST mirror compressed_types (and therefore the
+                # push_client_hello serialization order) exactly:
+                #   grease_ext1, SIGNATURE_ALGORITHMS, [APPLICATION_SETTINGS],
+                #   KEY_SHARE, [COMPRESS_CERTIFICATE], [ALPN],
+                #   PSK_KEY_EXCHANGE_MODES, SUPPORTED_VERSIONS, SUPPORTED_GROUPS,
+                #   QUIC_TRANSPORT_PARAMETERS, remaining handshake_extensions,
                 #   grease_ext2
 
                 # GREASE extension 1 (empty body)
                 with push_extension(inner_ch_buf, self._grease_extension1):
                     pass
-
-                with push_extension(inner_ch_buf, ExtensionType.KEY_SHARE):
-                    push_list(
-                        inner_ch_buf,
-                        2,
-                        partial(push_key_share, inner_ch_buf),
-                        key_share,
-                    )
-
-                with push_extension(inner_ch_buf, ExtensionType.SUPPORTED_VERSIONS):
-                    push_list(
-                        inner_ch_buf,
-                        1,
-                        inner_ch_buf.push_uint16,
-                        self._supported_versions,
-                    )
 
                 with push_extension(inner_ch_buf, ExtensionType.SIGNATURE_ALGORITHMS):
                     push_list(
@@ -2305,23 +2448,34 @@ class Context:
                         self._signature_algorithms,
                     )
 
-                with push_extension(inner_ch_buf, ExtensionType.SUPPORTED_GROUPS):
+                if self._alpn_protocols is not None:
+                    with push_extension(
+                        inner_ch_buf, ExtensionType.APPLICATION_SETTINGS
+                    ):
+                        push_list(
+                            inner_ch_buf,
+                            2,
+                            partial(push_alpn_protocol, inner_ch_buf),
+                            self._alpn_protocols,
+                        )
+
+                with push_extension(inner_ch_buf, ExtensionType.KEY_SHARE):
                     push_list(
                         inner_ch_buf,
                         2,
-                        inner_ch_buf.push_uint16,
-                        supported_groups,
+                        partial(push_key_share, inner_ch_buf),
+                        key_share,
                     )
 
-                if self.session_ticket or self.new_session_ticket_cb is not None:
+                if self._compress_certificate_algorithms is not None:
                     with push_extension(
-                        inner_ch_buf, ExtensionType.PSK_KEY_EXCHANGE_MODES
+                        inner_ch_buf, ExtensionType.COMPRESS_CERTIFICATE
                     ):
                         push_list(
                             inner_ch_buf,
                             1,
-                            inner_ch_buf.push_uint8,
-                            self._psk_key_exchange_modes,
+                            inner_ch_buf.push_uint16,
+                            self._compress_certificate_algorithms,
                         )
 
                 if self._alpn_protocols is not None:
@@ -2333,10 +2487,40 @@ class Context:
                             self._alpn_protocols,
                         )
 
-                # handshake_extensions (from outer CH's other_extensions)
+                with push_extension(inner_ch_buf, ExtensionType.PSK_KEY_EXCHANGE_MODES):
+                    push_list(
+                        inner_ch_buf,
+                        1,
+                        inner_ch_buf.push_uint8,
+                        self._psk_key_exchange_modes,
+                    )
+
+                with push_extension(inner_ch_buf, ExtensionType.SUPPORTED_VERSIONS):
+                    push_list(
+                        inner_ch_buf,
+                        1,
+                        inner_ch_buf.push_uint16,
+                        self._supported_versions,
+                    )
+
+                with push_extension(inner_ch_buf, ExtensionType.SUPPORTED_GROUPS):
+                    push_list(
+                        inner_ch_buf,
+                        2,
+                        inner_ch_buf.push_uint16,
+                        supported_groups,
+                    )
+
+                # handshake_extensions (from outer CH's other_extensions),
+                # QUIC_TRANSPORT_PARAMETERS first to match push_client_hello.
                 for ext_type, ext_value in self.handshake_extensions:
-                    with push_extension(inner_ch_buf, ext_type):
-                        inner_ch_buf.push_bytes(ext_value)
+                    if ext_type == ExtensionType.QUIC_TRANSPORT_PARAMETERS:
+                        with push_extension(inner_ch_buf, ext_type):
+                            inner_ch_buf.push_bytes(ext_value)
+                for ext_type, ext_value in self.handshake_extensions:
+                    if ext_type != ExtensionType.QUIC_TRANSPORT_PARAMETERS:
+                        with push_extension(inner_ch_buf, ext_type):
+                            inner_ch_buf.push_bytes(ext_value)
 
                 # GREASE extension 2 (1-byte body \x00) mimic Chromium "extensions.cc"
                 # behavior.
@@ -2443,8 +2627,14 @@ class Context:
             AlertHandshakeFailure("Unsupported cipher suite"),
             excl_fn=_is_grease_value,
         )
-        assert peer_hello.compression_method in self._legacy_compression_methods
-        assert peer_hello.supported_version in self._supported_versions
+        if peer_hello.compression_method not in self._legacy_compression_methods:
+            raise AlertIllegalParameter(
+                "ServerHello has a compression method we did not advertise"
+            )
+        if peer_hello.supported_version not in self._supported_versions:
+            raise AlertIllegalParameter(
+                "ServerHello has a version we did not advertise"
+            )
 
         # ECH acceptance detection (RFC 9849 Section 6.1.4 / 7.2)
         # If we offered real ECH, check if the server accepted it by
@@ -2506,7 +2696,13 @@ class Context:
         ):
             shared_key = self._ec_p521_private_key.exchange(peer_public_key)
 
-        assert shared_key is not None
+        if shared_key is None:
+            # The server selected a group we did not offer (or for which we
+            # hold no private key). Reject rather than feed None into the key
+            # schedule (which would happen silently under `python -O`).
+            raise AlertIllegalParameter(
+                "ServerHello selected a key share group we did not offer"
+            )
 
         if self._ech_accepted:
             # When ECH is accepted, the transcript uses the inner ClientHello.
@@ -2561,8 +2757,45 @@ class Context:
             self._set_state(State.CLIENT_EXPECT_CERTIFICATE_REQUEST_OR_CERTIFICATE)
 
     def _client_handle_certificate(self, input_buf: Buffer) -> None:
-        certificate = pull_certificate(input_buf)
+        self._process_certificate(pull_certificate(input_buf))
+        self.key_schedule.update_hash(input_buf.data)
+        self._set_state(State.CLIENT_EXPECT_CERTIFICATE_VERIFY)
 
+    def _client_handle_compressed_certificate(self, input_buf: Buffer) -> None:
+        # RFC 8879: the transcript hash covers the CompressedCertificate
+        # message as received, while the decompressed payload is the body of
+        # the equivalent Certificate message (without its handshake header).
+        pull_handshake_type(input_buf, HandshakeType.COMPRESSED_CERTIFICATE)
+        with pull_block(input_buf, 3):
+            algorithm = input_buf.pull_uint16()
+            uncompressed_length = input_buf.pull_uint24()
+            compressed = pull_opaque(input_buf, 3)
+
+        if algorithm != CERTIFICATE_COMPRESSION_BROTLI or _brotli is None:
+            raise AlertBadCertificate("unsupported certificate compression algorithm")
+
+        try:
+            certificate_body = _brotli.decompress(compressed)
+        except Exception:
+            raise AlertBadCertificate("certificate decompression failed")
+
+        if len(certificate_body) != uncompressed_length:
+            raise AlertBadCertificate("certificate decompressed length mismatch")
+
+        # Re-create a complete Certificate handshake message so it can be
+        # parsed by the regular Certificate parser.
+        certificate_message = (
+            bytes([HandshakeType.CERTIFICATE])
+            + len(certificate_body).to_bytes(3, "big")
+            + certificate_body
+        )
+        self._process_certificate(pull_certificate(Buffer(data=certificate_message)))
+        # The pulls above consumed the whole CompressedCertificate message, so
+        # input_buf.data is now exactly the message as received on the wire.
+        self.key_schedule.update_hash(input_buf.data)
+        self._set_state(State.CLIENT_EXPECT_CERTIFICATE_VERIFY)
+
+    def _process_certificate(self, certificate: Certificate) -> None:
         # attempt to extract a possible OCSP staple extension from
         # the leaf certificate only.
         ext_buf = Buffer(data=certificate.certificates[0][1])
@@ -2593,10 +2826,6 @@ class Context:
             for i in range(1, len(certificate.certificates))
         ]
 
-        self.key_schedule.update_hash(input_buf.data)
-
-        self._set_state(State.CLIENT_EXPECT_CERTIFICATE_VERIFY)
-
     def _client_handle_certificate_request(self, input_buf: Buffer) -> None:
         self._certificate_request = pull_certificate_request(input_buf)
         self.key_schedule.update_hash(input_buf.data)
@@ -2605,7 +2834,10 @@ class Context:
     def _client_handle_certificate_verify(self, input_buf: Buffer) -> None:
         verify = pull_certificate_verify(input_buf)
 
-        assert verify.algorithm in self._signature_algorithms
+        if verify.algorithm not in self._signature_algorithms:
+            raise AlertDecryptError(
+                "CertificateVerify has a signature algorithm we did not advertise"
+            )
 
         # check signature
         try:
@@ -2957,7 +3189,10 @@ class Context:
                 group_kx = Group.SECP521R1
                 break
 
-        assert shared_key is not None
+        if shared_key is None:
+            # None of the client's offered key shares used a group we support.
+            # Reject rather than feed None into the key schedule.
+            raise AlertHandshakeFailure("No supported key share group in ClientHello")
 
         # send hello
         hello = ServerHello(

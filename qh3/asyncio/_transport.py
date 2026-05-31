@@ -639,10 +639,7 @@ async def create_optimized_datagram_transport(
     gro_enabled = enable_gro(sock)
     gso_enabled = has_gso(sock)
 
-    # Use custom transport on Unix (GRO/GSO on Linux, quinn-udp recv/send
-    # on all Unix).  On Windows the ProactorEventLoop does not support
-    # add_reader(), so we must fall back to the stock asyncio transport.
-    if not _IS_UNIX and not gro_enabled and not gso_enabled:
+    if not _IS_LINUX:
         return await loop.create_datagram_endpoint(protocol_factory, sock=sock)
 
     sock.setblocking(False)

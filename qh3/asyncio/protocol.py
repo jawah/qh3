@@ -24,6 +24,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         self._ping_waiters: dict[int, asyncio.Future[None]] = {}
         self._quic = quic
         self._stream_readers: dict[int, asyncio.StreamReader] = {}
+        self._stream_readers_done: set[int] = set()
         self._timer: asyncio.TimerHandle | None = None
         self._timer_at: float | None = None
         self._transmit_task: asyncio.Handle | None = None
@@ -177,6 +178,10 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         elif isinstance(event, events.StreamDataReceived):
             reader = self._stream_readers.get(event.stream_id, None)
             if reader is None:
+                if event.stream_id in self._stream_readers_done:
+                    # Stream already torn down (reset / stop-sending). Ignore
+                    # any trailing data or FIN instead of resurrecting it.
+                    return
                 reader, writer = self._create_stream(event.stream_id)
                 self._stream_handler(reader, writer)
             reader.feed_data(event.data)
@@ -196,6 +201,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
                     )
                 )
                 self._stream_readers.pop(event.stream_id, None)
+                self._stream_readers_done.add(event.stream_id)
         elif isinstance(event, events.StopSendingReceived):
             # RFC 9000 3.5: peer asked us to stop sending. Drop the
             # reader so we no longer wait on it; the writer side is
@@ -204,6 +210,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
             if reader is not None:
                 reader.feed_eof()
                 self._stream_readers.pop(event.stream_id, None)
+                self._stream_readers_done.add(event.stream_id)
 
     # private
 
