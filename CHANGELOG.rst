@@ -12,7 +12,7 @@
 - Updated aws-lc-rs v1.16.3 to v1.17.0
 
 **Added**
-- Certificate compression (RFC 8879) on receive using Brotli, enabled when the ``brotli`` package is installed.
+- Certificate compression (RFC 8879) on receive using Brotli, enabled when the ``brotli`` (CPython) or ``brotlicffi`` (PyPy) package is installed.
 - Escape hatches in ``QuicConfiguration`` to opt back into the former behaviors: ``signature_algorithms``,
   ``offer_ec_key_shares``, ``offer_certificate_status_request`` and ``active_connection_id_limit``.
 
