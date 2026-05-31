@@ -545,6 +545,8 @@ class TestHighLevel:
         more on that stream; surface EOF on the corresponding reader so
         readers do not hang."""
 
+        handler_tasks = []
+
         def stop_handler(reader, writer):
             async def serve_one():
                 try:
@@ -555,7 +557,7 @@ class TestHighLevel:
                 finally:
                     writer.close()
 
-            asyncio.ensure_future(serve_one())
+            handler_tasks.append(asyncio.ensure_future(serve_one()))
 
         server_cfg = QuicConfiguration(is_client=False)
         server_cfg.load_cert_chain(SERVER_CERTFILE, SERVER_KEYFILE)
@@ -581,6 +583,8 @@ class TestHighLevel:
                 finally:
                     writer.close()
         finally:
+            if handler_tasks:
+                await asyncio.gather(*handler_tasks, return_exceptions=True)
             server.close()
 
 
