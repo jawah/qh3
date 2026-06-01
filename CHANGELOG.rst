@@ -1,3 +1,10 @@
+1.9.1 (2026-06-01)
+==================
+
+**Fixed**
+- Handshake failure (``got type 20, wanted type 8``) against servers that accept the
+  TLS ``application_settings`` (ALPS) offer.
+
 1.9.0 (2026-05-31)
 ==================
 
