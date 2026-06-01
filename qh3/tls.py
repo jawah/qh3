@@ -1827,6 +1827,18 @@ class Context:
         self._peer_certificate: X509Certificate | None = None
         self._peer_certificate_chain: list[X509Certificate] = []
         self._ocsp_response: bytes | None = None
+        # Application-Layer Protocol Settings (ALPS, draft-vvv-tls-alps).
+        # We advertise application_settings in the ClientHello; when a
+        # server honors it by echoing its own application_settings in
+        # EncryptedExtensions, the negotiation requires the client to send a (client)
+        # EncryptedExtensions message carrying its settings as the first message of
+        # its second flight, before Finished.
+        self._alps_negotiated: bool = False
+        self._peer_alps_settings: bytes | None = None
+        self._local_alps_settings: bytes = b""
+        # Server-only: whether this endpoint negotiates ALPS when a client
+        # offers it. Off by default so the standard server path is unchanged.
+        self._alps_supported: bool = False
         self._receive_buffer = b""
         self._session_resumed = False
         self._enc_key: bytes | None = None
@@ -1893,6 +1905,22 @@ class Context:
         was rejected. Can be used to retry with updated configs.
         """
         return self._ech_retry_configs
+
+    @property
+    def alps_negotiated(self) -> bool:
+        """
+        Whether application_settings (draft-vvv-tls-alps) was negotiated with
+        the peer during the handshake.
+        """
+        return self._alps_negotiated
+
+    @property
+    def peer_alps_settings(self) -> bytes | None:
+        """
+        The application_settings value received from the peer when ALPS was
+        negotiated, or None otherwise.
+        """
+        return self._peer_alps_settings
 
     def handle_message(
         self, input_data: bytes, output_buf: dict[Epoch, Buffer], epoch: int = -1
@@ -1976,6 +2004,11 @@ class Context:
             elif self.state == State.SERVER_EXPECT_FINISHED:
                 if message_type == HandshakeType.FINISHED:
                     self._server_handle_finished(input_buf, output_buf[Epoch.ONE_RTT])
+                elif (
+                    message_type == HandshakeType.ENCRYPTED_EXTENSIONS
+                    and self._alps_negotiated
+                ):
+                    self._server_handle_client_encrypted_extensions(input_buf)
                 else:
                     raise AlertUnexpectedMessage
             elif self.state == State.SERVER_POST_HANDSHAKE:
@@ -2729,6 +2762,15 @@ class Context:
         if self.alpn_cb:
             self.alpn_cb(self.alpn_negotiated)
 
+        # ALPS: the server honors our application_settings offer by echoing
+        # its own settings here. When it does, we must answer with a client
+        # EncryptedExtensions message in our flight (see _client_handle_finished).
+        for ext_type, ext_value in encrypted_extensions.other_extensions:
+            if ext_type == ExtensionType.APPLICATION_SETTINGS:
+                self._alps_negotiated = True
+                self._peer_alps_settings = ext_value
+                break
+
         # ECH rejection handling (RFC 9849 Section 6.1.6)
         if encrypted_extensions.retry_configs is not None:
             if self._ech_accepted:
@@ -2917,6 +2959,25 @@ class Context:
         )
         next_enc_key = self.key_schedule.derive_secret(b"c ap traffic")
 
+        # ALPS: when the server accepted our
+        # application_settings, the client's second flight MUST begin with an
+        # EncryptedExtensions message carrying our settings, before any
+        # Certificate or the Finished. This message is part of the handshake
+        # transcript both peers verify in Finished.
+        if self._alps_negotiated:
+            with push_message(self.key_schedule, output_buf):
+                push_encrypted_extensions(
+                    output_buf,
+                    EncryptedExtensions(
+                        other_extensions=[
+                            (
+                                ExtensionType.APPLICATION_SETTINGS,
+                                self._local_alps_settings,
+                            )
+                        ]
+                    ),
+                )
+
         if self._certificate_request is not None:
             with push_message(self.key_schedule, output_buf):
                 push_certificate(
@@ -3087,6 +3148,24 @@ class Context:
 
         if self.alpn_cb:
             self.alpn_cb(self.alpn_negotiated)
+
+        # ALPS: if the client offered application_settings
+        # and this endpoint is configured to support it, accept by echoing our
+        # own settings in the EncryptedExtensions below. Negotiating ALPS makes
+        # the client begin its second flight with an EncryptedExtensions message
+        # (handled in _server_handle_finished), so the usual anticipation of the
+        # client's Finished must be skipped.
+        if self._alps_supported:
+            for ext_type, _ in peer_hello.other_extensions:
+                if ext_type == ExtensionType.APPLICATION_SETTINGS:
+                    self._alps_negotiated = True
+                    self.handshake_extensions.append(
+                        (
+                            ExtensionType.APPLICATION_SETTINGS,
+                            self._local_alps_settings,
+                        )
+                    )
+                    break
 
         # select key schedule
         pre_shared_key = None
@@ -3273,12 +3352,19 @@ class Context:
         self._next_dec_key = self.key_schedule.derive_secret(b"c ap traffic")
 
         # anticipate client's FINISHED as we don't use client auth
-        self._expected_verify_data = self.key_schedule.finished_verify_data(
-            self._dec_key
-        )
-        buf = Buffer(capacity=64)
-        push_finished(buf, Finished(verify_data=self._expected_verify_data))
-        self.key_schedule.update_hash(buf.data)
+        #
+        # When ALPS is negotiated the client prepends an EncryptedExtensions
+        # message to its second flight, so the transcript covered by its
+        # Finished is not known yet. Defer verify-data computation to
+        # _server_handle_finished, which incorporates the client's
+        # EncryptedExtensions before checking the Finished.
+        if not self._alps_negotiated:
+            self._expected_verify_data = self.key_schedule.finished_verify_data(
+                self._dec_key
+            )
+            buf = Buffer(capacity=64)
+            push_finished(buf, Finished(verify_data=self._expected_verify_data))
+            self.key_schedule.update_hash(buf.data)
 
         # create a new session ticket
         if self.new_session_ticket_cb is not None and psk_key_exchange_mode is not None:
@@ -3301,12 +3387,34 @@ class Context:
 
         self._set_state(State.SERVER_EXPECT_FINISHED)
 
+    def _server_handle_client_encrypted_extensions(self, input_buf: Buffer) -> None:
+        # ALPS only
+        encrypted_extensions = pull_encrypted_extensions(input_buf)
+
+        for ext_type, ext_value in encrypted_extensions.other_extensions:
+            if ext_type == ExtensionType.APPLICATION_SETTINGS:
+                self._peer_alps_settings = ext_value
+                break
+
+        self.key_schedule.update_hash(input_buf.data)
+
     def _server_handle_finished(self, input_buf: Buffer, output_buf: Buffer) -> None:
         finished = pull_finished(input_buf)
+
+        # When ALPS is negotiated the client's Finished was not anticipated, so
+        # compute the expected verify data now that the transcript includes the
+        # client's EncryptedExtensions.
+        if self._alps_negotiated:
+            self._expected_verify_data = self.key_schedule.finished_verify_data(
+                self._dec_key
+            )
 
         # check verify data
         if finished.verify_data != self._expected_verify_data:
             raise AlertDecryptError
+
+        if self._alps_negotiated:
+            self.key_schedule.update_hash(input_buf.data)
 
         # commit traffic key
         self._dec_key = self._next_dec_key
