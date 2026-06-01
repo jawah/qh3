@@ -391,6 +391,51 @@ class TestContext:
         assert client.alpn_negotiated == None
         assert server.alpn_negotiated == None
 
+    def test_handshake_with_alps(self):
+        # ALPS: the client always offers application_settings.
+        # A server that supports it echoes its own settings, which makes the
+        # client's second flight carry an extra EncryptedExtensions message.
+        client = self.create_client(alpn_protocols=["h3"])
+        client._local_alps_settings = b"\x00client-settings"
+
+        server = self.create_server(alpn_protocols=["h3"])
+        server._alps_supported = True
+        server._local_alps_settings = b"\x00server-settings"
+
+        # Send client hello.
+        client_buf = create_buffers()
+        client.handle_message(b"", client_buf)
+        server_input = merge_buffers(client_buf)
+        reset_buffers(client_buf)
+
+        # Handle client hello -> server flight.
+        server_buf = create_buffers()
+        server.handle_message(server_input, server_buf)
+        assert server.state == State.SERVER_EXPECT_FINISHED
+        assert server._alps_negotiated is True
+        client_input = merge_buffers(server_buf)
+        reset_buffers(server_buf)
+
+        # Handle server flight -> client EncryptedExtensions + Finished.
+        client.handle_message(client_input, client_buf)
+        assert client.state == State.CLIENT_POST_HANDSHAKE
+        assert client._alps_negotiated is True
+        server_input = merge_buffers(client_buf)
+        reset_buffers(client_buf)
+
+        # Handle client EncryptedExtensions + Finished.
+        server.handle_message(server_input, server_buf)
+        assert server.state == State.SERVER_POST_HANDSHAKE
+        assert len(merge_buffers(server_buf)) == 0
+
+        # keys match
+        assert client._dec_key == server._enc_key
+        assert client._enc_key == server._dec_key
+
+        # each peer received the other's settings
+        assert client._peer_alps_settings == b"\x00server-settings"
+        assert server._peer_alps_settings == b"\x00client-settings"
+
     def _test_handshake_with_certificate(self, certificate, private_key):
         server = self.create_server()
         server.certificate = InnerCertificate(
