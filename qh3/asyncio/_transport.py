@@ -5,6 +5,7 @@ Custom asyncio DatagramTransport with optimized UDP I/O.
 from __future__ import annotations
 
 import asyncio
+import errno
 import socket
 import struct
 import sys
@@ -46,6 +47,30 @@ _MSG_CTRUNC: typing.Final = getattr(socket, "MSG_CTRUNC", 0)
 _ANCBUFSIZE: typing.Final = (
     socket.CMSG_SPACE(_GRO_CMSG.size) if hasattr(socket, "CMSG_SPACE") else 0
 )
+
+# Errnos returned when a datagram is larger than the path/link MTU allows
+# and cannot be fragmented. qh3 performs Datagram Packetization Layer Path
+# MTU Discovery (DPLPMTUD) by emitting PING probe datagrams of increasing
+# size; an oversized probe is expected to bounce with ``EMSGSIZE``.
+_MSG_TOO_BIG_ERRNOS: typing.Final = frozenset(
+    e
+    for e in (
+        getattr(errno, "EMSGSIZE", None),
+        getattr(errno, "WSAEMSGSIZE", None),
+    )
+    if e is not None
+)
+
+# Windows surfaces "message too long" as WSAEMSGSIZE (10040) through the
+# ``winerror`` attribute as well, so account for it explicitly.
+_WSAEMSGSIZE_WINERROR: typing.Final = 10040
+
+
+def _is_msg_too_big(exc: OSError) -> bool:
+    """Return True when *exc* means the datagram exceeded the path MTU."""
+    if exc.errno in _MSG_TOO_BIG_ERRNOS:
+        return True
+    return getattr(exc, "winerror", None) == _WSAEMSGSIZE_WINERROR
 
 
 def enable_gro(sock: socket.socket) -> bool:
@@ -313,12 +338,16 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
             self._register_reader()
 
     def _raw_send(self, data: bytes, addr: typing.Any) -> None:
-        if addr is not None:
-            self._sock.sendto(data, addr)
-        elif self._address is not None:
-            self._sock.sendto(data, self._address)
-        else:
-            self._sock.send(data)
+        try:
+            if addr is not None:
+                self._sock.sendto(data, addr)
+            elif self._address is not None:
+                self._sock.sendto(data, self._address)
+            else:
+                self._sock.send(data)
+        except OSError as e:  # Defensive: guard against msg too long error.
+            if not _is_msg_too_big(e):
+                raise
 
     def sendto(self, data: bytes, addr: typing.Any = None) -> None:
         if self._closing:
