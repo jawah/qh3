@@ -1,3 +1,9 @@
+1.9.2 (2026-06-05)
+==================
+
+**Fixed**
+- Added guard against too large msg (during PING frame probe) datagram in non-GSO/quinn-udp path.
+
 1.9.1 (2026-06-01)
 ==================
 
