@@ -4,6 +4,7 @@ import logging
 import math
 from typing import Any, Callable, Iterable
 
+from .._compat import TRACE
 from .._hazmat import QuicPacketPacer, QuicRttMonitor, RangeSet
 from .logger import QuicLoggerTrace
 from .packet_builder import QuicDeliveryState, QuicSentPacket
@@ -627,7 +628,7 @@ class QuicPacketRecovery:
                 self._on_packets_rescheduled(packets, space=space, now=now)
                 crypto_scheduled = True
         if crypto_scheduled and self._logger is not None:
-            self._logger.debug("Scheduled CRYPTO data for retransmission")
+            self._logger.log(TRACE, "Scheduled CRYPTO data for retransmission")
 
         # Reschedule oldest in-flight application data (up to 2 packets)
         # so it is sent in the same write cycle as the PTO probe.
@@ -781,7 +782,8 @@ class QuicPacketRecovery:
                     )
                     if span > pc_duration:
                         if self._logger is not None:
-                            self._logger.debug(
+                            self._logger.log(
+                                TRACE,
                                 "Persistent congestion detected (span=%.3fs > %.3fs); "
                                 "collapsing cwnd",
                                 span,
