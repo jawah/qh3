@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from .logger import QuicLoggerTrace
 
 from .. import tls
-from .._compat import DATACLASS_KWARGS, UINT_VAR_MAX_SIZE
+from .._compat import DATACLASS_KWARGS, TRACE, UINT_VAR_MAX_SIZE
 from .._hazmat import (
     Buffer,
     BufferReadError,
@@ -776,7 +776,8 @@ class QuicConnection:
                         frame_type=self._close_event.frame_type,
                         reason_phrase=self._close_event.reason_phrase,
                     )
-            self._logger.debug(
+            self._logger.log(
+                TRACE,
                 "Connection close sent (code 0x%X, reason %s)",
                 self._close_event.error_code,
                 self._close_event.reason_phrase,
@@ -1020,7 +1021,7 @@ class QuicConnection:
 
         # loss detection timeout
         if self._loss_at is not None and now >= self._loss_at:
-            self._logger.debug("Loss detection triggered")
+            self._logger.log(TRACE, "Loss detection triggered")
             self._loss.on_loss_detection_timeout(now=now)
 
     def next_event(self) -> events.QuicEvent | None:
@@ -1256,7 +1257,7 @@ class QuicConnection:
                         now + 3 * self._loss.get_probe_timeout()
                     )
             except KeyUnavailableError as exc:
-                self._logger.debug(exc)
+                self._logger.log(TRACE, exc)
                 if quic_logger is not None:
                     quic_logger.log_event(
                         category="transport",
@@ -1278,7 +1279,7 @@ class QuicConnection:
                     self._crypto_retransmitted = True
                 continue
             except CryptoError as exc:
-                self._logger.debug(exc)
+                self._logger.log(TRACE, exc)
                 if quic_logger is not None:
                     quic_logger.log_event(
                         category="transport",
@@ -1292,7 +1293,7 @@ class QuicConnection:
                 # a stateless reset token issued by the peer is a stateless
                 # reset and indicates the peer has lost connection state.
                 if self._is_stateless_reset(data):
-                    self._logger.info("Stateless reset received from peer")
+                    self._logger.log(TRACE, "Stateless reset received from peer")
                     self._close_event = events.ConnectionTerminated(
                         error_code=QuicErrorCode.NO_ERROR,
                         frame_type=None,
@@ -1341,7 +1342,8 @@ class QuicConnection:
             # RFC 9000 21.4: discard duplicate packets
             if packet_number in space.ack_queue:
                 if self._logger is not None:
-                    self._logger.debug(
+                    self._logger.log(
+                        TRACE,
                         "Discarding duplicate packet: epoch=%s pn=%d",
                         epoch,
                         packet_number,
@@ -1406,7 +1408,7 @@ class QuicConnection:
                     context, plain_payload, crypto_frame_required
                 )
             except QuicConnectionError as exc:
-                self._logger.debug(exc)
+                self._logger.log(TRACE, exc)
                 self.close(
                     error_code=exc.error_code,
                     frame_type=exc.frame_type,
@@ -1425,7 +1427,8 @@ class QuicConnection:
                 and context.host_cid != self.host_cid
                 and epoch == tls.Epoch.ONE_RTT
             ):
-                self._logger.debug(
+                self._logger.log(
+                    TRACE,
                     "Peer switching to CID %s (%d)",
                     dump_cid(context.host_cid),
                     destination_cid_seq,
@@ -1435,15 +1438,15 @@ class QuicConnection:
 
             # update network path
             if not network_path.is_validated and epoch == tls.Epoch.HANDSHAKE:
-                self._logger.debug(
-                    "Network path %s validated by handshake", network_path.addr
+                self._logger.log(
+                    TRACE, "Network path %s validated by handshake", network_path.addr
                 )
                 network_path.is_validated = True
             if network_path not in self._network_paths:
                 self._network_paths.append(network_path)
             idx = self._network_paths.index(network_path)
             if idx and not is_probing and packet_number > space.largest_received_packet:
-                self._logger.debug("Network path %s promoted", network_path.addr)
+                self._logger.log(TRACE, "Network path %s promoted", network_path.addr)
                 self._network_paths.pop(idx)
                 self._network_paths.insert(0, network_path)
                 # RFC 9000 9.4 / RFC 9002 5.1: drop RTT samples gathered
@@ -1582,8 +1585,10 @@ class QuicConnection:
                         ]
                         break
             self._version_negotiated_compatible = True
-            self._logger.debug(
-                "Negotiated protocol version %s", pretty_protocol_version(self._version)
+            self._logger.log(
+                TRACE,
+                "Negotiated protocol version %s",
+                pretty_protocol_version(self._version),
             )
 
         # Notify the application.
@@ -1618,7 +1623,8 @@ class QuicConnection:
         """
 
         self._peer_cid = self._peer_cid_available.pop(0)
-        self._logger.debug(
+        self._logger.log(
+            TRACE,
             "Switching to CID %s (%d)",
             dump_cid(self._peer_cid.cid),
             self._peer_cid.sequence_number,
@@ -1663,7 +1669,7 @@ class QuicConnection:
 
     def _discard_epoch(self, epoch: tls.Epoch) -> None:
         if not self._spaces[epoch].discarded:
-            self._logger.debug("Discarding epoch %s", epoch)
+            self._logger.log(TRACE, "Discarding epoch %s", epoch)
             self._cryptos[epoch].teardown()
             if epoch == tls.Epoch.INITIAL:
                 # Tear the crypto pairs, but do not log the event,
@@ -1691,7 +1697,7 @@ class QuicConnection:
         """
         zero_rtt = self._cryptos[tls.Epoch.ZERO_RTT]
         if zero_rtt.send.is_valid() or zero_rtt.recv.is_valid():
-            self._logger.debug("Discarding 0-RTT keys")
+            self._logger.log(TRACE, "Discarding 0-RTT keys")
             zero_rtt.teardown()
 
     def _find_network_path(self, addr: NetworkAddress) -> QuicNetworkPath:
@@ -1701,7 +1707,7 @@ class QuicConnection:
                 return network_path
 
         # new network path
-        self._logger.debug("Network path %s discovered", addr)
+        self._logger.log(TRACE, "Network path %s discovered", addr)
 
         return QuicNetworkPath(addr)
 
@@ -1746,7 +1752,7 @@ class QuicConnection:
                 max_streams.used = stream_count
 
             # create stream
-            self._logger.debug(f"Stream {stream_id} created by peer")
+            self._logger.log(TRACE, f"Stream {stream_id} created by peer")
             stream = self._streams[stream_id] = QuicStream(
                 stream_id=stream_id,
                 max_stream_data_local=max_stream_data_local,
@@ -2041,7 +2047,8 @@ class QuicConnection:
                 )
             )
 
-        self._logger.debug(
+        self._logger.log(
+            TRACE,
             "Connection close received (code 0x%X, reason %s)",
             error_code,
             reason_phrase,
@@ -2152,12 +2159,12 @@ class QuicConnection:
                 )
                 self._unblock_streams(is_unidirectional=False)
                 self._unblock_streams(is_unidirectional=True)
-                self._logger.debug(
-                    "ALPN negotiated protocol %s", self.tls.alpn_negotiated
+                self._logger.log(
+                    TRACE, "ALPN negotiated protocol %s", self.tls.alpn_negotiated
                 )
         else:
-            self._logger.debug(
-                "Duplicate CRYPTO data received for epoch %s", context.epoch
+            self._logger.log(
+                TRACE, "Duplicate CRYPTO data received for epoch %s", context.epoch
             )
 
             # if a server receives duplicate CRYPTO in an INITIAL packet,
@@ -2190,7 +2197,8 @@ class QuicConnection:
         # sent on the next write.
         if limit >= self._local_max_data.value:
             self._local_max_data.value *= 2
-            self._logger.debug(
+            self._logger.log(
+                TRACE,
                 "Local %s raised to %d in response to DATA_BLOCKED",
                 self._local_max_data.name,
                 self._local_max_data.value,
@@ -2279,7 +2287,7 @@ class QuicConnection:
             )
 
         if max_data > self._remote_max_data:
-            self._logger.debug("Remote max_data raised to %d", max_data)
+            self._logger.log(TRACE, "Remote max_data raised to %d", max_data)
             self._remote_max_data = max_data
 
     def _handle_max_stream_data_frame(
@@ -2306,7 +2314,8 @@ class QuicConnection:
 
         stream = self._get_or_create_stream(frame_type, stream_id)
         if max_stream_data > stream.max_stream_data_remote:
-            self._logger.debug(
+            self._logger.log(
+                TRACE,
                 "Stream %d remote max_stream_data raised to %d",
                 stream_id,
                 max_stream_data,
@@ -2338,7 +2347,7 @@ class QuicConnection:
             )
 
         if max_streams > self._remote_max_streams_bidi:
-            self._logger.debug("Remote max_streams_bidi raised to %d", max_streams)
+            self._logger.log(TRACE, "Remote max_streams_bidi raised to %d", max_streams)
             self._remote_max_streams_bidi = max_streams
             self._unblock_streams(is_unidirectional=False)
 
@@ -2367,7 +2376,7 @@ class QuicConnection:
             )
 
         if max_streams > self._remote_max_streams_uni:
-            self._logger.debug("Remote max_streams_uni raised to %d", max_streams)
+            self._logger.log(TRACE, "Remote max_streams_uni raised to %d", max_streams)
             self._remote_max_streams_uni = max_streams
             self._unblock_streams(is_unidirectional=True)
 
@@ -2549,7 +2558,9 @@ class QuicConnection:
                 frame_type=frame_type,
                 reason_phrase="Response does not match challenge",
             )
-        self._logger.debug("Network path %s validated by challenge", network_path.addr)
+        self._logger.log(
+            TRACE, "Network path %s validated by challenge", network_path.addr
+        )
         network_path.is_validated = True
 
     def _handle_ping_frame(
@@ -2600,7 +2611,8 @@ class QuicConnection:
             )
 
         # process reset
-        self._logger.debug(
+        self._logger.log(
+            TRACE,
             "Stream %d reset by peer (error code %d, final size %d)",
             stream_id,
             error_code,
@@ -2652,7 +2664,8 @@ class QuicConnection:
                         frame_type=frame_type,
                         reason_phrase="Cannot retire current connection ID",
                     )
-                self._logger.debug(
+                self._logger.log(
+                    TRACE,
                     "Peer retiring CID %s (%d)",
                     dump_cid(connection_id.cid),
                     connection_id.sequence_number,
@@ -2786,7 +2799,8 @@ class QuicConnection:
             and limit >= stream.max_stream_data_local
         ):
             stream.max_stream_data_local *= 2
-            self._logger.debug(
+            self._logger.log(
+                TRACE,
                 "Stream %d local max_stream_data raised to %d in response to "
                 "STREAM_DATA_BLOCKED",
                 stream_id,
@@ -2908,7 +2922,9 @@ class QuicConnection:
         Callback when a PING frame is acknowledged or lost.
         """
         if delivery == QuicDeliveryState.ACKED:
-            self._logger.debug("Received PING%s response", "" if uids else " (probe)")
+            self._logger.log(
+                TRACE, "Received PING%s response", "" if uids else " (probe)"
+            )
             for uid in uids:
                 self._events.append(events.PingAcknowledged(uid=uid))
         else:
@@ -2921,14 +2937,14 @@ class QuicConnection:
         Callback when an MTU probe PING frame is acknowledged or lost.
         """
         if delivery == QuicDeliveryState.ACKED:
-            self._logger.debug("MTU probe ACK'd, datagram size now %d", probe_size)
+            self._logger.log(TRACE, "MTU probe ACK'd, datagram size now %d", probe_size)
             self._max_datagram_size = probe_size
             self._loss._cc._max_datagram_size = probe_size
             if self._mtu_probe_sizes and self._mtu_probe_sizes[0] == probe_size:
                 self._mtu_probe_sizes.pop(0)
             self._mtu_probe_pending = None
         else:
-            self._logger.debug("MTU probe for %d lost, stopping", probe_size)
+            self._logger.log(TRACE, "MTU probe for %d lost, stopping", probe_size)
             self._mtu_probe_sizes.clear()
             self._mtu_probe_pending = None
 
@@ -3071,7 +3087,7 @@ class QuicConnection:
             self._peer_token = header.token
             self._retry_count += 1
             self._retry_source_connection_id = header.source_cid
-            self._logger.debug(f"Retrying with token ({len(header.token)} bytes)")
+            self._logger.log(TRACE, f"Retrying with token ({len(header.token)} bytes)")
             self._connect(now=now)
         else:
             # Unexpected or invalid retry packet.
@@ -3126,7 +3142,8 @@ class QuicConnection:
             #
             # https://datatracker.ietf.org/doc/html/rfc9368#section-4
             if self._version in header.supported_versions:
-                self._logger.debug(
+                self._logger.log(
+                    TRACE,
                     "Version negotiation packet contains protocol version %s",
                     pretty_protocol_version(self._version),
                 )
@@ -3152,7 +3169,7 @@ class QuicConnection:
                     },
                 )
             if chosen_version is None:
-                self._logger.debug("Could not find a common protocol version")
+                self._logger.log(TRACE, "Could not find a common protocol version")
                 self._close_event = events.ConnectionTerminated(
                     error_code=QuicErrorCode.INTERNAL_ERROR,
                     frame_type=QuicFrameType.PADDING,
@@ -3162,7 +3179,8 @@ class QuicConnection:
                 return
             self._version = chosen_version
             self._version_negotiated_incompatible = True
-            self._logger.debug(
+            self._logger.log(
+                TRACE,
                 "Retrying with protocol version %s",
                 pretty_protocol_version(self._version),
             )
@@ -3204,7 +3222,8 @@ class QuicConnection:
         """
         Retire a destination connection ID.
         """
-        self._logger.debug(
+        self._logger.log(
+            TRACE,
             "Retiring CID %s (%d) [%d]",
             dump_cid(connection_id.cid),
             connection_id.sequence_number,
@@ -3505,13 +3524,16 @@ class QuicConnection:
             quic_transport_parameters.max_udp_payload_size = 1472
             quic_transport_parameters.max_datagram_frame_size = 65536
             quic_transport_parameters.google_connection_options = b"ORIG"
+            quic_transport_parameters.initial_rtt = int(
+                self._configuration.initial_rtt * 1000000
+            )
             quic_transport_parameters.greased_transport_parameter = (
                 self._local_grease_transport_parameter,
                 b"",
             )
             quic_transport_parameters.version_information.available_versions = [
-                self._local_grease_quic_version,
                 *self._configuration.supported_versions,
+                self._local_grease_quic_version,
             ]
         else:
             quic_transport_parameters.original_destination_connection_id = (
@@ -3536,7 +3558,7 @@ class QuicConnection:
         return buf.data
 
     def _set_state(self, state: QuicConnectionState) -> None:
-        self._logger.debug("%s -> %s", self._state.name, state.name)
+        self._logger.log(TRACE, "%s -> %s", self._state.name, state.name)
         self._state = state
 
     def _unblock_streams(self, is_unidirectional: bool) -> None:
@@ -3576,8 +3598,10 @@ class QuicConnection:
         ):
             self._version = self._crypto_packet_version
             self._version_negotiated_compatible = True
-            self._logger.debug(
-                "Negotiated protocol version %s", pretty_protocol_version(self._version)
+            self._logger.log(
+                TRACE,
+                "Negotiated protocol version %s",
+                pretty_protocol_version(self._version),
             )
 
         secrets_log_file = self._configuration.secrets_log_file
@@ -3714,8 +3738,8 @@ class QuicConnection:
                 ):
                     if limit.used * 2 > limit.value:
                         limit.value *= 2
-                        self._logger.debug(
-                            "Local %s raised to %d", limit.name, limit.value
+                        self._logger.log(
+                            TRACE, "Local %s raised to %d", limit.name, limit.value
                         )
                     if limit.value != limit.sent:
                         buf = builder.start_frame(
@@ -3751,7 +3775,8 @@ class QuicConnection:
                         > stream.max_stream_data_local
                     ):
                         stream.max_stream_data_local *= 2
-                        self._logger.debug(
+                        self._logger.log(
+                            TRACE,
                             "Stream %d local max_stream_data raised to %d",
                             stream.stream_id,
                             stream.max_stream_data_local,
@@ -3832,7 +3857,7 @@ class QuicConnection:
 
                     # Discard finished streams
                     if sender.is_finished and receiver.is_finished:
-                        self._logger.debug(f"Stream {stream.stream_id} discarded")
+                        self._logger.log(TRACE, f"Stream {stream.stream_id} discarded")
                         del self._streams[stream.stream_id]
                         self._streams_finished.add(stream.stream_id)
                         self._streams_dirty_limits.discard(stream)
@@ -4195,7 +4220,8 @@ class QuicConnection:
             handler=self._on_ping_delivery,
             handler_args=(tuple(uids),),
         )
-        self._logger.debug(
+        self._logger.log(
+            TRACE,
             "Sending PING%s in packet %d",
             f" ({comment})" if comment else "",
             builder.packet_number,

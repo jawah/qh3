@@ -16,6 +16,7 @@ from functools import partial
 from hmac import HMAC
 from typing import Any, Callable, Generator, Optional, Sequence, Tuple, TypeVar
 
+from ._compat import TRACE
 from ._hazmat import (
     Buffer,
     BufferReadError,
@@ -2086,9 +2087,10 @@ class Context:
                 )
                 supported_groups.append(Group.X25519ML768)
                 if self.__logger is not None:
-                    self.__logger.debug(
+                    self.__logger.log(
+                        TRACE,
                         "TLS: Advertising to peer post-quantum algorithm "
-                        "using X25519ML768 (0x11EC)"
+                        "using X25519ML768 (0x11EC)",
                     )
             elif _is_grease_value(group):
                 key_share.append((group, b"\x00"))
@@ -2106,7 +2108,8 @@ class Context:
                     self._ech_config, self._ech_cipher_suite = result
                     ech_config_selected = True
                     if self.__logger is not None:
-                        self.__logger.debug(
+                        self.__logger.log(
+                            TRACE,
                             "ECH: Selected config_id=%d, KEM=0x%04X, "
                             "KDF=0x%04X, AEAD=0x%04X, public_name=%s",
                             self._ech_config.config_id,
@@ -2117,13 +2120,14 @@ class Context:
                         )
                 else:
                     if self.__logger is not None:
-                        self.__logger.debug(
-                            "ECH: No usable config found, falling back to GREASE"
+                        self.__logger.log(
+                            TRACE, "ECH: No usable config found, falling back to GREASE"
                         )
             except Exception:
                 if self.__logger is not None:
-                    self.__logger.debug(
-                        "ECH: Failed to parse ECHConfigList, falling back to GREASE"
+                    self.__logger.log(
+                        TRACE,
+                        "ECH: Failed to parse ECHConfigList, falling back to GREASE",
                     )
 
         # Build the outer ClientHello
@@ -2149,7 +2153,7 @@ class Context:
             )
             outer_server_name = self._server_name
             if self.__logger is not None:
-                self.__logger.debug("ECH: GREASE extension added to ClientHello")
+                self.__logger.log(TRACE, "ECH: GREASE extension added to ClientHello")
 
         hello = ClientHello(
             random=self.client_random,
@@ -2563,7 +2567,8 @@ class Context:
         self._ech_inner_ch_bytes = inner_ch_buf.data
 
         if self.__logger is not None:
-            self.__logger.debug(
+            self.__logger.log(
+                TRACE,
                 "ECH: Built real ECH extension (config_id=%d, enc=%d bytes, "
                 "payload=%d bytes, inner_ch=%d bytes)",
                 self._ech_config.config_id,
@@ -2641,7 +2646,8 @@ class Context:
         )
 
         if self.__logger is not None:
-            self.__logger.debug(
+            self.__logger.log(
+                TRACE,
                 "ECH acceptance check: match=%s",
                 accept_confirmation == candidate,
             )
@@ -2678,7 +2684,8 @@ class Context:
                 peer_hello, cipher_suite, raw_server_hello
             )
             if self.__logger is not None:
-                self.__logger.debug(
+                self.__logger.log(
+                    TRACE,
                     "ECH: Server %s ECH",
                     "accepted" if self._ech_accepted else "rejected",
                 )
@@ -2710,8 +2717,10 @@ class Context:
         elif peer_hello.key_share[0] == Group.X25519ML768:
             shared_key = self._x25519_kyber_768_private_key.exchange(peer_public_key)
             if self.__logger is not None:
-                self.__logger.debug(
-                    "TLS: Post-quantum safety achieved using X25519ML768 (key-exchange)"
+                self.__logger.log(
+                    TRACE,
+                    "TLS: Post-quantum safety achieved using "
+                    "X25519ML768 (key-exchange)",
                 )
         elif (
             peer_hello.key_share[0] == Group.SECP256R1
@@ -2782,7 +2791,8 @@ class Context:
                 # connection layer to use for automatic retry.
                 self._ech_retry_configs = encrypted_extensions.retry_configs
                 if self.__logger is not None:
-                    self.__logger.debug(
+                    self.__logger.log(
+                        TRACE,
                         "ECH: Server rejected ECH, provided %d bytes of retry_configs",
                         len(encrypted_extensions.retry_configs),
                     )
@@ -3064,9 +3074,10 @@ class Context:
         # and optionally retry with updated configs.
         if self._ech_offered and not self._ech_accepted:
             if self.__logger is not None:
-                self.__logger.debug(
+                self.__logger.log(
+                    TRACE,
                     "ECH: Handshake completed for outer (public_name), "
-                    "raising ech_required alert"
+                    "raising ech_required alert",
                 )
             raise AlertECHRequired("ECH was offered but rejected by the server")
 
@@ -3444,5 +3455,5 @@ class Context:
 
     def _set_state(self, state: State) -> None:
         if self.__logger:
-            self.__logger.debug("TLS %s -> %s", self.state.name, state.name)
+            self.__logger.log(TRACE, "TLS %s -> %s", self.state.name, state.name)
         self.state = state
