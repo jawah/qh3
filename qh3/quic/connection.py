@@ -3532,8 +3532,8 @@ class QuicConnection:
                 b"",
             )
             quic_transport_parameters.version_information.available_versions = [
-                self._local_grease_quic_version,
                 *self._configuration.supported_versions,
+                self._local_grease_quic_version,
             ]
         else:
             quic_transport_parameters.original_destination_connection_id = (
