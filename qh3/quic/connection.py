@@ -3524,6 +3524,9 @@ class QuicConnection:
             quic_transport_parameters.max_udp_payload_size = 1472
             quic_transport_parameters.max_datagram_frame_size = 65536
             quic_transport_parameters.google_connection_options = b"ORIG"
+            quic_transport_parameters.initial_rtt = int(
+                self._configuration.initial_rtt * 1000000
+            )
             quic_transport_parameters.greased_transport_parameter = (
                 self._local_grease_transport_parameter,
                 b"",

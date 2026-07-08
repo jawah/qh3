@@ -307,6 +307,8 @@ class QuicTransportParameters:
     quantum_readiness: bytes | None = None
     # used to control A/B testing targeting(...) Google servers.
     google_connection_options: bytes | None = None
+    # initial_rtt hint (microseconds)
+    initial_rtt: int | None = None
     # A GREASE transport parameter (id, value). The id is dynamic (reserved
     # form 31*N+27) so it is carried alongside its value rather than via PARAMS.
     greased_transport_parameter: tuple[int, bytes] | None = None
@@ -324,6 +326,7 @@ PARAMS = {
     0x06: ("initial_max_stream_data_bidi_remote", int),
     0x09: ("initial_max_streams_uni", int),
     0x3128: ("google_connection_options", bytes),
+    0x3127: ("initial_rtt", int),
     0x08: ("initial_max_streams_bidi", int),
     0x05: ("initial_max_stream_data_bidi_local", int),
     # remaining parameters (parsed and, where relevant, emitted by servers)
