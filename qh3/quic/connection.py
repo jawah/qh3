@@ -1439,8 +1439,7 @@ class QuicConnection:
             # update network path
             if not network_path.is_validated and epoch == tls.Epoch.HANDSHAKE:
                 self._logger.log(
-                    TRACE,
-                    "Network path %s validated by handshake", network_path.addr
+                    TRACE, "Network path %s validated by handshake", network_path.addr
                 )
                 network_path.is_validated = True
             if network_path not in self._network_paths:
@@ -1588,7 +1587,8 @@ class QuicConnection:
             self._version_negotiated_compatible = True
             self._logger.log(
                 TRACE,
-                "Negotiated protocol version %s", pretty_protocol_version(self._version)
+                "Negotiated protocol version %s",
+                pretty_protocol_version(self._version),
             )
 
         # Notify the application.
@@ -2048,7 +2048,6 @@ class QuicConnection:
             )
 
         self._logger.log(
-
             TRACE,
             "Connection close received (code 0x%X, reason %s)",
             error_code,
@@ -2161,13 +2160,11 @@ class QuicConnection:
                 self._unblock_streams(is_unidirectional=False)
                 self._unblock_streams(is_unidirectional=True)
                 self._logger.log(
-                    TRACE,
-                    "ALPN negotiated protocol %s", self.tls.alpn_negotiated
+                    TRACE, "ALPN negotiated protocol %s", self.tls.alpn_negotiated
                 )
         else:
             self._logger.log(
-                TRACE,
-                "Duplicate CRYPTO data received for epoch %s", context.epoch
+                TRACE, "Duplicate CRYPTO data received for epoch %s", context.epoch
             )
 
             # if a server receives duplicate CRYPTO in an INITIAL packet,
@@ -3600,7 +3597,8 @@ class QuicConnection:
             self._version_negotiated_compatible = True
             self._logger.log(
                 TRACE,
-                "Negotiated protocol version %s", pretty_protocol_version(self._version)
+                "Negotiated protocol version %s",
+                pretty_protocol_version(self._version),
             )
 
         secrets_log_file = self._configuration.secrets_log_file
@@ -3738,8 +3736,7 @@ class QuicConnection:
                     if limit.used * 2 > limit.value:
                         limit.value *= 2
                         self._logger.log(
-                            TRACE,
-                            "Local %s raised to %d", limit.name, limit.value
+                            TRACE, "Local %s raised to %d", limit.name, limit.value
                         )
                     if limit.value != limit.sent:
                         buf = builder.start_frame(

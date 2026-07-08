@@ -2090,7 +2090,7 @@ class Context:
                     self.__logger.log(
                         TRACE,
                         "TLS: Advertising to peer post-quantum algorithm "
-                        "using X25519ML768 (0x11EC)"
+                        "using X25519ML768 (0x11EC)",
                     )
             elif _is_grease_value(group):
                 key_share.append((group, b"\x00"))
@@ -2121,14 +2121,13 @@ class Context:
                 else:
                     if self.__logger is not None:
                         self.__logger.log(
-                            TRACE,
-                            "ECH: No usable config found, falling back to GREASE"
+                            TRACE, "ECH: No usable config found, falling back to GREASE"
                         )
             except Exception:
                 if self.__logger is not None:
                     self.__logger.log(
                         TRACE,
-                        "ECH: Failed to parse ECHConfigList, falling back to GREASE"
+                        "ECH: Failed to parse ECHConfigList, falling back to GREASE",
                     )
 
         # Build the outer ClientHello
@@ -2720,7 +2719,8 @@ class Context:
             if self.__logger is not None:
                 self.__logger.log(
                     TRACE,
-                    "TLS: Post-quantum safety achieved using X25519ML768 (key-exchange)"
+                    "TLS: Post-quantum safety achieved using "
+                    "X25519ML768 (key-exchange)",
                 )
         elif (
             peer_hello.key_share[0] == Group.SECP256R1
@@ -3077,7 +3077,7 @@ class Context:
                 self.__logger.log(
                     TRACE,
                     "ECH: Handshake completed for outer (public_name), "
-                    "raising ech_required alert"
+                    "raising ech_required alert",
                 )
             raise AlertECHRequired("ECH was offered but rejected by the server")
 
