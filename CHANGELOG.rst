@@ -1,3 +1,11 @@
+1.9.3 (2026-07-08)
+==================
+
+**Changed**
+- Updated aws-lc-rs v1.17.0 to v1.17.1
+- Updated rustls v0.23.40 to v0.23.41
+- Downgraded every DEBUG log entry to a TRACE (5) level to avoid spamming people who set level at interpreter scale for logging
+
 1.9.2 (2026-06-05)
 ==================
 
