@@ -232,6 +232,7 @@ class QuicCongestionControl:
             and self._hystart_window_end is None
         ):
             self._hystart_window_end = packet.packet_number
+
     def on_packets_expired(self, packets: Iterable[QuicSentPacket]) -> None:
         for packet in packets:
             self.bytes_in_flight -= packet.sent_bytes
