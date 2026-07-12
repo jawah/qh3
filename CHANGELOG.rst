@@ -1,3 +1,12 @@
+1.9.4 (2026-07-12)
+==================
+
+**Fixed**
+- Congestion and loss algorithms against more brittle network connections
+
+**Changed**
+- Updated lsqpack to v2.6.5 via our ls-qpack-rs crate v0.3.2
+
 1.9.3 (2026-07-08)
 ==================
 
