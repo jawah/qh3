@@ -14,7 +14,7 @@ def tests_impl(
     session.install("-U", "pip", "maturin", silent=False)
     session.install("-r", "dev-requirements.txt", silent=False)
 
-    session.run("maturin", "develop")
+    session.run("maturin", "develop", "--release")
 
     # Show the pip version.
     session.run("pip", "--version")
