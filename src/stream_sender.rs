@@ -260,6 +260,11 @@ impl QuicStreamSender {
         if delivery == DELIVERY_ACKED {
             self.ack_count += 1;
             if stop > start {
+                self.pending.subtract(start, stop);
+                if stop <= self.buffer_start {
+                    return;
+                }
+                let start = std::cmp::max(start, self.buffer_start);
                 self.acked.add(start, Some(stop));
                 let first_range = self.acked.get_item(0);
                 if first_range.0 == self.buffer_start {
@@ -285,7 +290,14 @@ impl QuicStreamSender {
             // LOST
             self.loss_count += 1;
             if stop > start {
-                self.pending.add(start, Some(stop));
+                let start = std::cmp::max(start, self.buffer_start);
+                if stop > start {
+                    self.pending.add(start, Some(stop));
+                    for i in 0..self.acked.len() {
+                        let range = self.acked.get_item(i);
+                        self.pending.subtract(range.0, range.1);
+                    }
+                }
             }
             if Some(stop) == self.buffer_fin {
                 self.buffer_is_empty = false;

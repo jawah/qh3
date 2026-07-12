@@ -306,7 +306,7 @@ impl PyUdpSocketState {
                     };
 
                     let sock_ref = UdpSockRef::from(&borrowed);
-                    match self.inner.send(sock_ref, &transmit) {
+                    match self.inner.try_send(sock_ref, &transmit) {
                         Ok(()) => sent += group_count,
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                         Err(e) => {
@@ -328,7 +328,7 @@ impl PyUdpSocketState {
                     };
 
                     let sock_ref = UdpSockRef::from(&borrowed);
-                    match self.inner.send(sock_ref, &transmit) {
+                    match self.inner.try_send(sock_ref, &transmit) {
                         Ok(()) => sent += 1,
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                         Err(e) => {

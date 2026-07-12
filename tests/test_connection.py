@@ -166,6 +166,7 @@ def create_standalone_client(self, **client_options):
         )
     )
     client._ack_delay = 0
+    disable_packet_pacing(client)
 
     # kick-off handshake
     client.connect(SERVER_ADDR, now=time.time())
@@ -260,6 +261,9 @@ def client_and_server(
 
 def disable_packet_pacing(connection):
     class DummyPacketPacer(QuicPacketPacer):
+        def start_pacing(self, now, congestion_window, smoothed_rtt):
+            pass
+
         def next_send_time(self, now):
             return None
 
@@ -562,7 +566,7 @@ class TestQuicConnection:
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 1280]
             assert client.get_timer() == pytest.approx(1.998)
-            self.assertSentPackets(client, [2, 0, 0])
+            self.assertSentPackets(client, [4, 0, 0])
             self.assertEvents(client, [])
 
             # server receives INITIAL, sends INITIAL + HANDSHAKE
@@ -720,7 +724,7 @@ class TestQuicConnection:
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 1280]
             assert client.get_timer() == pytest.approx(1.998)
-            self.assertSentPackets(client, [2, 0, 0])
+            self.assertSentPackets(client, [4, 0, 0])
             self.assertEvents(client, [])
 
             # server receives duplicate INITIAL, retransmits INITIAL + HANDSHAKE
@@ -803,9 +807,9 @@ class TestQuicConnection:
             now = client.get_timer()
             client.handle_timer(now=now)
             items = client.datagrams_to_send(now=now)
-            assert datagram_sizes(items) == [45]
+            assert datagram_sizes(items) == [90]
             assert client.get_timer() == pytest.approx(0.9)
-            self.assertSentPackets(client, [0, 2, 0])
+            self.assertSentPackets(client, [0, 3, 0])
             self.assertEvents(client, [])
 
             # server receives PING, discards INITIAL and sends ACK
@@ -823,7 +827,7 @@ class TestQuicConnection:
             items = server.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [1280, 886]
             assert server.get_timer() == pytest.approx(2.048)
-            self.assertSentPackets(server, [0, 3, 0])
+            self.assertSentPackets(server, [0, 5, 0])
             self.assertEvents(server, [])
 
             # handshake continues normally
@@ -833,7 +837,7 @@ class TestQuicConnection:
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [313]
             assert client.get_timer() == pytest.approx(1.366)
-            self.assertSentPackets(client, [0, 3, 1])
+            self.assertSentPackets(client, [0, 4, 1])
             self.assertEvents(client, HANDSHAKE_COMPLETED_EVENTS)
 
             now += TICK
@@ -897,20 +901,21 @@ class TestQuicConnection:
             self.assertSentPackets(server, [0, 0, 1])
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS_SINGLE_CID)
 
-            # server side PTO retransmits HANDSHAKE_DONE + NEW_CONNECTION_IDs
-            # (RFC 9002 6.2.4: retransmit in-flight data instead of PING)
+            # Server-side PTO retransmits HANDSHAKE_DONE + NEW_CONNECTION_IDs
+            # and includes a PING to guarantee an ack-eliciting probe.
             now = server.get_timer()
             server.handle_timer(now=now)
             items = server.datagrams_to_send(now=now)
-            assert datagram_sizes(items) == [56]
+            assert datagram_sizes(items) == [57, 29]
             assert server.get_timer() == pytest.approx(0.975)
-            self.assertSentPackets(server, [0, 0, 1])
+            self.assertSentPackets(server, [0, 0, 2])
             # Server re-emits ConnectionIdIssued when re-writing CID frames
             self.assertEvents(server, HANDSHAKE_COMPLETED_EVENTS_SINGLE_CID[1:])
 
             # client receives retransmitted HANDSHAKE_DONE + CIDs, sends ACK
             now += TICK
             client.receive_datagram(items[0][0], SERVER_ADDR, now=now)
+            client.receive_datagram(items[1][0], SERVER_ADDR, now=now)
             items = client.datagrams_to_send(now=now)
             assert datagram_sizes(items) == [32]
             self.assertEvents(client, [])
@@ -922,6 +927,48 @@ class TestQuicConnection:
             assert datagram_sizes(items) == []
             self.assertSentPackets(server, [0, 0, 0])
             self.assertEvents(server, [])
+
+    def test_connect_with_first_initial_lost_and_long_server_cid(self):
+        with client_and_server(
+            handshake=False, server_options={"connection_id_length": 20}
+        ) as (client, server):
+            now = 0.0
+            client.connect(SERVER_ADDR, now=now)
+            initial = client.datagrams_to_send(now=now)
+            assert len(initial) == 2
+            client_initial_space = client._spaces[tls.Epoch.INITIAL]
+            _, second_range = client_initial_space.sent_packets[1].delivery_handlers[0]
+            second_start, second_stop = second_range
+
+            # Deliver only the ClientHello tail. The server ACKs packet 1 but
+            # cannot advance TLS until the prefix is retransmitted.
+            now += TICK
+            server.receive_datagram(initial[1][0], CLIENT_ADDR, now=now)
+            crypto_receiver = server._crypto_streams[tls.Epoch.INITIAL].receiver
+            assert crypto_receiver.starting_offset() == 0
+            assert crypto_receiver.highest_offset == second_stop
+            assert list(crypto_receiver._ranges) == [(second_start, second_stop)]
+            ack = server.datagrams_to_send(now=now)
+            assert ack
+
+            now += TICK
+            for data, _ in ack:
+                client.receive_datagram(data, SERVER_ADDR, now=now)
+
+            # The ACK for packet 1 proves that the peer has only the tail of
+            # the ClientHello. Immediately probe the missing packet 0 CRYPTO
+            # range instead of waiting for the loss timer or PTO.
+            retransmission = client.datagrams_to_send(now=now)
+            now += TICK
+            for data, _ in retransmission:
+                server.receive_datagram(data, CLIENT_ADDR, now=now)
+
+            assert retransmission
+            assert crypto_receiver.starting_offset() == second_stop
+
+            response = server.datagrams_to_send(now=now)
+            assert response
+            self.assertEvents(server, [events.ProtocolNegotiated])
 
     def test_connect_with_no_transport_parameters(self):
         real_initialize = QuicConnection._initialize

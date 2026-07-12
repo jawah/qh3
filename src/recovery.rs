@@ -44,16 +44,23 @@ impl QuicPacketPacer {
         self.packet_time
     }
 
+    /// Seed pacing for a new path with one datagram of immediate credit.
+    fn start_pacing(&mut self, now: f64, congestion_window: usize, smoothed_rtt: f64) {
+        self.update_rate(congestion_window, smoothed_rtt);
+        self.bucket_time = self.packet_time.unwrap_or(0.0);
+        self.evaluation_time = now;
+    }
+
     /// Computes the next send time given the current time.
     ///
-    /// If a packet time is defined and the bucket has been depleted (≤ 0),
-    /// returns `now + packet_time`; otherwise, returns `None`.
+    /// If the bucket does not contain enough credit for a complete packet,
+    /// returns the time at which the missing credit will be available.
     #[inline(always)]
     fn next_send_time(&mut self, now: f64) -> Option<f64> {
         if let Some(packet_time) = self.packet_time {
             self.update_bucket(now);
-            if self.bucket_time <= 0.0 {
-                return Some(now + packet_time);
+            if self.bucket_time + K_MICRO_SECOND < packet_time {
+                return Some(now + packet_time - self.bucket_time);
             }
         }
         None

@@ -47,10 +47,9 @@ class TestQuicPacketPacer:
             self.pacer.update_after_send(now=1.0)
         assert self.pacer.next_send_time(now=1.0) == pytest.approx(1.00005)
 
-        # 2 packets
-        for i in range(2):
-            assert self.pacer.next_send_time(now=1.00005) is None
-            self.pacer.update_after_send(now=1.00005)
+        # one packet of elapsed time grants one packet of credit
+        assert self.pacer.next_send_time(now=1.00005) is None
+        self.pacer.update_after_send(now=1.00005)
         assert self.pacer.next_send_time(now=1.00005) == pytest.approx(1.0001)
 
         # 1 packet
@@ -58,11 +57,21 @@ class TestQuicPacketPacer:
         self.pacer.update_after_send(now=1.0001)
         assert self.pacer.next_send_time(now=1.0001) == pytest.approx(1.00015)
 
-        # 2 packets
-        for i in range(2):
-            assert self.pacer.next_send_time(now=1.00015) is None
-            self.pacer.update_after_send(now=1.00015)
+        assert self.pacer.next_send_time(now=1.00015) is None
+        self.pacer.update_after_send(now=1.00015)
         assert self.pacer.next_send_time(now=1.00015) == pytest.approx(1.0002)
+
+    def test_partial_credit_does_not_release_full_packet(self):
+        self.pacer.start_pacing(
+            now=1.0, congestion_window=12800, smoothed_rtt=0.2664
+        )
+        assert self.pacer.packet_time == pytest.approx(0.02664)
+        assert self.pacer.next_send_time(now=1.0) is None
+
+        self.pacer.update_after_send(now=1.0)
+        assert self.pacer.next_send_time(now=1.001) == pytest.approx(1.02664)
+        assert self.pacer.next_send_time(now=1.01) == pytest.approx(1.02664)
+        assert self.pacer.next_send_time(now=1.02664) is None
 
 
 class TestQuicPacketRecovery:
@@ -204,6 +213,8 @@ class TestQuicPacketRecovery:
         cwnd_before = self.recovery._cc.congestion_window
         self.recovery._pto_count = 2
 
+        probes = []
+        self.recovery._send_probe = lambda: probes.append(True)
         self.recovery.reschedule_data(now=5.0)
 
         assert observed == [QuicDeliveryState.LOST]
@@ -211,6 +222,71 @@ class TestQuicPacketRecovery:
         assert self.recovery._cc.congestion_window == cwnd_before
         assert self.recovery._pto_count == 2
         assert len(self.ONE_RTT_SPACE.sent_packets) == 0
+        assert probes == [True]
+
+    def test_ack_only_packet_does_not_supply_rtt_sample(self):
+        data_packet = QuicSentPacket(
+            epoch=tls.Epoch.ONE_RTT,
+            in_flight=True,
+            is_ack_eliciting=True,
+            is_crypto_packet=False,
+            packet_number=0,
+            packet_type=QuicPacketType.ONE_RTT,
+            sent_bytes=1280,
+            sent_time=0.0,
+        )
+        ack_packet = QuicSentPacket(
+            epoch=tls.Epoch.ONE_RTT,
+            in_flight=False,
+            is_ack_eliciting=False,
+            is_crypto_packet=False,
+            packet_number=1,
+            packet_type=QuicPacketType.ONE_RTT,
+            sent_bytes=30,
+            sent_time=5.0,
+        )
+        self.recovery.on_packet_sent(data_packet, self.ONE_RTT_SPACE)
+        self.recovery.on_packet_sent(ack_packet, self.ONE_RTT_SPACE)
+
+        ranges = RangeSet()
+        ranges.add(0, 2)
+        self.recovery.on_ack_received(
+            self.ONE_RTT_SPACE, ack_rangeset=ranges, ack_delay=0.0, now=10.0
+        )
+
+        assert self.recovery._rtt_latest == 0.0
+        assert not self.recovery._rtt_initialized
+
+    def test_congestion_idle_time_uses_ack_receipt_time(self):
+        cc = QuicCongestionControl(max_datagram_size=1280)
+        first = QuicSentPacket(
+            epoch=tls.Epoch.ONE_RTT,
+            in_flight=True,
+            is_ack_eliciting=True,
+            is_crypto_packet=False,
+            packet_number=0,
+            packet_type=QuicPacketType.ONE_RTT,
+            sent_bytes=1280,
+            sent_time=1.0,
+        )
+        cc.on_packet_sent(first)
+        cc.on_packet_acked(first, now=10.0)
+        cwnd = cc.congestion_window
+
+        second = QuicSentPacket(
+            epoch=tls.Epoch.ONE_RTT,
+            in_flight=True,
+            is_ack_eliciting=True,
+            is_crypto_packet=False,
+            packet_number=1,
+            packet_type=QuicPacketType.ONE_RTT,
+            sent_bytes=1280,
+            sent_time=11.0,
+        )
+        cc.on_packet_sent(second)
+
+        assert cc.congestion_window == cwnd
+        assert cc.bytes_in_flight == 1280
 
     def test_on_ack_received_initial_does_not_reset_pto_count(self):
         # RFC 9002 6.2.1: a client MUST NOT reset its PTO backoff on
@@ -257,6 +333,44 @@ class TestQuicPacketRecovery:
             self.ONE_RTT_SPACE, ack_rangeset=rs2, ack_delay=0.0, now=11.0
         )
         assert self.recovery._pto_count == 0
+
+    def test_initial_crypto_gap_is_probed_immediately(self):
+        observed = []
+        probes = []
+        self.recovery._send_probe = lambda: probes.append(True)
+
+        for packet_number in range(2):
+            packet = QuicSentPacket(
+                epoch=tls.Epoch.INITIAL,
+                in_flight=True,
+                is_ack_eliciting=True,
+                is_crypto_packet=True,
+                packet_number=packet_number,
+                packet_type=QuicPacketType.INITIAL,
+                sent_bytes=1280,
+                sent_time=0.0,
+            )
+            packet.delivery_handlers = [
+                (lambda state, pn=packet_number: observed.append((pn, state)), ())
+            ]
+            self.recovery.on_packet_sent(packet, self.INITIAL_SPACE)
+
+        ranges = RangeSet()
+        ranges.add(1, 2)
+        self.recovery.on_ack_received(
+            self.INITIAL_SPACE,
+            ack_rangeset=ranges,
+            ack_delay=0.0,
+            now=0.05,
+            reset_pto_count=False,
+        )
+
+        assert observed == [
+            (1, QuicDeliveryState.ACKED),
+            (0, QuicDeliveryState.LOST),
+        ]
+        assert probes == []
+        assert list(self.INITIAL_SPACE.sent_packets) == [0]
 
     def test_persistent_congestion_detected(self):
         # RFC 9002 7.6: if at least two ack-eliciting packets are
@@ -605,7 +719,9 @@ class TestHyStartPlusPlus:
             cc.on_packet_sent(_hystart_packet(first_pn + i, send_time + i * 0.0001))
         now = send_time + 0.001
         for i in range(n_acks):
-            cc.on_packet_acked(_hystart_packet(first_pn + i, send_time + i * 0.0001))
+            cc.on_packet_acked(
+                _hystart_packet(first_pn + i, send_time + i * 0.0001), now=now
+            )
             cc.on_rtt_measurement(rtt, now)
         return first_pn + n_acks
 
@@ -657,7 +773,7 @@ class TestHyStartPlusPlus:
         cwnd0 = cc.congestion_window
         pkt = _hystart_packet(pn=0, sent_time=0.0, size=1280)
         cc.on_packet_sent(pkt)
-        cc.on_packet_acked(pkt)
+        cc.on_packet_acked(pkt, now=0.001)
         # 1280 // 4 == 320
         assert cc.congestion_window == cwnd0 + 320
 
