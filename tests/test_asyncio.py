@@ -1223,6 +1223,27 @@ class TestOptimizedDatagramTransportUnit:
         # Single datagram → _raw_send → sock.sendto
         sock.sendto.assert_called_once()
 
+    def test_sendto_many_queues_rust_partial_send(self):
+        from unittest.mock import MagicMock
+
+        transport, loop, _, _ = self._make_transport(
+            gso=True, connected_addr=("::1", 9999)
+        )
+        state = MagicMock()
+        state.send.return_value = 1
+        transport._udp_state = state
+        datagrams = [b"A" * 1280, b"B" * 1280, b"C" * 1280]
+
+        transport.sendto_many(datagrams)
+
+        state.send.assert_called_once_with(datagrams, "::1", 9999)
+        loop.add_writer.assert_called_once_with(42, transport._on_write_ready)
+        assert list(transport._send_queue) == [
+            (datagrams[1], None),
+            (datagrams[2], None),
+        ]
+        assert transport.get_write_buffer_size() == 2560
+
     def test_sendto_many_without_gso(self):
         transport, _, sock, _ = self._make_transport(gso=False, connected_addr=("::1", 9999))
         datagrams = [b"A" * 1280, b"B" * 1280]

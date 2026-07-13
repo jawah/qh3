@@ -382,7 +382,11 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
             target = addr if addr is not None else self._address
             if target is not None:
                 try:
-                    state.send(datagrams, str(target[0]), int(target[1]))
+                    sent = state.send(datagrams, str(target[0]), int(target[1]))
+                    if sent < len(datagrams):
+                        self._register_writer()
+                        for dgram in datagrams[sent:]:
+                            self._queue_write(dgram, addr)
                     return
                 except BlockingIOError:
                     self._register_writer()

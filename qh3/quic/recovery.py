@@ -7,6 +7,7 @@ from typing import Any, Callable, Iterable
 from .._compat import TRACE
 from .._hazmat import QuicPacketPacer, QuicRttMonitor, RangeSet
 from .logger import QuicLoggerTrace
+from .packet import QuicPacketType
 from .packet_builder import QuicDeliveryState, QuicSentPacket
 
 # loss detection
@@ -136,9 +137,9 @@ class QuicCongestionControl:
         cwnd_seg = self._cwnd_epoch / self._max_datagram_size
         self._K = _cubic_root((W_max_seg - cwnd_seg) / K_CUBIC_C)
 
-    def on_packet_acked(self, packet: QuicSentPacket) -> None:
+    def on_packet_acked(self, packet: QuicSentPacket, now: float) -> None:
         self.bytes_in_flight -= packet.sent_bytes
-        self._last_ack = packet.sent_time
+        self._last_ack = now
 
         # HyStart++ round tracking (RFC 9406 4.3): a round ends when an
         # ACK is received for a packet whose number is at or above the
@@ -175,13 +176,13 @@ class QuicCongestionControl:
                 # exiting slow start without a loss (HyStart triggered)
                 self._first_slow_start = False
                 self._W_max = self.congestion_window
-                self._start_epoch(packet.sent_time)
+                self._start_epoch(now)
 
             if self._starting_congestion_avoidance:
                 # entering congestion avoidance after a loss
                 self._starting_congestion_avoidance = False
                 self._first_slow_start = False
-                self._start_epoch(packet.sent_time)
+                self._start_epoch(now)
 
             # TCP-friendly estimate (Reno-like linear growth)
             self._W_est = int(
@@ -189,7 +190,7 @@ class QuicCongestionControl:
                 + self._max_datagram_size * (packet.sent_bytes / self.congestion_window)
             )
 
-            t = packet.sent_time - self._t_epoch
+            t = now - self._t_epoch
             W_cubic = self._W_cubic(t + self._rtt)
 
             # clamp target
@@ -212,6 +213,14 @@ class QuicCongestionControl:
                 )
 
     def on_packet_sent(self, packet: QuicSentPacket) -> None:
+        # Restart before accounting the new flight so a reset cannot leave
+        # bytes_in_flight above a freshly reduced congestion window.
+        if (
+            not packet.is_pmtu_probe
+            and self._last_ack > 0.0
+            and packet.sent_time - self._last_ack >= K_CUBIC_MAX_IDLE_TIME
+        ):
+            self._reset()
         self.bytes_in_flight += packet.sent_bytes
         # Track largest sent PN and bootstrap the HyStart++ round window
         # on the first packet sent during slow start.
@@ -223,11 +232,6 @@ class QuicCongestionControl:
             and self._hystart_window_end is None
         ):
             self._hystart_window_end = packet.packet_number
-        # reset cwnd after prolonged idle
-        if self._last_ack > 0.0:
-            elapsed_idle = packet.sent_time - self._last_ack
-            if elapsed_idle >= K_CUBIC_MAX_IDLE_TIME:
-                self._reset()
 
     def on_packets_expired(self, packets: Iterable[QuicSentPacket]) -> None:
         for packet in packets:
@@ -477,6 +481,13 @@ class QuicPacketRecovery:
         self._rtt_smoothed = 0.0
         self._rtt_variance = 0.0
 
+    def start_packet_pacing(self, now: float) -> None:
+        self._pacer.start_pacing(
+            now=now,
+            congestion_window=self._cc.congestion_window,
+            smoothed_rtt=self._rtt_initial / 1.25,
+        )
+
     def on_ack_received(
         self,
         space: QuicPacketSpace,
@@ -494,10 +505,10 @@ class QuicPacketRecovery:
         (RFC 9002 6.2.1). Resetting in that case would prematurely
         clear the PTO backoff and let a stuck handshake under-probe.
         """
-        is_ack_eliciting = False
         largest_acked = ack_rangeset.bounds()[1] - 1
         largest_newly_acked = None
-        largest_sent_time = None
+        largest_newly_acked_ack_eliciting = None
+        largest_ack_eliciting_sent_time = None
 
         if largest_acked > space.largest_acked_packet:
             space.largest_acked_packet = largest_acked
@@ -509,13 +520,13 @@ class QuicPacketRecovery:
                 # remove packet and update counters
                 packet = space.sent_packets.pop(packet_number)
                 if packet.is_ack_eliciting:
-                    is_ack_eliciting = True
+                    largest_newly_acked_ack_eliciting = packet_number
+                    largest_ack_eliciting_sent_time = packet.sent_time
                     if not packet.is_pmtu_probe:
                         space.ack_eliciting_in_flight -= 1
                 if packet.in_flight:
-                    self._cc.on_packet_acked(packet)
+                    self._cc.on_packet_acked(packet, now=now)
                 largest_newly_acked = packet_number
-                largest_sent_time = packet.sent_time
 
                 # trigger callbacks
                 dh = packet.delivery_handlers
@@ -527,8 +538,8 @@ class QuicPacketRecovery:
         if largest_newly_acked is None:
             return
 
-        if largest_acked == largest_newly_acked and is_ack_eliciting:
-            latest_rtt = now - largest_sent_time
+        if largest_acked == largest_newly_acked_ack_eliciting:
+            latest_rtt = now - largest_ack_eliciting_sent_time
             log_rtt = True
 
             # limit ACK delay to max_ack_delay
@@ -569,6 +580,19 @@ class QuicPacketRecovery:
 
         self._detect_loss(space, now=now)
 
+        # A later Initial CRYPTO packet can be acknowledged while an earlier
+        # fragment is missing. Probe that gap immediately: the peer cannot
+        # advance TLS until offset zero arrives, and waiting for PTO only
+        # prolongs a handshake that has already demonstrated peer reachability.
+        if any(
+            packet.packet_type == QuicPacketType.INITIAL
+            and packet.is_crypto_packet
+            and packet.packet_number < largest_newly_acked
+            for packet in space.sent_packets.values()
+        ):
+            self._queue_oldest_crypto_packet(space)
+            self.start_packet_pacing(now)
+
         # reset PTO count
         if reset_pto_count:
             self._pto_count = 0
@@ -583,7 +607,46 @@ class QuicPacketRecovery:
         else:
             self._pto_count += 1
             self._pto_total += 1
-            self.reschedule_data(now=now)
+            probe_count = 2
+            self._queue_probe_data(probe_count, now=now)
+            for _ in range(probe_count):
+                self._send_probe()
+
+    def _queue_probe_data(self, probe_count: int, now: float) -> None:
+        """Queue copies of oldest outstanding data without retiring it."""
+        queued = 0
+        for space in self.spaces:
+            for packet in space.sent_packets.values():
+                if not packet.is_crypto_packet:
+                    continue
+                for handler, args in packet.delivery_handlers or ():
+                    handler(QuicDeliveryState.LOST, *args)
+                queued += 1
+                if queued >= probe_count:
+                    return
+        if queued:
+            return
+
+        for space in reversed(self.spaces):
+            packets = []
+            for packet in space.sent_packets.values():
+                if not (packet.in_flight and packet.is_ack_eliciting):
+                    continue
+                packets.append(packet)
+                if len(packets) >= probe_count:
+                    break
+            if packets:
+                self._on_packets_rescheduled(packets, space=space, now=now)
+                return
+
+    def _queue_oldest_crypto_packet(self, space: QuicPacketSpace) -> bool:
+        for packet in space.sent_packets.values():
+            if not packet.is_crypto_packet:
+                continue
+            for handler, args in packet.delivery_handlers or ():
+                handler(QuicDeliveryState.LOST, *args)
+            return True
+        return False
 
     def on_packet_sent(self, packet: QuicSentPacket, space: QuicPacketSpace) -> None:
         space.sent_packets[packet.packet_number] = packet
@@ -632,7 +695,6 @@ class QuicPacketRecovery:
 
         # Reschedule oldest in-flight application data (up to 2 packets)
         # so it is sent in the same write cycle as the PTO probe.
-        app_rescheduled = False
         if not crypto_scheduled:
             for space in self.spaces:
                 if not space.sent_packets:
@@ -646,11 +708,11 @@ class QuicPacketRecovery:
                             break
                 if to_reschedule:
                     self._on_packets_rescheduled(to_reschedule, space=space, now=now)
-                    app_rescheduled = True
 
-        # If no data was rescheduled, send a PING as the ack-eliciting probe
-        if not crypto_scheduled and not app_rescheduled:
-            self._send_probe()
+        # Delivery callbacks are not guaranteed to queue retransmittable data
+        # (a PING-only packet is one example), so every PTO explicitly queues
+        # a PING. It will normally be coalesced with retransmitted data.
+        self._send_probe()
 
     def _detect_loss(self, space: QuicPacketSpace, now: float) -> None:
         """

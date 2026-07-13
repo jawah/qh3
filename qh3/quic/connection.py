@@ -554,7 +554,7 @@ class QuicConnection:
         self._datagrams_pending: deque[bytes] = deque()
         self._handshake_done_pending = False
         self._ping_pending: list[int] = []
-        self._probe_pending = False
+        self._probe_pending = 0
         self._retire_connection_ids: list[int] = []
         self._streams_blocked_pending = False
 
@@ -708,6 +708,7 @@ class QuicConnection:
         else:
             self._version = self._configuration.supported_versions[0]
         self._connect(now=now)
+        self._loss.start_packet_pacing(now)
 
     def datagrams_to_send(self, now: float) -> list[tuple[bytes, NetworkAddress]]:
         """
@@ -3237,7 +3238,7 @@ class QuicConnection:
             buf.seek(0)
 
     def _send_probe(self) -> None:
-        self._probe_pending = True
+        self._probe_pending += 1
 
     def _is_stateless_reset(self, datagram: bytes) -> bool:
         """
@@ -3813,7 +3814,7 @@ class QuicConnection:
             # PING (probe)
             if self._probe_pending:
                 self._write_ping_frame(builder, comment="probe")
-                self._probe_pending = False
+                self._probe_pending -= 1
 
             # CRYPTO
             if crypto_stream is not None and not crypto_stream.sender.buffer_is_empty:
@@ -3952,6 +3953,15 @@ class QuicConnection:
         space = self._spaces[epoch]
 
         while True:
+            # Handshake packets use the same path pacer as application data.
+            # ACKs and PTO probes bypass pacing to preserve recovery latency.
+            if (
+                space.ack_at is None or space.ack_at >= now
+            ) and not self._probe_pending:
+                self._pacing_at = self._loss._pacer.next_send_time(now=now)
+                if self._pacing_at is not None:
+                    break
+
             if epoch == tls.Epoch.INITIAL:
                 packet_type = QuicPacketType.INITIAL
             else:
@@ -3964,15 +3974,18 @@ class QuicConnection:
                 self._write_ack_frame(builder=builder, space=space, now=now)
 
             # CRYPTO
+            crypto_written = False
             if not crypto_stream.sender.buffer_is_empty:
                 if self._write_crypto_frame(
                     builder=builder, space=space, stream=crypto_stream
                 ):
-                    self._probe_pending = False
+                    crypto_written = True
+                    self._probe_pending = max(self._probe_pending - 1, 0)
 
             # PING (probe)
             if (
                 self._probe_pending
+                and not crypto_written
                 and not self._handshake_complete
                 and (
                     epoch == tls.Epoch.HANDSHAKE
@@ -3980,10 +3993,12 @@ class QuicConnection:
                 )
             ):
                 self._write_ping_frame(builder, comment="probe")
-                self._probe_pending = False
+                self._probe_pending -= 1
 
             if builder.packet_is_empty:
                 break
+            if builder._packet.in_flight:
+                self._loss._pacer.update_after_send(now=now)
 
     def _write_ack_frame(
         self, builder: QuicPacketBuilder, space: QuicPacketSpace, now: float
