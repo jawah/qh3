@@ -9,6 +9,8 @@
 //! On macOS:  recvmsg_x + sendmsg_x (Apple private batch APIs)
 
 #[cfg(unix)]
+use std::borrow::Cow;
+#[cfg(unix)]
 use std::io::IoSliceMut;
 #[cfg(unix)]
 use std::net::{IpAddr, SocketAddr};
@@ -285,18 +287,12 @@ impl PyUdpSocketState {
 
                     let group_count = end - i;
 
-                    // GSO requires a single contiguous buffer
-                    // one copy here is unavoidable.
-                    let total_len: usize = slices[i..end].iter().map(|s| s.len()).sum();
-                    let mut contents = Vec::with_capacity(total_len);
-                    for s in &slices[i..end] {
-                        contents.extend_from_slice(s);
-                    }
+                    let contents = coalesce_gso_group(&slices[i..end]);
 
                     let transmit = Transmit {
                         destination: dest,
                         ecn: None,
-                        contents: &contents,
+                        contents: contents.as_ref(),
                         segment_size: if group_count > 1 {
                             Some(seg_size)
                         } else {
@@ -347,5 +343,40 @@ impl PyUdpSocketState {
                 "send is only supported on Unix platforms",
             ))
         }
+    }
+}
+
+#[cfg(unix)]
+fn coalesce_gso_group<'a>(group: &[&'a [u8]]) -> Cow<'a, [u8]> {
+    if group.len() == 1 {
+        return Cow::Borrowed(group[0]);
+    }
+    let total_len = group.iter().map(|slice| slice.len()).sum();
+    let mut contents = Vec::with_capacity(total_len);
+    for slice in group {
+        contents.extend_from_slice(slice);
+    }
+    Cow::Owned(contents)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_gso_group_borrows_original_datagram() {
+        let datagram = b"one packet";
+        let contents = coalesce_gso_group(&[datagram.as_slice()]);
+
+        assert!(matches!(contents, Cow::Borrowed(_)));
+        assert_eq!(contents.as_ptr(), datagram.as_ptr());
+    }
+
+    #[test]
+    fn multiple_gso_segments_are_coalesced() {
+        let contents = coalesce_gso_group(&[b"one".as_slice(), b"two".as_slice()]);
+
+        assert!(matches!(contents, Cow::Owned(_)));
+        assert_eq!(contents.as_ref(), b"onetwo");
     }
 }
