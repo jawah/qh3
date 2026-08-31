@@ -4,6 +4,7 @@ import pytest
 import asyncio
 import binascii
 import contextlib
+import errno
 import random
 import socket
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from qh3._hazmat import Certificate as InnerCertificate
 from qh3._hazmat import EcPrivateKey, Ed25519PrivateKey
 from qh3.asyncio.client import connect
 from qh3.asyncio.protocol import QuicConnectionProtocol
+from qh3.quic import events
 from qh3.asyncio.server import serve
 from qh3.quic.configuration import QuicConfiguration
 from qh3.quic.logger import QuicLogger
@@ -864,6 +866,8 @@ from qh3.asyncio._transport import (
     _UINT16,
     UDP_GRO,
     _HIGH_WATERMARK,
+    _LOW_WATERMARK,
+    _is_msg_too_big,
     OptimizedDatagramTransport,
     enable_gro,
     has_gso,
@@ -1196,6 +1200,16 @@ class TestOptimizedDatagramTransportUnit:
         transport.sendto(b"hello", ("::1", 8888))
         sock.sendto.assert_not_called()
 
+    def test_sendto_queues_behind_pending_write(self):
+        transport, _, sock, _ = self._make_transport()
+        transport._send_queue.append((b"first", None))
+        transport._buffer_size = 5
+
+        transport.sendto(b"second", ("::1", 8888))
+
+        assert list(transport._send_queue)[-1] == (b"second", ("::1", 8888))
+        sock.sendto.assert_not_called()
+
     def test_sendto_blocking_queues(self):
         transport, loop, sock, _ = self._make_transport(connected_addr=("::1", 9999))
         sock.sendto.side_effect = BlockingIOError
@@ -1210,6 +1224,21 @@ class TestOptimizedDatagramTransportUnit:
         transport.sendto(b"hello")
         protocol.error_received.assert_called_once()
 
+    def test_message_too_big_is_silently_dropped(self):
+        transport, _, sock, protocol = self._make_transport(
+            connected_addr=("::1", 9999)
+        )
+        sock.sendto.side_effect = OSError(errno.EMSGSIZE, "too large")
+
+        transport.sendto(b"oversized probe")
+
+        protocol.error_received.assert_not_called()
+
+    def test_message_too_big_windows_error(self):
+        exc = OSError("too large")
+        exc.winerror = 10040
+        assert _is_msg_too_big(exc) is True
+
     def test_sendto_many_uses_gso_python(self):
         transport, _, sock, _ = self._make_transport(gso=True, connected_addr=("::1", 9999))
         datagrams = [b"A" * 1280, b"A" * 1280, b"A" * 1280]
@@ -1222,6 +1251,15 @@ class TestOptimizedDatagramTransportUnit:
         transport.sendto_many([b"A" * 1280])
         # Single datagram → _raw_send → sock.sendto
         sock.sendto.assert_called_once()
+
+    def test_sendto_many_gso_on_connected_socket(self):
+        transport, _, sock, _ = self._make_transport(gso=True)
+        datagrams = [b"A" * 1280, b"B" * 1280]
+
+        transport.sendto_many(datagrams)
+
+        sock.sendmsg.assert_called_once()
+        assert len(sock.sendmsg.call_args.args) == 2
 
     def test_sendto_many_queues_rust_partial_send(self):
         from unittest.mock import MagicMock
@@ -1243,6 +1281,36 @@ class TestOptimizedDatagramTransportUnit:
             (datagrams[2], None),
         ]
         assert transport.get_write_buffer_size() == 2560
+
+    def test_sendto_many_queues_when_rust_send_would_block(self):
+        from unittest.mock import MagicMock
+
+        transport, loop, _, _ = self._make_transport(
+            connected_addr=("::1", 9999)
+        )
+        state = MagicMock()
+        state.send.side_effect = BlockingIOError
+        transport._udp_state = state
+        datagrams = [b"one", b"two"]
+
+        transport.sendto_many(datagrams)
+
+        loop.add_writer.assert_called_once()
+        assert list(transport._send_queue) == [(b"one", None), (b"two", None)]
+
+    def test_sendto_many_falls_back_after_rust_send_error(self):
+        from unittest.mock import MagicMock
+
+        transport, _, sock, _ = self._make_transport(
+            connected_addr=("::1", 9999)
+        )
+        state = MagicMock()
+        state.send.side_effect = OSError("unsupported")
+        transport._udp_state = state
+
+        transport.sendto_many([b"one", b"two"])
+
+        assert sock.sendto.call_count == 2
 
     def test_sendto_many_without_gso(self):
         transport, _, sock, _ = self._make_transport(gso=False, connected_addr=("::1", 9999))
@@ -1299,6 +1367,30 @@ class TestOptimizedDatagramTransportUnit:
         transport._on_write_ready()
         # Should stop and leave items in queue
         assert len(transport._send_queue) == 2
+
+    def test_on_write_ready_retries_interrupted_send(self):
+        transport, _, sock, _ = self._make_transport(
+            connected_addr=("::1", 9999)
+        )
+        transport._send_queue.append((b"one", None))
+        transport._buffer_size = 3
+        sock.sendto.side_effect = [InterruptedError, None]
+
+        transport._on_write_ready()
+
+        assert sock.sendto.call_count == 2
+        assert transport.get_write_buffer_size() == 0
+
+    def test_resume_writing_only_below_low_watermark(self):
+        transport, _, _, protocol = self._make_transport()
+        transport._protocol_paused = True
+        transport._buffer_size = _LOW_WATERMARK + 1
+        transport._maybe_resume_protocol()
+        protocol.resume_writing.assert_not_called()
+
+        transport._buffer_size = _LOW_WATERMARK
+        transport._maybe_resume_protocol()
+        protocol.resume_writing.assert_called_once()
 
     def test_on_write_ready_resumes_protocol(self):
         transport, _, sock, protocol = self._make_transport(connected_addr=("::1", 9999))
@@ -1495,6 +1587,41 @@ class TestOptimizedDatagramTransportUnit:
         transport._recv_plain()
         protocol.datagram_received.assert_called_once_with(b"data", ("::1", 5000))
 
+    def test_recv_rust_batch(self):
+        from unittest.mock import MagicMock
+
+        transport, _, _, protocol = self._make_transport()
+        state = MagicMock()
+        state.recv.side_effect = [
+            ([b"one", b"two"], ("::1", 5000)),
+            ([], ("::1", 5000)),
+        ]
+
+        transport._recv_rust(state)
+
+        protocol.datagrams_received.assert_called_once_with(
+            [b"one", b"two"], ("::1", 5000)
+        )
+
+    def test_recv_rust_non_batch(self):
+        from unittest.mock import MagicMock
+
+        transport, _, _, _ = self._make_transport()
+        protocol = MagicMock(spec=asyncio.DatagramProtocol)
+        transport.set_protocol(protocol)
+        state = MagicMock()
+        state.recv.side_effect = [
+            ([b"one", b"two"], ("::1", 5000)),
+            OSError("done"),
+        ]
+
+        transport._recv_rust(state)
+
+        assert protocol.datagram_received.call_args_list == [
+            ((b"one", ("::1", 5000)),),
+            ((b"two", ("::1", 5000)),),
+        ]
+
     def test_call_connection_lost(self):
         transport, loop, sock, protocol = self._make_transport()
         transport._call_connection_lost(None)
@@ -1552,6 +1679,54 @@ class TestOptimizedDatagramTransportUnit:
         loop.add_writer.assert_called_once()
         assert len(transport._send_queue) == 2
 
+    def test_send_gso_fallback_queues_after_individual_send_blocks(self):
+        transport, loop, sock, _ = self._make_transport(
+            gso=True, connected_addr=("::1", 9999)
+        )
+        sock.sendmsg.side_effect = OSError("GSO unavailable")
+        sock.sendto.side_effect = [None, BlockingIOError]
+        datagrams = [b"A" * 1280, b"B" * 1280, b"C" * 1280]
+
+        transport._send_gso_python(datagrams, None)
+
+        loop.add_writer.assert_called_once()
+        assert list(transport._send_queue) == [(datagrams[1], None), (datagrams[2], None)]
+
+    def test_send_gso_single_datagram_error_is_reported(self):
+        transport, _, sock, protocol = self._make_transport(gso=True)
+        sock.send.side_effect = OSError("send failed")
+
+        transport._send_gso_python([b"one"], None)
+
+        protocol.error_received.assert_called_once()
+
+    def test_recv_gro_python_control_truncation_delivers_unsplit(self):
+        transport, _, sock, protocol = self._make_transport(gro=True)
+        addr = ("::1", 5000, 0, 0)
+        sock.recvmsg.side_effect = [
+            (b"datagram", [], socket.MSG_CTRUNC, addr),
+            BlockingIOError,
+        ]
+
+        transport._recv_gro_python()
+
+        protocol.datagram_received.assert_called_once_with(b"datagram", addr)
+
+    def test_recv_gro_python_uses_default_for_zero_segment_size(self):
+        transport, _, sock, protocol = self._make_transport(gro=True)
+        addr = ("::1", 5000, 0, 0)
+        data = b"A" * 1280 + b"B"
+        sock.recvmsg.side_effect = [
+            (data, [(socket.SOL_UDP, UDP_GRO, b"\x00")], 0, addr),
+            BlockingIOError,
+        ]
+
+        transport._recv_gro_python()
+
+        protocol.datagrams_received.assert_called_once_with(
+            [b"A" * 1280, b"B"], addr
+        )
+
     def test_on_write_ready_oserror(self):
         """OSError during write_ready reports to protocol and continues."""
         transport, loop, sock, protocol = self._make_transport(connected_addr=("::1", 9999))
@@ -1580,3 +1755,55 @@ class TestOptimizedDatagramTransportUnit:
         assert len(transport._send_queue) == 0
         # Should schedule _call_connection_lost
         loop.call_soon.assert_called()
+
+
+class TestQuicConnectionProtocolUnit:
+    @pytest.mark.asyncio
+    async def test_finished_stream_is_not_resurrected_by_trailing_data(self):
+        from unittest.mock import MagicMock
+
+        quic = MagicMock()
+        handler = MagicMock()
+        protocol = QuicConnectionProtocol(quic, stream_handler=handler)
+
+        protocol.quic_event_received(
+            events.StreamDataReceived(data=b"done", end_stream=True, stream_id=0)
+        )
+        protocol.quic_event_received(
+            events.StreamDataReceived(data=b"late", end_stream=True, stream_id=0)
+        )
+
+        handler.assert_called_once()
+        assert 0 not in protocol._stream_readers
+        assert 0 in protocol._stream_readers_done
+
+    @pytest.mark.asyncio
+    async def test_finished_stream_history_is_bounded(self):
+        from unittest.mock import MagicMock
+
+        protocol = QuicConnectionProtocol(MagicMock())
+        for stream_id in range(1025):
+            protocol._mark_stream_reader_done(stream_id)
+
+        assert len(protocol._stream_readers_done) == 1024
+        assert 0 not in protocol._stream_readers_done
+        assert 1024 in protocol._stream_readers_done
+        protocol._mark_stream_reader_done(1024)
+        assert len(protocol._stream_readers_done_order) == 1024
+
+    @pytest.mark.asyncio
+    async def test_connection_termination_clears_stream_state(self):
+        from unittest.mock import MagicMock
+
+        protocol = QuicConnectionProtocol(MagicMock())
+        reader, writer = protocol._create_stream(0)
+        protocol._mark_stream_reader_done(4)
+
+        protocol.quic_event_received(
+            events.ConnectionTerminated(error_code=0, frame_type=None, reason_phrase="")
+        )
+
+        assert reader.at_eof()
+        assert protocol._stream_readers == {}
+        assert protocol._stream_readers_done == set()
+        writer.close()

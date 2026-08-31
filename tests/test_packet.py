@@ -3,15 +3,19 @@ from __future__ import annotations
 import pytest
 import binascii
 
-from qh3._hazmat import Buffer, BufferReadError, decode_packet_number, pull_ack_frame, push_ack_frame
+from qh3._hazmat import Buffer, BufferReadError, decode_packet_number
 from qh3.quic.packet import (
     QuicPacketType,
     QuicPreferredAddress,
     QuicProtocolVersion,
     QuicTransportParameters,
+    QuicVersionInformation,
+    encode_long_header_first_byte,
     encode_quic_retry,
     encode_quic_version_negotiation,
     get_retry_integrity_tag,
+    get_spin_bit,
+    is_long_header,
     pretty_protocol_version,
     pull_quic_header,
     pull_quic_preferred_address,
@@ -19,15 +23,49 @@ from qh3.quic.packet import (
     pull_quic_version_information,
     push_quic_preferred_address,
     push_quic_transport_parameters,
+    stream_is_client_initiated,
+    stream_is_unidirectional,
 )
 
-from .test_crypto_v1 import LONG_CLIENT_ENCRYPTED_PACKET as CLIENT_INITIAL_V1
-from .test_crypto_v1 import LONG_SERVER_ENCRYPTED_PACKET as SERVER_INITIAL_V1
-from .test_crypto_v2 import LONG_CLIENT_ENCRYPTED_PACKET as CLIENT_INITIAL_V2
-from .test_crypto_v2 import LONG_SERVER_ENCRYPTED_PACKET as SERVER_INITIAL_V2
+CLIENT_INITIAL_V1 = binascii.unhexlify(
+    "c000000001088394c8f03e5157080000449e"
+) + bytes(1182)
+SERVER_INITIAL_V1 = binascii.unhexlify(
+    "cf000000010008f067a5502a4262b5004075"
+) + bytes(117)
+CLIENT_INITIAL_V2 = binascii.unhexlify(
+    "d76b3343cf088394c8f03e5157080000449e"
+) + bytes(1182)
+SERVER_INITIAL_V2 = binascii.unhexlify(
+    "dc6b3343cf0008f067a5502a4262b5004075"
+) + bytes(117)
 
 
 class TestPacket:
+    @pytest.mark.parametrize(
+        ("stream_id", "client_initiated", "unidirectional"),
+        [(0, True, False), (1, False, False), (2, True, True), (3, False, True)],
+    )
+    def test_stream_id_properties(
+        self, stream_id, client_initiated, unidirectional
+    ):
+        assert stream_is_client_initiated(stream_id) is client_initiated
+        assert stream_is_unidirectional(stream_id) is unidirectional
+
+    def test_header_bit_helpers(self):
+        assert get_spin_bit(0x20) is True
+        assert get_spin_bit(0) is False
+        assert is_long_header(0x80) is True
+        assert is_long_header(0) is False
+
+    def test_encode_long_header_first_byte_versions(self):
+        assert encode_long_header_first_byte(
+            QuicProtocolVersion.VERSION_1, QuicPacketType.INITIAL, 3
+        ) == 0xC3
+        assert encode_long_header_first_byte(
+            QuicProtocolVersion.VERSION_2, QuicPacketType.INITIAL, 3
+        ) == 0xD3
+
     def test_decode_packet_number(self):
         # expected = 0
         for i in range(0, 256):
@@ -326,6 +364,28 @@ class TestParams:
             pull_quic_transport_parameters(buf)
         assert "Duplicate transport parameter" in str(cm.value)
 
+    def test_pull_rejects_incorrect_param_length(self):
+        # max_idle_timeout claims two bytes but its varint consumes only one.
+        with pytest.raises(ValueError, match="length does not match"):
+            pull_quic_transport_parameters(Buffer(data=b"\x01\x02\x01\x00"))
+
+    def test_params_version_information_and_grease(self):
+        params = QuicTransportParameters(
+            version_information=QuicVersionInformation(
+                chosen_version=QuicProtocolVersion.VERSION_2,
+                available_versions=[
+                    QuicProtocolVersion.VERSION_2,
+                    QuicProtocolVersion.VERSION_1,
+                ],
+            ),
+            greased_transport_parameter=(0x1F * 10 + 27, b"grease"),
+        )
+        buf = Buffer(capacity=256)
+        push_quic_transport_parameters(buf, params)
+
+        decoded = pull_quic_transport_parameters(Buffer(data=buf.data))
+        assert decoded.version_information == params.version_information
+
 
 class TestPrettyProtocolVersion:
     """Tests for pretty_protocol_version."""
@@ -439,76 +499,4 @@ class TestPullQuicVersionInformation:
         # serialize
         buf = Buffer(capacity=len(data))
         push_quic_preferred_address(buf, preferred_address)
-        assert buf.data == data
-
-
-class TestFrame:
-    def test_ack_frame(self):
-        data = b"\x00\x02\x00\x00"
-
-        # parse
-        buf = Buffer(data=data)
-        rangeset, delay = pull_ack_frame(buf)
-        assert list(rangeset) == [(0, 1)]
-        assert delay == 2
-
-        # serialize
-        buf = Buffer(capacity=len(data))
-        push_ack_frame(buf, rangeset, delay)
-        assert buf.data == data
-
-    def test_ack_frame_with_one_range(self):
-        data = b"\x02\x02\x01\x00\x00\x00"
-
-        # parse
-        buf = Buffer(data=data)
-        rangeset, delay = pull_ack_frame(buf)
-        assert list(rangeset) == [(0, 1), (2, 3)]
-        assert delay == 2
-
-        # serialize
-        buf = Buffer(capacity=len(data))
-        push_ack_frame(buf, rangeset, delay)
-        assert buf.data == data
-
-    def test_ack_frame_with_one_range_2(self):
-        data = b"\x05\x02\x01\x00\x00\x03"
-
-        # parse
-        buf = Buffer(data=data)
-        rangeset, delay = pull_ack_frame(buf)
-        assert list(rangeset) == [(0, 4), (5, 6)]
-        assert delay == 2
-
-        # serialize
-        buf = Buffer(capacity=len(data))
-        push_ack_frame(buf, rangeset, delay)
-        assert buf.data == data
-
-    def test_ack_frame_with_one_range_3(self):
-        data = b"\x05\x02\x01\x00\x01\x02"
-
-        # parse
-        buf = Buffer(data=data)
-        rangeset, delay = pull_ack_frame(buf)
-        assert list(rangeset) == [(0, 3), (5, 6)]
-        assert delay == 2
-
-        # serialize
-        buf = Buffer(capacity=len(data))
-        push_ack_frame(buf, rangeset, delay)
-        assert buf.data == data
-
-    def test_ack_frame_with_two_ranges(self):
-        data = b"\x04\x02\x02\x00\x00\x00\x00\x00"
-
-        # parse
-        buf = Buffer(data=data)
-        rangeset, delay = pull_ack_frame(buf)
-        assert list(rangeset) == [(0, 1), (2, 3), (4, 5)]
-        assert delay == 2
-
-        # serialize
-        buf = Buffer(capacity=len(data))
-        push_ack_frame(buf, rangeset, delay)
         assert buf.data == data

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 
 import nox
 
@@ -15,6 +16,36 @@ def tests_impl(
     session.install("-r", "dev-requirements.txt", silent=False)
 
     session.run("maturin", "develop", "--release")
+
+    if session.python != "pypy":
+        python_executable = session.run(
+            "python",
+            "-c",
+            "import sys; print(sys.executable)",
+            silent=True,
+        ).strip()
+        rust_env = {"PYO3_PYTHON": python_executable}
+        if sys.platform != "win32":
+            library_path_variable = (
+                "DYLD_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
+            )
+            python_library_path = session.run(
+                "python",
+                "-c",
+                "import sysconfig; print(sysconfig.get_config_var('LIBDIR') or '')",
+                silent=True,
+            ).strip()
+            inherited_library_path = os.environ.get(library_path_variable)
+            rust_env[library_path_variable] = os.pathsep.join(
+                path for path in (python_library_path, inherited_library_path) if path
+            )
+        session.run(
+            "cargo",
+            "test",
+            "--no-default-features",
+            env=rust_env,
+            external=True,
+        )
 
     # Show the pip version.
     session.run("pip", "--version")
