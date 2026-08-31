@@ -153,6 +153,7 @@ jobs:
       - name: Run test
         run: nox -s downstream_niquests
         env:
+          TRAEFIK_HTTPBIN_ENABLE: ${{ runner.os == 'Linux' && 'true' || 'false' }}
           UNSAFE_PYO3_SKIP_VERSION_CHECK: 1
 
   linux:
