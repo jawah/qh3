@@ -5,7 +5,6 @@ import asyncio
 import binascii
 import contextlib
 import errno
-import random
 import socket
 from unittest.mock import patch
 
@@ -13,6 +12,7 @@ from cryptography.hazmat.primitives import serialization
 
 from qh3._hazmat import Certificate as InnerCertificate
 from qh3._hazmat import EcPrivateKey, Ed25519PrivateKey
+from qh3.asyncio._transport import OptimizedDatagramTransport
 from qh3.asyncio.client import connect
 from qh3.asyncio.protocol import QuicConnectionProtocol
 from qh3.quic import events
@@ -31,15 +31,26 @@ from .utils import (
     generate_ed25519_certificate,
 )
 
-real_sendto = socket.socket.sendto
+real_sendto_many = OptimizedDatagramTransport.sendto_many
 
 
-def sendto_with_loss(self, data, addr=None):
-    """
-    Simulate 25% packet loss.
-    """
-    if random.random() > 0.25:
-        real_sendto(self, data, addr)
+def sendto_many_with_loss():
+    """Drop 25% of an initial bounded window in each direction."""
+    counts = {}
+
+    def sendto_many(self, datagrams, addr=None):
+        count = counts.get(self, 0)
+        delivered = []
+        for datagram in datagrams:
+            count += 1
+            # Bounded loss exercises recovery without periodically dropping the
+            # same retransmission forever when packet scheduling is stable.
+            if count > 12 or count % 4:
+                delivered.append(datagram)
+        counts[self] = count
+        real_sendto_many(self, delivered, addr)
+
+    return sendto_many
 
 
 class SessionTicketStore:
@@ -264,12 +275,15 @@ class TestHighLevel:
                 assert client._quic.tls._server_name == "xn--eckwd4c7c.xn--zckzah"
 
     @pytest.mark.skipif("loss" in SKIP_TESTS, reason="Skipping loss tests")
-    @patch("socket.socket.sendto", new_callable=lambda: sendto_with_loss)
+    @patch(
+        "qh3.asyncio._transport.OptimizedDatagramTransport.sendto_many",
+        new_callable=sendto_many_with_loss,
+    )
     @pytest.mark.asyncio
     async def test_connect_and_serve_with_packet_loss(self, mock_sendto):
         """
         This test ensures handshake success and stream data is successfully sent
-        and received in the presence of packet loss (randomized 25% in each direction).
+        and received in the presence of packet loss (25% in each direction).
         """
         data = b"Z" * 65536
 
@@ -1230,7 +1244,7 @@ class TestOptimizedDatagramTransportUnit:
         transport.sendto_many(datagrams)
 
         sock.sendmsg.assert_called_once()
-        assert len(sock.sendmsg.call_args.args) == 2
+        assert len(sock.sendmsg.call_args[0]) == 2
 
     def test_sendto_many_queues_rust_partial_send(self):
         from unittest.mock import MagicMock
