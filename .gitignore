@@ -10,6 +10,7 @@ bob.bin
 /build
 /dist
 /docs/_build
+/site
 
 # Environments
 .env

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "qh3"
-description = "A lightway and fast implementation of QUIC and HTTP/3"
+description = "A lightweight and fast implementation of QUIC and HTTP/3"
 readme = "README.rst"
 requires-python = ">=3.7"
 license = { file = "LICENSE" }

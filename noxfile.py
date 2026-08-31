@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -210,10 +209,6 @@ def lint(session: nox.Session) -> None:
 
 @nox.session
 def docs(session: nox.Session) -> None:
+    """Build the documentation with the same strict settings as Read the Docs."""
     session.install("-r", "docs/docs-requirements.txt")
-    session.install(".")
-
-    session.chdir("docs")
-    if os.path.exists("_build"):
-        shutil.rmtree("_build")
-    session.run("sphinx-build", "-b", "html", "-W", ".", "_build/html")
+    session.run("zensical", "build", "--clean", "--strict")

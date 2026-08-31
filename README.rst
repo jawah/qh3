@@ -1,101 +1,74 @@
 qh3
 ===
 
-|pypi-pyversions| |pypi-stats|
+|pypi-version| |python-versions| |license|
 
-.. |pypi-pyversions| image:: https://img.shields.io/pypi/pyversions/qh3.svg
-    :target: https://pypi.python.org/pypi/qh3
-    :alt: Supported Interpreters
+``qh3`` is a fast QUIC and HTTP/3 implementation for Python, backed by a
+native Rust transport core. It is a maintained fork of ``aioquic`` and is not
+a drop-in replacement.
 
-.. |pypi-stats| image:: https://static.pepy.tech/badge/qh3/month
-   :target: https://pepy.tech/projects/qh3?timeRange=threeMonths&category=version&includeCIDownloads=true&granularity=daily&viewType=line&versions=1.*
-   :alt: PyPI - Downloads
+It provides:
 
-What is ``qh3``?
-----------------
+* a convenient ``asyncio`` client and server API;
+* sans-I/O QUIC and HTTP/3 APIs for custom integrations;
+* QUIC v1 and v2, TLS 1.3, IPv4 and IPv6, migration, QLOG, datagrams,
+  server push, WebTransport streams, ECH, and post-quantum key exchange;
+* support for CPython and PyPy 3.7 or newer.
 
-``qh3`` is a maintained fork of the ``aioquic`` library.
-
-It is lighter, faster, and more adapted to a broader audience as this package has no external dependency
-and does not rely on mainstream OpenSSL.
-
-While it is a compatible fork, it is not a drop-in replacement since the first major. See the CHANGELOG for details.
-
-``qh3`` is a library for the QUIC network protocol in Python. It features
-a minimal TLS 1.3 implementation, a QUIC stack, and an HTTP/3 stack.
-
-QUIC was standardized in `RFC 9000`_ and HTTP/3 in `RFC 9114`_.
-``qh3`` follow the standardized version of QUIC and HTTP/3.
-
-QUIC stack conforming with `RFC 9000`_ (QUIC v1) and `RFC 9369`_ (QUIC v2)
-
-To learn more about ``qh3`` please `read the documentation`_.
-
-``qh3`` stands for **Q** UIC . **H** TTP/ **3**.
-
-Our primary goal with this fork is mainly about the client aspect, while the
-server side code is maintained, we do not have enough time to add feature to it at the moment.
-
-PR are welcomed for any improvement (server or client).
-
-Why should I use ``qh3``?
------------------------------
-
-``qh3`` has been designed to be embedded into Python client and server
-libraries wishing to support QUIC and/or HTTP/3. The goal is to provide a
-common codebase for Python libraries in the hope of avoiding duplicated effort.
-
-Both the QUIC and the HTTP/3 APIs follow the "bring your own I/O" pattern,
-leaving actual I/O operations to the API user. This approach has a number of
-advantages including making the code testable and allowing integration with
-different concurrency models.
-
-This library is the lowest level you can find for handling QUIC and HTTP/3. Here are higher libraries:
-
-- mid-way: `urllib3.future`_
-- highest and easiest: `niquests`_ (Recommended!)
-
-Features
---------
-
-- QUIC stack conforming with `RFC 9000`_
-- HTTP/3 stack conforming with `RFC 9114`_
-- minimal TLS 1.3 implementation conforming with `RFC 8446`_
-- IPv4 and IPv6 support
-- connection migration and NAT rebinding
-- logging TLS traffic secrets
-- logging QUIC events in QLOG format
-- HTTP/3 server push support
-- Post-Quantum (KEM) Key-Exchange (NIST FIPS 203 ML-KEM-768)
-- OCSP Stapling (Client Only)
-- Encrypted Client Hello conforming with `RFC 9849`_
-- GRO/GSO support when available (Linux native)
-- HyStart++ `RFC 9406`_
-
-Requirements
+Installation
 ------------
 
-``qh3`` requires Python and PyPy 3.7 or greater.
+.. code-block:: console
 
-Running the examples
---------------------
+   python -m pip install qh3
 
-`qh3` comes with a number of examples illustrating various QUIC use cases.
+Documentation
+-------------
 
-You can browse these examples here: https://github.com/jawah/qh3/tree/main/examples
+Read the `qh3 documentation`_ for the getting-started guide, asyncio and
+sans-I/O integration guides, and the supported public API reference.
+
+Only interfaces listed in the public API reference are covered by API
+compatibility guarantees. In particular, ``qh3._hazmat`` and
+underscore-prefixed modules are implementation details.
+
+Complete examples are available in the `examples directory`_. Applications
+looking for a complete HTTP client should generally use `Niquests`_ or
+`urllib3.future`_.
+
+Standards
+---------
+
+* `RFC 9000`_: QUIC
+* `RFC 9001`_: Using TLS to Secure QUIC
+* `RFC 9002`_: QUIC Loss Detection and Congestion Control
+* `RFC 9114`_: HTTP/3
+* `RFC 9369`_: QUIC Version 2
 
 License
 -------
 
-``qh3`` is released under the `BSD license`_.
+``qh3`` is distributed under the `BSD 3-Clause License`_.
 
-.. _read the documentation: https://qh3.readthedocs.io/en/latest/
-.. _BSD license: https://qh3.readthedocs.io/en/latest/license.html
-.. _RFC 8446: https://datatracker.ietf.org/doc/html/rfc8446
+.. |pypi-version| image:: https://img.shields.io/pypi/v/qh3.svg
+   :target: https://pypi.org/project/qh3/
+   :alt: PyPI version
+
+.. |python-versions| image:: https://img.shields.io/pypi/pyversions/qh3.svg
+   :target: https://pypi.org/project/qh3/
+   :alt: Supported Python versions
+
+.. |license| image:: https://img.shields.io/pypi/l/qh3.svg
+   :target: https://github.com/jawah/qh3/blob/main/LICENSE
+   :alt: License
+
+.. _qh3 documentation: https://qh3.readthedocs.io/
+.. _examples directory: https://github.com/jawah/qh3/tree/main/examples
+.. _Niquests: https://github.com/jawah/niquests
+.. _urllib3.future: https://github.com/jawah/urllib3.future
 .. _RFC 9000: https://datatracker.ietf.org/doc/html/rfc9000
+.. _RFC 9001: https://datatracker.ietf.org/doc/html/rfc9001
+.. _RFC 9002: https://datatracker.ietf.org/doc/html/rfc9002
 .. _RFC 9114: https://datatracker.ietf.org/doc/html/rfc9114
 .. _RFC 9369: https://datatracker.ietf.org/doc/html/rfc9369
-.. _RFC 9849: https://datatracker.ietf.org/doc/html/rfc9849
-.. _RFC 9406: https://datatracker.ietf.org/doc/html/rfc9406
-.. _niquests: https://github.com/jawah/niquests
-.. _urllib3.future: https://github.com/jawah/urllib3.future
+.. _BSD 3-Clause License: https://github.com/jawah/qh3/blob/main/LICENSE
