@@ -1,3 +1,22 @@
+2.0.0 (2026-08-31)
+==================
+
+**Changed**
+- Rebuilt ``QuicConnection`` around a single authoritative Rust transport core.
+  The pure-Python packet-processing path had reached a practical performance
+  ceiling that incremental optimization could no longer overcome. Rather than
+  replacing the implementation with an unrelated QUIC stack, we ported and
+  preserved the years of protocol, interoperability and recovery work inherited
+  from ``aioquic`` and subsequently developed in ``qh3``. The public Python
+  facade remains familiar, and Python continues to own TLS policy, certificates,
+  ALPN, ECH and session tickets, while Rust now owns packet protection, frame
+  processing, streams, flow control, connection IDs, paths, congestion control
+  and loss recovery. This is an intentional major-version change: private
+  ``QuicConnection`` internals are no longer compatible with the former
+  pure-Python implementation.
+- Updated aws-lc-rs v1.17.1 to v1.18.0
+- Updated rustls v0.23.41 to v0.23.43
+
 1.9.4 (2026-07-12)
 ==================
 
