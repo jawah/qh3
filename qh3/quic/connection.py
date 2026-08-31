@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
-from collections import OrderedDict, deque
+from collections import deque
 from enum import IntEnum
 from hmac import compare_digest
 from typing import Any
@@ -27,7 +27,6 @@ from .packet import (
 from .tls_bridge import QuicTlsBridge, QuicTlsBridgeError
 
 logger = logging.getLogger("quic")
-MAX_ADDRESS_CACHE_SIZE = 256
 NetworkAddress = Any
 
 __all__ = [
@@ -104,7 +103,6 @@ class QuicConnection:
         self._core: QuicConnectionCore | None = None
         self._tls: QuicTlsBridge | None = None
         self._events: deque[events.QuicEvent] = deque()
-        self._address_cache: OrderedDict[NetworkAddress, NetworkAddress] = OrderedDict()
         self._remote_addr: NetworkAddress | None = None
         self._connect_called = False
         self._state = QuicConnectionState.FIRSTFLIGHT
@@ -816,23 +814,8 @@ class QuicConnection:
         return None
 
     def _normalize_address(self, addr: NetworkAddress) -> NetworkAddress:
-        cached = self._address_cache.get(addr)
-        if cached is not None:
-            self._address_cache.move_to_end(addr)
-            return cached
-        try:
-            socket.inet_pton(
-                socket.AF_INET6 if ":" in addr[0] else socket.AF_INET, addr[0]
-            )
-            normalized = addr
-        except OSError:
-            normalized = socket.getaddrinfo(addr[0], addr[1], type=socket.SOCK_DGRAM)[
-                0
-            ][4]
-        self._address_cache[addr] = normalized
-        if len(self._address_cache) > MAX_ADDRESS_CACHE_SIZE:
-            self._address_cache.popitem(last=False)
-        return normalized
+        socket.inet_pton(socket.AF_INET6 if ":" in addr[0] else socket.AF_INET, addr[0])
+        return addr
 
     def _end_trace(self) -> None:
         quic_logger = self._quic_logger

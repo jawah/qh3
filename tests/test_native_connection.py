@@ -439,18 +439,12 @@ def test_native_qlog_drop_and_malformed_packet_branches() -> None:
     assert names == ["transport:packet_dropped"]
 
 
-def test_native_address_normalization_resolves_and_caches(monkeypatch) -> None:
+def test_native_address_normalization_accepts_only_ip_addresses() -> None:
     client = make_client()
-    calls = []
-
-    def resolve(host, port, *, type):
-        calls.append((host, port, type))
-        return [(socket.AF_INET, socket.SOCK_DGRAM, 17, "", ("127.0.0.1", port))]
-
-    monkeypatch.setattr(socket, "getaddrinfo", resolve)
-    assert client._normalize_address(("example.test", 443)) == ("127.0.0.1", 443)
-    assert client._normalize_address(("example.test", 443)) == ("127.0.0.1", 443)
-    assert calls == [("example.test", 443, socket.SOCK_DGRAM)]
+    assert client._normalize_address(("127.0.0.1", 443)) == ("127.0.0.1", 443)
+    assert client._normalize_address(("::1", 443, 0, 0)) == ("::1", 443, 0, 0)
+    with pytest.raises(OSError):
+        client._normalize_address(("example.test", 443))
 
 
 def make_resumption_pair(client_ticket, session_ticket_fetcher=None):
@@ -808,13 +802,6 @@ def test_native_server_silently_drops_malformed_large_first_datagram() -> None:
     server.receive_datagram(b"\xff" * 1200, CLIENT_ADDR, 1.01)
     assert server._core is None
     assert server.next_event() is None
-
-
-def test_native_address_cache_is_bounded() -> None:
-    client, _ = make_pair()
-    for port in range(300):
-        client._normalize_address(("127.0.0.1", port))
-    assert len(client._address_cache) == 256
 
 
 def test_native_stateless_reset_terminates_once() -> None:
