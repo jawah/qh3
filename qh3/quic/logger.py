@@ -5,9 +5,9 @@ import json
 import os
 import time
 from collections import deque
+from collections.abc import Iterable
 from typing import Any
 
-from .._hazmat import RangeSet
 from ..h3.events import Headers
 from .packet import (
     QuicFrameType,
@@ -52,7 +52,7 @@ class QuicLoggerTrace:
 
     # QUIC
 
-    def encode_ack_frame(self, ranges: RangeSet, delay: float) -> dict:
+    def encode_ack_frame(self, ranges: Iterable[tuple[int, int]], delay: float) -> dict:
         return {
             "ack_delay": self.encode_time(delay),
             "acked_ranges": [[x[0], x[1] - 1] for x in ranges],

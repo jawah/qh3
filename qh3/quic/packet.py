@@ -15,6 +15,8 @@ PACKET_FIXED_BIT = 0x40
 PACKET_SPIN_BIT = 0x20
 
 CONNECTION_ID_MAX_SIZE = 20
+SMALLEST_MAX_DATAGRAM_SIZE = 1200
+PACKET_MAX_SIZE = 1280
 PACKET_NUMBER_MAX_SIZE = 4
 RETRY_AEAD_KEY_VERSION_1 = binascii.unhexlify("be0c690b9f66575a1d766b54e368c84e")
 RETRY_AEAD_KEY_VERSION_2 = binascii.unhexlify("8fb4b01b56ac48e260fbcbcead7ccc92")
@@ -22,6 +24,16 @@ RETRY_AEAD_NONCE_VERSION_1 = binascii.unhexlify("461599d35d632bf2239825bb")
 RETRY_AEAD_NONCE_VERSION_2 = binascii.unhexlify("d86969bc2d7c6d9990efb04a")
 RETRY_INTEGRITY_TAG_SIZE = 16
 STATELESS_RESET_TOKEN_SIZE = 16
+
+
+def stream_is_client_initiated(stream_id: int) -> bool:
+    """Return whether a QUIC stream was initiated by the client."""
+    return not (stream_id & 1)
+
+
+def stream_is_unidirectional(stream_id: int) -> bool:
+    """Return whether a QUIC stream is unidirectional."""
+    return bool(stream_id & 2)
 
 
 class QuicErrorCode(IntEnum):

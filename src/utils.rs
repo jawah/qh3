@@ -51,27 +51,6 @@ pub fn read_uint_var(data: &[u8], offset: usize) -> Result<(u64, usize), &'stati
     }
 }
 
-/// Write a QUIC variable-length integer into a buffer. Returns bytes written.
-#[inline]
-pub fn write_uint_var(buf: &mut [u8], value: u64) -> usize {
-    if value <= 0x3F {
-        buf[0] = value as u8;
-        1
-    } else if value <= 0x3FFF {
-        let v = (value as u16) | 0x4000;
-        buf[0..2].copy_from_slice(&v.to_be_bytes());
-        2
-    } else if value <= 0x3FFFFFFF {
-        let v = (value as u32) | 0x8000_0000;
-        buf[0..4].copy_from_slice(&v.to_be_bytes());
-        4
-    } else {
-        let v = value | 0xC000_0000_0000_0000;
-        buf[0..8].copy_from_slice(&v.to_be_bytes());
-        8
-    }
-}
-
 #[inline(always)]
 pub fn decode_packet_number_internal(truncated: u64, num_bits: u8, expected: u64) -> u64 {
     let window = 1 << num_bits;
