@@ -376,6 +376,7 @@ pub struct ConnectionCore {
     pending_probes: VecDeque<PacketNumberSpace>,
     next_delivery_id: u64,
     last_activity: Duration,
+    ack_eliciting_sent_since_receive: bool,
     peer_idle_timeout: Option<Duration>,
     close_deadline: Option<Duration>,
     pacing_deadline: Option<Duration>,
@@ -527,6 +528,7 @@ impl ConnectionCore {
             pending_probes: VecDeque::new(),
             next_delivery_id: 0,
             last_activity: Duration::ZERO,
+            ack_eliciting_sent_since_receive: false,
             peer_idle_timeout: None,
             close_deadline: None,
             pacing_deadline: None,
@@ -1159,6 +1161,7 @@ impl ConnectionCore {
                         continue;
                     }
                     self.last_activity = self.last_activity.max(meta.now);
+                    self.ack_eliciting_sent_since_receive = false;
                     if self.state == ConnectionState::Closing {
                         self.close_packets_received = self.close_packets_received.saturating_add(1);
                         if self.close_packets_received >= self.close_send_threshold {
@@ -1899,9 +1902,21 @@ impl ConnectionCore {
         // Queued frames are atomic to the packet builder, so split TLS
         // flights here rather than allowing a large certificate flight
         // to exceed one QUIC packet.
-        for (chunk_offset, chunk) in data.chunks(900).enumerate() {
+        // A Retry token consumes Initial header space. Keep retransmittable CRYPTO
+        // frames small enough to fit after the pre-authentication 1200-byte fallback.
+        let crypto_chunk_size = if epoch == Epoch::Initial && !self.initial_token.is_empty() {
+            900.min(
+                MIN_INITIAL_DATAGRAM_SIZE
+                    .saturating_sub(self.initial_token.len())
+                    .saturating_sub(128)
+                    .max(1),
+            )
+        } else {
+            900
+        };
+        for (chunk_offset, chunk) in data.chunks(crypto_chunk_size).enumerate() {
             let chunk_offset = offset
-                .checked_add((chunk_offset * 900) as u64)
+                .checked_add((chunk_offset * crypto_chunk_size) as u64)
                 .ok_or(ConnectionCoreError::InvalidConfig("CRYPTO offset overflow"))?;
             let mut body = Vec::with_capacity(
                 varint_size(chunk_offset) + varint_size(chunk.len() as u64) + chunk.len(),
@@ -2837,12 +2852,14 @@ impl ConnectionCore {
             segment_size: None,
             bytes: datagram.bytes,
         });
-        if datagram
-            .packets
-            .iter()
-            .any(|packet| packet.is_ack_eliciting)
+        if !self.ack_eliciting_sent_since_receive
+            && datagram
+                .packets
+                .iter()
+                .any(|packet| packet.is_ack_eliciting)
         {
             self.last_activity = self.last_activity.max(now);
+            self.ack_eliciting_sent_since_receive = true;
         }
         if self.config.role == Role::Client
             && datagram
