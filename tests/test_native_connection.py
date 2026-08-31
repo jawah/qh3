@@ -346,7 +346,7 @@ def test_native_stream_recording_and_replay_guards() -> None:
     assert client._pre_handshake_streams == [(0, False)]
 
     client._pre_handshake_streams = [(0, False)]
-    with pytest.raises(RuntimeError, match="allocation changed"):
+    with pytest.raises(QuicConnectionError, match="allocation changed"):
         client._reopen_pre_handshake_streams("test")
 
     client._pre_handshake_state_replayed = True
