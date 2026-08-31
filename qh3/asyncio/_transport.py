@@ -126,16 +126,26 @@ def _max_segments_for(size: int) -> int:
 def _group_for_gso(
     datagrams: list[bytes],
 ) -> list[tuple[int, list[bytes]]]:
-    if not datagrams:
-        return []
     groups: list[tuple[int, list[bytes]]] = []
-    first = datagrams[0]
-    current_size = len(first)
-    current_group: list[bytes] = [first]
-    cap = _max_segments_for(current_size)
+    current_size = 0
+    current_group: list[bytes] = []
+    cap = 0
 
-    for dgram in datagrams[1:]:
+    for dgram in datagrams:
         size = len(dgram)
+        if size == 0:
+            if current_group:
+                groups.append((current_size, current_group))
+                current_group = []
+            groups.append((0, [dgram]))
+            continue
+
+        if not current_group:
+            current_size = size
+            current_group = [dgram]
+            cap = _max_segments_for(current_size)
+            continue
+
         if size == current_size and len(current_group) < cap:
             current_group.append(dgram)
         elif size < current_size and len(current_group) < cap:
@@ -382,7 +392,7 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
             target = addr if addr is not None else self._address
             if target is not None:
                 try:
-                    sent = state.send(datagrams, str(target[0]), int(target[1]))
+                    sent = state.send(datagrams, target)
                     if sent < len(datagrams):
                         self._register_writer()
                         for dgram in datagrams[sent:]:
@@ -545,33 +555,35 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
         hit_limit = False
 
         if batch_cb is not None:
-            # Accumulate all segments across recv calls, deliver once.
-            all_segments: list[bytes] = []
-            addr: typing.Any = None
+            # Accumulate adjacent datagrams by source without reordering them.
+            groups: list[tuple[list[bytes], typing.Any]] = []
             for _ in range(_RECV_BURST_LIMIT):
                 try:
-                    segments, a = _recv()
+                    received = _recv()
                 except OSError:
                     break
-                if not segments:
+                if not received:
                     break
-                all_segments.extend(segments)
-                addr = a
+                for segment, addr in received:
+                    if groups and groups[-1][1] == addr:
+                        groups[-1][0].append(segment)
+                    else:
+                        groups.append(([segment], addr))
             else:
                 hit_limit = True
-            if all_segments:
-                batch_cb(all_segments, addr)
+            for segments, addr in groups:
+                batch_cb(segments, addr)
         else:
             datagram_received = protocol.datagram_received
             for _ in range(_RECV_BURST_LIMIT):
                 try:
-                    segments, addr = _recv()
+                    received = _recv()
                 except OSError:
                     return
-                if not segments:
+                if not received:
                     return
-                for seg in segments:
-                    datagram_received(seg, addr)
+                for segment, addr in received:
+                    datagram_received(segment, addr)
             else:
                 hit_limit = True
 

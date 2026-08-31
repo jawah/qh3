@@ -343,6 +343,10 @@ impl PyQuicConnectionCore {
         Ok(())
     }
 
+    fn set_version(&mut self, version: u32) -> PyResult<()> {
+        self.inner.set_version(version).map_err(core_error)
+    }
+
     fn reject_zero_rtt(&mut self) -> PyResult<()> {
         self.inner.reject_zero_rtt().map_err(core_error)
     }
@@ -433,6 +437,11 @@ impl PyQuicConnectionCore {
             ConnectionState::Draining => "draining",
             ConnectionState::Terminated => "terminated",
         }
+    }
+
+    #[getter]
+    fn version(&self) -> u32 {
+        self.inner.version()
     }
 
     #[getter]

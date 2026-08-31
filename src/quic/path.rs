@@ -17,6 +17,7 @@ pub const STATELESS_RESET_TOKEN_LEN: usize = 16;
 pub const MIN_ACTIVE_CONNECTION_ID_LIMIT: u64 = 2;
 pub const MIN_INITIAL_DATAGRAM_SIZE: u16 = 1200;
 pub const MAX_PATHS: usize = 4;
+const PMTU_PROBE_SIZES: [u16; 4] = [1280, 1350, 1452, 1472];
 
 /// An address in a representation that round-trips both IPv4 and IPv6
 /// `SocketAddr` values, including IPv6 scope and flow information.
@@ -106,15 +107,15 @@ impl PmtuState {
                 upper_bound,
             });
         }
-        let next_probe = midpoint_above(current, upper_bound);
+        let next_probe = next_pmtu_probe(current, upper_bound).unwrap_or(current);
         Ok(Self {
             current,
             upper_bound,
             next_probe,
-            status: if current == upper_bound {
-                PmtuProbeStatus::Complete
-            } else {
+            status: if next_probe > current {
                 PmtuProbeStatus::Idle
+            } else {
+                PmtuProbeStatus::Complete
             },
         })
     }
@@ -193,27 +194,29 @@ impl PmtuState {
         }
         self.current = self.current.min(upper_bound);
         self.upper_bound = self.upper_bound.min(upper_bound);
-        self.next_probe = midpoint_above(self.current, self.upper_bound);
-        self.status = if self.current == self.upper_bound {
-            PmtuProbeStatus::Complete
-        } else {
+        self.next_probe = next_pmtu_probe(self.current, self.upper_bound).unwrap_or(self.current);
+        self.status = if self.next_probe > self.current {
             PmtuProbeStatus::Idle
+        } else {
+            PmtuProbeStatus::Complete
         };
         Ok(())
     }
 
     fn advance(&mut self) {
-        if self.current >= self.upper_bound {
-            self.status = PmtuProbeStatus::Complete;
-        } else {
-            self.next_probe = midpoint_above(self.current, self.upper_bound);
+        if let Some(next_probe) = next_pmtu_probe(self.current, self.upper_bound) {
+            self.next_probe = next_probe;
             self.status = PmtuProbeStatus::Idle;
+        } else {
+            self.status = PmtuProbeStatus::Complete;
         }
     }
 }
 
-fn midpoint_above(low: u16, high: u16) -> u16 {
-    low + ((high - low) / 2).max(1)
+fn next_pmtu_probe(current: u16, upper_bound: u16) -> Option<u16> {
+    PMTU_PROBE_SIZES
+        .into_iter()
+        .find(|size| *size > current && *size <= upper_bound)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -364,6 +367,7 @@ pub struct PathManager {
     addresses: BTreeMap<(NetworkAddress, NetworkAddress), PathId>,
     active: PathId,
     next_id: u64,
+    default_pmtu_current: u16,
     default_pmtu_upper_bound: u16,
 }
 
@@ -373,10 +377,11 @@ impl PathManager {
         local: NetworkAddress,
         remote: NetworkAddress,
         peer_address_validated: bool,
+        pmtu_current: u16,
         pmtu_upper_bound: u16,
     ) -> Result<Self, PathError> {
         let id = PathId::new(0);
-        let pmtu = PmtuState::new(MIN_INITIAL_DATAGRAM_SIZE, pmtu_upper_bound)?;
+        let pmtu = PmtuState::new(pmtu_current, pmtu_upper_bound)?;
         let path = PathState::new(id, local, remote, role, peer_address_validated, pmtu);
         let mut paths = BTreeMap::new();
         paths.insert(id, path);
@@ -388,6 +393,7 @@ impl PathManager {
             addresses,
             active: id,
             next_id: 1,
+            default_pmtu_current: pmtu_current,
             default_pmtu_upper_bound: pmtu_upper_bound,
         })
     }
@@ -429,7 +435,7 @@ impl PathManager {
             .next_id
             .checked_add(1)
             .ok_or(PathError::PathIdExhausted)?;
-        let pmtu = PmtuState::new(MIN_INITIAL_DATAGRAM_SIZE, self.default_pmtu_upper_bound)?;
+        let pmtu = PmtuState::new(self.default_pmtu_current, self.default_pmtu_upper_bound)?;
         let mut path = PathState::new(id, local, remote, self.role, false, pmtu);
         // Every new tuple needs path validation; clients are exempt only from
         // anti-amplification, not from migration validation.
@@ -1465,6 +1471,21 @@ impl FlowController {
             .map(|maximum| FlowAction::SendMaxStreamData { stream, maximum }))
     }
 
+    pub fn consume_reset(&mut self, stream: StreamId) -> Result<Option<FlowAction>, FlowError> {
+        let state = self
+            .streams
+            .get(&stream)
+            .ok_or(FlowError::StreamNotFound(stream))?;
+        let amount = state.receive.used.saturating_sub(state.receive.consumed);
+        let connection = self.consume_connection(amount)?;
+        self.streams
+            .get_mut(&stream)
+            .expect("stream was checked above")
+            .receive
+            .consume(amount)?;
+        Ok(connection)
+    }
+
     pub fn take_connection_update(&mut self) -> Option<FlowAction> {
         self.connection_receive
             .take_update()
@@ -1618,7 +1639,7 @@ mod tests {
 
     #[test]
     fn path_manager_signals_migration_and_requires_validation() {
-        let mut paths = PathManager::new(Role::Server, v4(443), v4(1), true, 1500).unwrap();
+        let mut paths = PathManager::new(Role::Server, v4(443), v4(1), true, 1280, 1500).unwrap();
         let (candidate, signal) = paths.observe_remote(v4(443), v4(2)).unwrap();
         assert_eq!(
             signal,
@@ -1646,7 +1667,7 @@ mod tests {
 
     #[test]
     fn path_manager_bounds_unvalidated_candidates() {
-        let mut paths = PathManager::new(Role::Server, v4(443), v4(1), true, 1500).unwrap();
+        let mut paths = PathManager::new(Role::Server, v4(443), v4(1), true, 1280, 1500).unwrap();
         for port in 2..=MAX_PATHS as u16 {
             paths.observe_remote(v4(443), v4(port)).unwrap();
         }
@@ -1658,7 +1679,7 @@ mod tests {
 
     #[test]
     fn client_migration_path_still_requires_validation() {
-        let mut paths = PathManager::new(Role::Client, v4(443), v4(1), true, 1500).unwrap();
+        let mut paths = PathManager::new(Role::Client, v4(443), v4(1), true, 1280, 1500).unwrap();
         let (candidate, _) = paths.observe_remote(v4(443), v4(2)).unwrap();
         let path = paths.path(candidate).unwrap();
         assert_eq!(path.validation, PathValidationState::Unvalidated);
@@ -1670,18 +1691,30 @@ mod tests {
     }
 
     #[test]
-    fn pmtu_binary_searches_success_and_loss() {
-        let mut pmtu = PmtuState::new(1200, 1500).unwrap();
+    fn pmtu_uses_operational_probe_sizes_and_stops_after_loss() {
+        let mut pmtu = PmtuState::new(1280, 1472).unwrap();
         assert_eq!(pmtu.next_probe_size(), Some(1350));
         pmtu.probe_sent(8, 1350, Duration::from_millis(10)).unwrap();
         assert_eq!(pmtu.probe_acked(8), Ok(1350));
-        assert_eq!(pmtu.next_probe_size(), Some(1425));
-        pmtu.probe_sent(9, 1425, Duration::from_millis(11)).unwrap();
-        assert_eq!(pmtu.probe_lost(9), Ok(1425));
+        assert_eq!(pmtu.next_probe_size(), Some(1452));
+        pmtu.probe_sent(9, 1452, Duration::from_millis(11)).unwrap();
+        assert_eq!(pmtu.probe_lost(9), Ok(1452));
         assert_eq!(pmtu.current(), 1350);
-        assert_eq!(pmtu.upper_bound(), 1424);
-        assert_eq!(pmtu.next_probe_size(), Some(1387));
+        assert_eq!(pmtu.upper_bound(), 1451);
+        assert_eq!(pmtu.next_probe_size(), None);
         assert_eq!(pmtu.probe_acked(99), Err(PathError::UnknownPmtuProbe(99)));
+    }
+
+    #[test]
+    fn pmtu_reaches_ipv4_only_final_probe() {
+        let mut pmtu = PmtuState::new(1280, 1472).unwrap();
+        for (packet_number, size) in [(1, 1350), (2, 1452), (3, 1472)] {
+            assert_eq!(pmtu.next_probe_size(), Some(size));
+            pmtu.probe_sent(packet_number, size, Duration::ZERO)
+                .unwrap();
+            assert_eq!(pmtu.probe_acked(packet_number), Ok(size));
+        }
+        assert_eq!(pmtu.next_probe_size(), None);
     }
 
     #[test]
@@ -1689,7 +1722,7 @@ mod tests {
         let mut pmtu = PmtuState::new(1200, 1452).unwrap();
         pmtu.cap_upper_bound(1300).unwrap();
         assert_eq!(pmtu.upper_bound(), 1300);
-        assert_eq!(pmtu.next_probe_size(), Some(1250));
+        assert_eq!(pmtu.next_probe_size(), Some(1280));
         assert!(pmtu.cap_upper_bound(1199).is_err());
         assert_eq!(pmtu.current(), 1200);
     }

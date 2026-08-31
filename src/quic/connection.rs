@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use rand::RngCore;
 
-use super::crypto::{CryptoError, CryptoState, PacketCrypto, PacketKey};
+use super::crypto::{derive_initial_keys, CryptoError, CryptoState, PacketCrypto, PacketKey};
 use super::packet_builder::{
     BuildError, BuilderConfig, BuiltDatagram, FrameAction, PacketBuilder, PacketRequest,
     QueuedFrame,
@@ -33,6 +33,7 @@ use super::types::{
 };
 use super::wire::{
     decode_frames, encode_varint, parse_packet_header, Frame, WireError, QUIC_VERSION_1,
+    QUIC_VERSION_2,
 };
 
 const CLOSE_TIMEOUT_MULTIPLIER: u32 = 3;
@@ -41,7 +42,8 @@ const MAX_CRYPTO_REASSEMBLY: usize = 512 * 1024;
 const MIN_INITIAL_DATAGRAM_SIZE: usize = 1200;
 const MIN_STATELESS_RESET_SIZE: usize = 21;
 const MAX_LOCAL_CONNECTION_IDS: u64 = 8;
-const PMTU_PROBE_UPPER_BOUND: usize = 1452;
+const PMTU_PROBE_UPPER_BOUND_IPV4: usize = 1472;
+const PMTU_PROBE_UPPER_BOUND_IPV6: usize = 1452;
 const PMTU_PROBE_TIMEOUT_MULTIPLIER: u32 = 3;
 const MAX_STREAM_TOMBSTONES: usize = 1024;
 
@@ -431,8 +433,14 @@ impl ConnectionCore {
         // The peer's max_ack_delay is unknown until transport parameters are
         // processed and does not enter PTO calculations until confirmation.
         recovery_config.max_ack_delay = Duration::ZERO;
+        let pmtu_current = u16::try_from(config.max_datagram_size).unwrap_or(u16::MAX);
         let pmtu_upper_bound = if config.role == Role::Client && config.probe_datagram_size {
-            config.max_datagram_size.max(PMTU_PROBE_UPPER_BOUND)
+            let probe_upper_bound = if config.remote_address.ip().is_ipv4() {
+                PMTU_PROBE_UPPER_BOUND_IPV4
+            } else {
+                PMTU_PROBE_UPPER_BOUND_IPV6
+            };
+            config.max_datagram_size.max(probe_upper_bound)
         } else {
             config.max_datagram_size
         };
@@ -441,6 +449,7 @@ impl ConnectionCore {
             config.local_address,
             config.remote_address,
             config.peer_address_validated,
+            pmtu_current,
             u16::try_from(pmtu_upper_bound).unwrap_or(u16::MAX),
         )
         .map_err(|_| ConnectionCoreError::InvalidConfig("invalid path MTU"))?;
@@ -542,6 +551,9 @@ impl ConnectionCore {
     pub fn state(&self) -> ConnectionState {
         self.state
     }
+    pub fn version(&self) -> u32 {
+        self.config.version
+    }
     pub fn crypto(&self) -> &CryptoState {
         &self.crypto
     }
@@ -594,6 +606,61 @@ impl ConnectionCore {
 
     pub fn install_receive_key(&mut self, epoch: Epoch, key: PacketKey) {
         self.crypto.install_receive(epoch, key);
+    }
+
+    pub fn set_version(&mut self, version: u32) -> Result<(), ConnectionCoreError> {
+        if version == self.config.version {
+            return Ok(());
+        }
+        if !is_compatible_version_pair(self.config.version, version) || self.handshake_confirmed {
+            return Err(ConnectionCoreError::InvalidConfig(
+                "connection version cannot be changed",
+            ));
+        }
+        if [
+            PacketNumberSpace::Initial,
+            PacketNumberSpace::Handshake,
+            PacketNumberSpace::ApplicationData,
+        ]
+        .into_iter()
+        .any(|space| self.builder.queued_frames(space) != 0)
+        {
+            return Err(ConnectionCoreError::InvalidConfig(
+                "connection version cannot change with queued frames",
+            ));
+        }
+
+        let mut builder = PacketBuilder::new(BuilderConfig {
+            version,
+            source_cid: self.config.source_cid.clone(),
+            destination_cid: self.config.destination_cid.clone(),
+            initial_token: self.initial_token.clone(),
+            is_client: self.config.role == Role::Client,
+            spin_bit: false,
+            max_datagram_size: self.config.max_datagram_size,
+        })?;
+        for space in [
+            PacketNumberSpace::Initial,
+            PacketNumberSpace::Handshake,
+            PacketNumberSpace::ApplicationData,
+        ] {
+            builder.restore_packet_number(space, self.builder.next_packet_number(space))?;
+        }
+        let (client, server) = derive_initial_keys(version, &self.initial_destination_cid)?;
+        self.crypto.discard(Epoch::Initial);
+        match self.config.role {
+            Role::Client => {
+                self.crypto.install_send(Epoch::Initial, client);
+                self.crypto.install_receive(Epoch::Initial, server);
+            }
+            Role::Server => {
+                self.crypto.install_send(Epoch::Initial, server);
+                self.crypto.install_receive(Epoch::Initial, client);
+            }
+        }
+        self.builder = builder;
+        self.config.version = version;
+        Ok(())
     }
 
     pub fn discard_keys(&mut self, epoch: Epoch) {
@@ -797,6 +864,11 @@ impl ConnectionCore {
                 self.queue_flow_update(action);
             }
         }
+        if let ConnectionEvent::StreamReset { stream_id, .. } = &event {
+            if let Ok(Some(action)) = self.flow.consume_reset(*stream_id) {
+                self.queue_flow_update(action);
+            }
+        }
         if let ConnectionEvent::StreamFinished(stream_id) = &event {
             self.remove_finished_stream(*stream_id);
         }
@@ -956,13 +1028,20 @@ impl ConnectionCore {
                     }
                 }
                 packet_type => {
-                    if let Some(version) = header.version {
-                        if version != self.config.version {
-                            report.dropped += 1;
-                            offset = packet_end;
-                            continue;
+                    let alternate_version = match header.version {
+                        Some(version) if version != self.config.version => {
+                            if self.config.role != Role::Client
+                                || self.received_authenticated_packet
+                                || !is_compatible_version_pair(self.config.version, version)
+                            {
+                                report.dropped += 1;
+                                offset = packet_end;
+                                continue;
+                            }
+                            Some(version)
                         }
-                    }
+                        _ => None,
+                    };
                     let epoch = packet_epoch(packet_type).expect("protected packet has epoch");
                     let space = epoch.packet_number_space();
                     let packet_destination_cid = header
@@ -996,6 +1075,17 @@ impl ConnectionCore {
                         offset = packet_end;
                         continue;
                     }
+                    let previous_version = if let Some(version) = alternate_version {
+                        let previous = self.config.version;
+                        if self.set_version(version).is_err() {
+                            report.dropped += 1;
+                            offset = packet_end;
+                            continue;
+                        }
+                        Some(previous)
+                    } else {
+                        None
+                    };
                     let packet = &bytes[header.packet.as_range()];
                     let pn_offset = header.protected_payload.start - header.packet.start;
                     let expected = self.recovery.expected_packet_number(space);
@@ -1017,6 +1107,9 @@ impl ConnectionCore {
                         | Err(CryptoError::InvalidKeyPhase)
                         | Err(CryptoError::PacketTooShort)
                         | Err(CryptoError::InvalidHeader) => {
+                            if let Some(version) = previous_version {
+                                let _ = self.set_version(version);
+                            }
                             if packet_type == PacketType::OneRtt
                                 && bytes.len() >= MIN_STATELESS_RESET_SIZE
                                 && self
@@ -1031,6 +1124,9 @@ impl ConnectionCore {
                             continue;
                         }
                         Err(error) => {
+                            if let Some(version) = previous_version {
+                                let _ = self.set_version(version);
+                            }
                             report.dropped += 1;
                             return Err(error.into());
                         }
@@ -1531,6 +1627,11 @@ impl ConnectionCore {
                                 let _ = self.peer_cids.move_assignment(previous, id);
                             }
                             if self.paths.activate(id).ok().flatten().is_some() {
+                                let retain_congestion = self
+                                    .paths
+                                    .path(previous)
+                                    .zip(self.paths.path(id))
+                                    .is_some_and(|(old, new)| old.remote.ip() == new.remote.ip());
                                 if let Some(cid) = self.peer_cids.assigned_to_path(id) {
                                     let destination = cid.connection_id.as_bytes().to_vec();
                                     self.builder
@@ -1557,7 +1658,11 @@ impl ConnectionCore {
                                     },
                                 )?;
                                 self.recovery.set_max_datagram_size(datagram_size as u64);
-                                self.recovery.reset_for_new_path();
+                                self.recovery.reset_for_new_path(
+                                    previous.get(),
+                                    id.get(),
+                                    retain_congestion,
+                                );
                                 self.recovery.start_pacing(now);
                             }
                         }
@@ -1640,6 +1745,17 @@ impl ConnectionCore {
         &mut self,
         command: ConnectionCommand,
     ) -> Result<CommandResult, ConnectionCoreError> {
+        let error_code = match &command {
+            ConnectionCommand::ResetStream { error_code, .. }
+            | ConnectionCommand::StopSending { error_code, .. }
+            | ConnectionCommand::Close { error_code, .. } => Some(*error_code),
+            _ => None,
+        };
+        if error_code.is_some_and(|value| value > VARINT_MAX) {
+            return Err(ConnectionCoreError::InvalidConfig(
+                "error code exceeds the QUIC varint limit",
+            ));
+        }
         if matches!(
             self.state,
             ConnectionState::Closing | ConnectionState::Draining | ConnectionState::Terminated
@@ -1760,6 +1876,14 @@ impl ConnectionCore {
         data: &[u8],
     ) -> Result<CommandResult, ConnectionCoreError> {
         self.ensure_send_command_allowed()?;
+        if offset
+            .checked_add(data.len() as u64)
+            .map_or(true, |end| end > VARINT_MAX)
+        {
+            return Err(ConnectionCoreError::InvalidConfig(
+                "CRYPTO end offset exceeds the QUIC varint limit",
+            ));
+        }
         // Queued frames are atomic to the packet builder, so split TLS
         // flights here rather than allowing a large certificate flight
         // to exceed one QUIC packet.
@@ -1813,6 +1937,28 @@ impl ConnectionCore {
         if self.state == ConnectionState::Closing {
             return self.poll_close_transmit(now);
         }
+        let send_path = self
+            .path_responses
+            .front()
+            .map(|(path, _)| *path)
+            .or_else(|| self.path_challenges.front().map(|(path, _)| *path))
+            .unwrap_or_else(|| self.paths.active_path_id());
+        let path_allowance = self
+            .paths
+            .path(send_path)
+            .map_or(0, |path| path.send_allowance());
+        let minimum_packet_size = 1_u64
+            .saturating_add(self.config.destination_cid.len() as u64)
+            .saturating_add(2)
+            .saturating_add(18);
+        if path_allowance < minimum_packet_size {
+            return Ok(None);
+        }
+        let builder_limit = self
+            .config
+            .max_datagram_size
+            .min(usize::try_from(path_allowance).unwrap_or(usize::MAX));
+
         let queued_before_ack = [
             PacketNumberSpace::Initial,
             PacketNumberSpace::Handshake,
@@ -1829,19 +1975,6 @@ impl ConnectionCore {
             && queued_acks != 0
             && self.pending_streams.is_empty()
             && self.pending_probes.is_empty();
-        let send_path = self
-            .path_responses
-            .front()
-            .map(|(path, _)| *path)
-            .or_else(|| self.path_challenges.front().map(|(path, _)| *path))
-            .unwrap_or_else(|| self.paths.active_path_id());
-        if self
-            .paths
-            .path(send_path)
-            .map_or(true, |path| path.send_allowance() == 0)
-        {
-            return Ok(None);
-        }
         self.queue_path_control();
         let pmtu_probe_size = if self.config.role == Role::Client
             && self.config.probe_datagram_size
@@ -1858,7 +1991,11 @@ impl ConnectionCore {
                 .queued_frames(PacketNumberSpace::ApplicationData)
                 == 0
         {
-            self.paths.active_path().pmtu.next_probe_size()
+            self.paths
+                .active_path()
+                .pmtu
+                .next_probe_size()
+                .filter(|size| u64::from(*size) <= path_allowance)
         } else {
             None
         };
@@ -1874,7 +2011,7 @@ impl ConnectionCore {
             .map(|entry| entry.connection_id.as_bytes().to_vec())
             .unwrap_or_else(|| self.config.destination_cid.clone());
         self.builder.set_destination_cid(destination_cid)?;
-        let send_allowance = self
+        let congestion_allowance = self
             .recovery
             .congestion()
             .congestion_window()
@@ -1890,7 +2027,7 @@ impl ConnectionCore {
         let mut reservations = std::mem::take(&mut self.pending_streams);
         let pacing_ready = if sending_probe || pmtu_probe_size.is_some() || ack_only {
             true
-        } else if send_allowance >= self.config.max_datagram_size as u64 {
+        } else if congestion_allowance >= self.config.max_datagram_size as u64 {
             match self
                 .recovery
                 .pacer_mut()
@@ -1911,7 +2048,7 @@ impl ConnectionCore {
         if reservations.is_empty()
             && (sending_probe
                 || pmtu_probe_size.is_some()
-                || send_allowance >= self.config.max_datagram_size as u64)
+                || congestion_allowance >= self.config.max_datagram_size as u64)
             && pacing_ready
         {
             if sending_probe {
@@ -1928,7 +2065,7 @@ impl ConnectionCore {
         if !sending_probe
             && pmtu_probe_size.is_none()
             && !ack_only
-            && send_allowance < self.config.max_datagram_size as u64
+            && congestion_allowance < self.config.max_datagram_size as u64
             && !reservations.is_empty()
         {
             self.pending_streams = reservations;
@@ -1956,16 +2093,19 @@ impl ConnectionCore {
             self.builder.set_max_datagram_size(size as usize)?;
             request.pad_to_capacity = true;
             request.is_pmtu_probe = true;
+        } else {
+            self.builder.set_max_datagram_size(builder_limit)?;
         }
         let result = self.builder.build(request, &mut self.crypto);
         if pmtu_probe_size.is_some() {
-            self.builder
-                .set_max_datagram_size(self.config.max_datagram_size)?;
+            self.builder.set_max_datagram_size(builder_limit)?;
         }
         let mut result = match result {
             Ok(result) => result,
             Err(error) => {
                 self.pending_streams = reservations;
+                self.builder
+                    .set_max_datagram_size(self.config.max_datagram_size)?;
                 return Err(error.into());
             }
         };
@@ -1974,6 +2114,8 @@ impl ConnectionCore {
                 result.datagrams.push(datagram);
             }
         }
+        self.builder
+            .set_max_datagram_size(self.config.max_datagram_size)?;
         let sent_delivery_ids: Vec<_> = result
             .datagrams
             .iter()
@@ -2176,13 +2318,16 @@ impl ConnectionCore {
             Epoch::Handshake => 2,
             Epoch::OneRtt => 3,
         };
-        let end = offset.checked_add(data.len() as u64).ok_or_else(|| {
-            protocol(
-                FrameType::CRYPTO,
-                TransportErrorCode::FRAME_ENCODING_ERROR,
-                "CRYPTO offset overflow",
-            )
-        })?;
+        let end = offset
+            .checked_add(data.len() as u64)
+            .filter(|end| *end <= VARINT_MAX)
+            .ok_or_else(|| {
+                protocol(
+                    FrameType::CRYPTO,
+                    TransportErrorCode::FRAME_ENCODING_ERROR,
+                    "CRYPTO end offset exceeds the QUIC varint limit",
+                )
+            })?;
         let read_offset = self.crypto_receive_offsets[index];
         let chunks = &mut self.crypto_receive_chunks[index];
         for position in offset.max(read_offset)..end {
@@ -2309,6 +2454,14 @@ impl ConnectionCore {
                 "close value exceeds varint",
             ));
         }
+        let allowance = self.paths.active_path().send_allowance();
+        let minimum_packet_size = 1_u64
+            .saturating_add(self.config.destination_cid.len() as u64)
+            .saturating_add(2)
+            .saturating_add(18);
+        if allowance < minimum_packet_size {
+            return Ok(None);
+        }
         let mut body = Vec::new();
         push_varint(&mut body, error_code)?;
         if let Some(frame_type) = frame_type {
@@ -2351,7 +2504,10 @@ impl ConnectionCore {
             initial_token: self.initial_token.clone(),
             is_client: self.config.role == Role::Client,
             spin_bit: false,
-            max_datagram_size: self.config.max_datagram_size,
+            max_datagram_size: self
+                .config
+                .max_datagram_size
+                .min(usize::try_from(allowance).unwrap_or(usize::MAX)),
         })?;
         builder.restore_packet_number(packet_space, next_packet_number)?;
         builder.enqueue(
@@ -3165,6 +3321,13 @@ fn packet_epoch(packet_type: PacketType) -> Option<Epoch> {
     }
 }
 
+fn is_compatible_version_pair(left: u32, right: u32) -> bool {
+    matches!(
+        (left, right),
+        (QUIC_VERSION_1, QUIC_VERSION_2) | (QUIC_VERSION_2, QUIC_VERSION_1)
+    )
+}
+
 fn packet_type_for_space(space: PacketNumberSpace) -> PacketType {
     match space {
         PacketNumberSpace::Initial => PacketType::Initial,
@@ -3476,6 +3639,102 @@ mod tests {
         assert!(
             matches!(server.poll_event(), Some(ConnectionEvent::CryptoData { data, .. })
             if data == b"hello")
+        );
+    }
+
+    #[test]
+    fn anti_amplification_is_checked_before_send_state_is_committed() {
+        let (server_addr, client_addr) = addresses();
+        let mut server = ConnectionCore::new(ConnectionConfig {
+            role: Role::Server,
+            local_address: server_addr,
+            remote_address: client_addr,
+            source_cid: vec![7; 8],
+            destination_cid: vec![8; 8],
+            peer_address_validated: false,
+            ..ConnectionConfig::default()
+        })
+        .unwrap();
+        let key = || {
+            PacketKey::new(
+                AeadAlgorithm::Aes128Gcm,
+                HeaderProtectionAlgorithm::Aes128,
+                &[1; 16],
+                &[2; 12],
+                &[3; 16],
+                0,
+            )
+            .unwrap()
+        };
+        server.install_send_key(Epoch::OneRtt, key());
+        server.install_receive_key(Epoch::OneRtt, key());
+        server.command(ConnectionCommand::SendPing(1)).unwrap();
+        server
+            .pending_probes
+            .push_back(PacketNumberSpace::ApplicationData);
+        let path = server.paths.active_path_id();
+        server.paths.path_mut(path).unwrap().receive(1);
+
+        assert!(server
+            .poll_transmit(Duration::from_millis(1))
+            .unwrap()
+            .is_none());
+        assert_eq!(server.paths.active_path().bytes_sent(), 0);
+        assert_eq!(server.pending_probes.len(), 1);
+        assert_eq!(
+            server
+                .recovery
+                .outstanding_packets(PacketNumberSpace::ApplicationData)
+                .count(),
+            0
+        );
+
+        server.paths.path_mut(path).unwrap().receive(9);
+        let transmit = server
+            .poll_transmit(Duration::from_millis(2))
+            .unwrap()
+            .unwrap();
+        assert!(transmit.bytes.len() <= 30);
+        assert!(server.pending_probes.is_empty());
+    }
+
+    #[test]
+    fn outbound_varints_are_validated_before_mutation() {
+        let (mut client, _) = pair();
+        let stream_id = StreamId::new(0).unwrap();
+        let queued = client.builder.queued_frames(PacketNumberSpace::Initial);
+
+        assert!(matches!(
+            client.command(ConnectionCommand::ResetStream {
+                stream_id,
+                error_code: VARINT_MAX + 1,
+            }),
+            Err(ConnectionCoreError::InvalidConfig(_))
+        ));
+        assert!(client.streams.get(stream_id).is_none());
+        assert!(matches!(
+            client.command(ConnectionCommand::StopSending {
+                stream_id: StreamId::new(1).unwrap(),
+                error_code: VARINT_MAX + 1,
+            }),
+            Err(ConnectionCoreError::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            client.command(ConnectionCommand::Close {
+                frame_type: None,
+                error_code: VARINT_MAX + 1,
+                reason: Vec::new(),
+            }),
+            Err(ConnectionCoreError::InvalidConfig(_))
+        ));
+        assert_eq!(client.state(), ConnectionState::FirstFlight);
+        assert!(matches!(
+            client.send_crypto(Epoch::Initial, VARINT_MAX, &[1]),
+            Err(ConnectionCoreError::InvalidConfig(_))
+        ));
+        assert_eq!(
+            client.builder.queued_frames(PacketNumberSpace::Initial),
+            queued
         );
     }
 

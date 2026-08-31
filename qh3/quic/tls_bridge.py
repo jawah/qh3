@@ -4,7 +4,7 @@ import logging
 import os
 from collections import deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from .. import tls
 from .._compat import DATACLASS_KWARGS
@@ -97,6 +97,7 @@ class QuicTlsBridge:
         quic_logger: QuicLoggerTrace | None = None,
         grease_quic_version: int | None = None,
         grease_transport_parameter: int | None = None,
+        version_change_handler: Callable[[int], None] | None = None,
     ) -> None:
         if not configuration.is_client:
             assert configuration.certificate is not None, (
@@ -131,6 +132,7 @@ class QuicTlsBridge:
         self.remote_transport_parameters: QuicTransportParameters | None = None
         self.remembered_transport_parameters: QuicTransportParameters | None = None
         self._session_ticket_handler = session_ticket_handler
+        self._version_change_handler = version_change_handler
         self._quic_logger = quic_logger
         self._events: deque[events.QuicEvent] = deque()
         self._outbound: deque[QuicTlsCryptoData] = deque()
@@ -522,6 +524,8 @@ class QuicTlsBridge:
                     QuicProtocolVersion.VERSION_2,
                 }:
                     self.version = candidate
+                    if self._version_change_handler is not None:
+                        self._version_change_handler(candidate)
                     self.tls.handshake_extensions = [
                         (
                             tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS,

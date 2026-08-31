@@ -541,55 +541,6 @@ class TestHighLevel:
         finally:
             server.close()
 
-    @pytest.mark.asyncio
-    async def test_stop_sending_feeds_eof(self):
-        """RFC 9000 3.5: a peer STOP_SENDING tells us not to send any
-        more on that stream; surface EOF on the corresponding reader so
-        readers do not hang."""
-
-        handler_tasks = []
-
-        def stop_handler(reader, writer):
-            async def serve_one():
-                try:
-                    await reader.read(1)
-                    stream_id = writer.get_extra_info("stream_id")
-                    writer.transport.protocol._quic.stop_stream(stream_id, error_code=0x10c)
-                    writer.transport.protocol.transmit()
-                finally:
-                    writer.close()
-
-            handler_tasks.append(asyncio.ensure_future(serve_one()))
-
-        server_cfg = QuicConfiguration(is_client=False)
-        server_cfg.load_cert_chain(SERVER_CERTFILE, SERVER_KEYFILE)
-        server = await serve(
-            host="::",
-            port=0,
-            configuration=server_cfg,
-            stream_handler=stop_handler,
-        )
-        try:
-            server_port = server._transport.get_extra_info("sockname")[1]
-            configuration = QuicConfiguration(is_client=True)
-            configuration.load_verify_locations(cafile=SERVER_CACERTFILE)
-            async with connect(
-                self.server_host, server_port, configuration=configuration
-            ) as client:
-                await client.wait_connected()
-                reader, writer = await client.create_stream()
-                try:
-                    writer.write(b"x")
-                    data = await asyncio.wait_for(reader.read(), timeout=5.0)
-                    assert data == b""
-                finally:
-                    writer.close()
-        finally:
-            if handler_tasks:
-                await asyncio.gather(*handler_tasks, return_exceptions=True)
-            server.close()
-
-
 class TestQuicStreamAdapter:
     """Tests for QuicStreamAdapter.write_eof idempotency + close."""
 
@@ -633,6 +584,16 @@ class TestQuicStreamAdapter:
         adapter.close()
         assert adapter._closing
         protocol._quic.send_stream_data.assert_called_once_with(4, b"", end_stream=True)
+
+    def test_get_extra_info_returns_default_for_unknown_name(self):
+        from unittest.mock import MagicMock
+
+        from qh3.asyncio.protocol import QuicStreamAdapter
+
+        adapter = QuicStreamAdapter(protocol=MagicMock(), stream_id=4)
+
+        assert adapter.get_extra_info("stream_id", "default") == 4
+        assert adapter.get_extra_info("unknown", "default") == "default"
 
     def test_write_eof_skips_after_reset(self):
         """RFC 9000 3.5: do not attempt to send a FIN once the peer has
@@ -1035,6 +996,16 @@ class TestGroupForGso:
         assert result[0][0] == 100
         assert len(result[0][1]) == 3
 
+    def test_zero_length_datagrams_are_not_gso_segments(self):
+        datagrams = [b"A", b"", b"", b"B"]
+
+        assert _group_for_gso(datagrams) == [
+            (1, [b"A"]),
+            (0, [b""]),
+            (0, [b""]),
+            (1, [b"B"]),
+        ]
+
 
 class TestEnableGroHasGso:
     """Unit tests for enable_gro and has_gso on Linux."""
@@ -1274,7 +1245,7 @@ class TestOptimizedDatagramTransportUnit:
 
         transport.sendto_many(datagrams)
 
-        state.send.assert_called_once_with(datagrams, "::1", 9999)
+        state.send.assert_called_once_with(datagrams, ("::1", 9999))
         loop.add_writer.assert_called_once_with(42, transport._on_write_ready)
         assert list(transport._send_queue) == [
             (datagrams[1], None),
@@ -1297,6 +1268,19 @@ class TestOptimizedDatagramTransportUnit:
 
         loop.add_writer.assert_called_once()
         assert list(transport._send_queue) == [(b"one", None), (b"two", None)]
+
+    def test_sendto_many_preserves_ipv6_flowinfo_and_scope_id(self):
+        from unittest.mock import MagicMock
+
+        transport, _, _, _ = self._make_transport()
+        state = MagicMock()
+        state.send.return_value = 1
+        transport._udp_state = state
+        addr = ("fe80::1", 9999, 123, 4)
+
+        transport.sendto_many([b"data"], addr)
+
+        state.send.assert_called_once_with([b"data"], addr)
 
     def test_sendto_many_falls_back_after_rust_send_error(self):
         from unittest.mock import MagicMock
@@ -1593,8 +1577,8 @@ class TestOptimizedDatagramTransportUnit:
         transport, _, _, protocol = self._make_transport()
         state = MagicMock()
         state.recv.side_effect = [
-            ([b"one", b"two"], ("::1", 5000)),
-            ([], ("::1", 5000)),
+            [(b"one", ("::1", 5000)), (b"two", ("::1", 5000))],
+            [],
         ]
 
         transport._recv_rust(state)
@@ -1602,6 +1586,27 @@ class TestOptimizedDatagramTransportUnit:
         protocol.datagrams_received.assert_called_once_with(
             [b"one", b"two"], ("::1", 5000)
         )
+
+    def test_recv_rust_batch_groups_by_source_without_reordering(self):
+        from unittest.mock import MagicMock, call
+
+        transport, _, _, protocol = self._make_transport()
+        first = ("127.0.0.1", 5000)
+        second = ("127.0.0.1", 5001)
+        state = MagicMock()
+        state.recv.side_effect = [
+            [(b"one", first), (b"two", second), (b"three", second)],
+            [(b"four", first)],
+            [],
+        ]
+
+        transport._recv_rust(state)
+
+        assert protocol.datagrams_received.call_args_list == [
+            call([b"one"], first),
+            call([b"two", b"three"], second),
+            call([b"four"], first),
+        ]
 
     def test_recv_rust_non_batch(self):
         from unittest.mock import MagicMock
@@ -1611,7 +1616,7 @@ class TestOptimizedDatagramTransportUnit:
         transport.set_protocol(protocol)
         state = MagicMock()
         state.recv.side_effect = [
-            ([b"one", b"two"], ("::1", 5000)),
+            [(b"one", ("::1", 5000)), (b"two", ("::1", 5001))],
             OSError("done"),
         ]
 
@@ -1619,7 +1624,7 @@ class TestOptimizedDatagramTransportUnit:
 
         assert protocol.datagram_received.call_args_list == [
             ((b"one", ("::1", 5000)),),
-            ((b"two", ("::1", 5000)),),
+            ((b"two", ("::1", 5001)),),
         ]
 
     def test_call_connection_lost(self):
@@ -1758,6 +1763,85 @@ class TestOptimizedDatagramTransportUnit:
 
 
 class TestQuicConnectionProtocolUnit:
+    @pytest.mark.asyncio
+    async def test_transmit_batches_only_same_destination(self):
+        from unittest.mock import MagicMock, call
+
+        address_a = ("127.0.0.1", 1234)
+        address_b = ("127.0.0.2", 1234)
+        quic = MagicMock()
+        quic.datagrams_to_send.return_value = [
+            (b"a1", address_a),
+            (b"a2", address_a),
+            (b"b", address_b),
+            (b"a3", address_a),
+        ]
+        quic.get_timer.return_value = None
+        protocol = QuicConnectionProtocol(quic)
+        sendto_many = MagicMock()
+        protocol._sendto_many = sendto_many
+
+        protocol.transmit()
+
+        assert sendto_many.call_args_list == [
+            call([b"a1", b"a2"], address_a),
+            call([b"b"], address_b),
+            call([b"a3"], address_a),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_create_stream_reserves_distinct_ids_before_writes(self):
+        from qh3.quic.connection import QuicConnection
+
+        quic = QuicConnection(configuration=QuicConfiguration(is_client=True))
+        protocol = QuicConnectionProtocol(quic)
+
+        _, first_writer = await protocol.create_stream()
+        _, second_writer = await protocol.create_stream()
+
+        assert first_writer.get_extra_info("stream_id") == 0
+        assert second_writer.get_extra_info("stream_id") == 4
+        first_writer.close()
+        second_writer.close()
+
+    @pytest.mark.asyncio
+    async def test_handshake_completed_before_wait_connected(self):
+        from unittest.mock import MagicMock
+
+        quic = MagicMock()
+        quic.next_event.side_effect = [
+            events.HandshakeCompleted(
+                alpn_protocol=None,
+                early_data_accepted=False,
+                session_resumed=False,
+            ),
+            None,
+        ]
+        protocol = QuicConnectionProtocol(quic)
+
+        protocol._process_events()
+
+        assert protocol._connected
+        await protocol.wait_connected()
+
+    @pytest.mark.asyncio
+    async def test_stop_sending_preserves_receive_side(self):
+        from unittest.mock import MagicMock
+
+        protocol = QuicConnectionProtocol(MagicMock())
+        reader, writer = protocol._create_stream(0)
+
+        protocol.quic_event_received(
+            events.StopSendingReceived(error_code=0x10C, stream_id=0)
+        )
+        protocol.quic_event_received(
+            events.StreamDataReceived(data=b"response", end_stream=True, stream_id=0)
+        )
+
+        assert await reader.read() == b"response"
+        assert 0 in protocol._stream_readers_done
+        writer.close()
+
     @pytest.mark.asyncio
     async def test_finished_stream_is_not_resurrected_by_trailing_data(self):
         from unittest.mock import MagicMock

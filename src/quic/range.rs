@@ -122,6 +122,18 @@ impl RangeSet {
         }
     }
 
+    /// Retains the newest ranges and returns the start of the oldest retained
+    /// range when any older ranges were removed.
+    pub(super) fn retain_last(&mut self, max_ranges: usize) -> Option<u64> {
+        if self.ranges.len() <= max_ranges {
+            return None;
+        }
+        let remove = self.ranges.len() - max_ranges;
+        let floor = self.ranges.get(remove).map(|range| range.start);
+        self.ranges.drain(..remove);
+        floor
+    }
+
     pub fn bounds(&self) -> Option<Range<u64>> {
         Some(self.ranges.first()?.start..self.ranges.last()?.end)
     }
@@ -198,6 +210,18 @@ mod tests {
         set.add(7, 9).unwrap();
         assert_eq!(set.pop_first(), Some(7..9));
         assert_eq!(set.pop_first(), None);
+    }
+
+    #[test]
+    fn retains_last_ranges_and_reports_floor() {
+        let mut set = RangeSet::new();
+        set.add(0, 1).unwrap();
+        set.add(2, 3).unwrap();
+        set.add(4, 5).unwrap();
+
+        assert_eq!(set.retain_last(2), Some(2));
+        assert_eq!(ranges(&set), vec![2..3, 4..5]);
+        assert_eq!(set.retain_last(2), None);
     }
 
     #[test]

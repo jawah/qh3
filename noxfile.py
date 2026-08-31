@@ -128,11 +128,13 @@ def downstream_niquests(session: nox.Session) -> None:
     urllib3_metadata = urllib3_pyproject.read_text(encoding="utf-8")
     # Remove this metadata-only bypass once urllib3-future allows qh3 2.x.
     qh3_requirement = "qh3>=1.5.4,<2.0.0"
-    assert qh3_requirement in urllib3_metadata
-    urllib3_pyproject.write_text(
-        urllib3_metadata.replace(qh3_requirement, "qh3>=1.5.4,<3.0.0"),
-        encoding="utf-8",
-    )
+    if qh3_requirement in urllib3_metadata:
+        urllib3_metadata = urllib3_metadata.replace(
+            qh3_requirement, "qh3>=1.5.4,<3.0.0"
+        )
+        urllib3_pyproject.write_text(urllib3_metadata, encoding="utf-8")
+    else:
+        assert "qh3>=1.5.4,<3.0.0" in urllib3_metadata
     remote_address = """remote_address=(
                         self.__custom_tls_settings.assert_hostname
                         if self.__custom_tls_settings.assert_hostname
@@ -145,11 +147,15 @@ def downstream_niquests(session: nox.Session) -> None:
     ):
         backend = urllib3_root / relative_path
         source = backend.read_text(encoding="utf-8")
-        assert remote_address in source
-        backend.write_text(
-            source.replace(remote_address, "remote_address=self.sock.getpeername(),"),
-            encoding="utf-8",
-        )
+        if remote_address in source:
+            backend.write_text(
+                source.replace(
+                    remote_address, "remote_address=self.sock.getpeername(),"
+                ),
+                encoding="utf-8",
+            )
+        else:
+            assert "remote_address=self.sock.getpeername()," in source
 
     niquests_root = Path(root) / tmp_dir / "niquests"
     niquests_pyproject = niquests_root / "pyproject.toml"

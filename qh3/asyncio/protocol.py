@@ -76,9 +76,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         The returned reader and writer objects are instances of
         :class:`asyncio.StreamReader` and :class:`asyncio.StreamWriter` classes.
         """
-        stream_id = self._quic.get_next_available_stream_id(
-            is_unidirectional=is_unidirectional
-        )
+        stream_id = self._quic._open_stream(is_unidirectional=is_unidirectional)
         return self._create_stream(stream_id)
 
     def request_key_update(self) -> None:
@@ -113,6 +111,9 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
             datagrams: list[bytes] = []
             send_addr: NetworkAddress | None = None
             for data, addr in self._quic.datagrams_to_send(now=now):
+                if datagrams and addr != send_addr:
+                    sendto_many(datagrams, send_addr)
+                    datagrams = []
                 datagrams.append(data)
                 send_addr = addr
             if datagrams:
@@ -207,15 +208,6 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
                 )
                 self._stream_readers.pop(event.stream_id, None)
                 self._mark_stream_reader_done(event.stream_id)
-        elif isinstance(event, events.StopSendingReceived):
-            # RFC 9000 3.5: peer asked us to stop sending. Drop the
-            # reader so we no longer wait on it; the writer side is
-            # already torn down by the QUIC layer.
-            reader = self._stream_readers.get(event.stream_id, None)
-            if reader is not None:
-                reader.feed_eof()
-                self._stream_readers.pop(event.stream_id, None)
-                self._mark_stream_reader_done(event.stream_id)
 
     # private
 
@@ -271,9 +263,9 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
 
                 self._closed.set()
             elif isinstance(event, events.HandshakeCompleted):
+                self._connected = True
                 if self._connected_waiter is not None:
                     waiter = self._connected_waiter
-                    self._connected = True
                     self._connected_waiter = None
                     waiter.set_result(None)
             elif isinstance(event, events.PingAcknowledged):
@@ -305,6 +297,7 @@ class QuicStreamAdapter(asyncio.Transport):
         """
         if name == "stream_id":
             return self.stream_id
+        return default
 
     def write(self, data) -> None:
         self.protocol._quic.send_stream_data(self.stream_id, data)

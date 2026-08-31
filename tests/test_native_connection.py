@@ -6,6 +6,7 @@ import socket
 
 import pytest
 
+from qh3 import tls
 from qh3._hazmat import pull_quic_header
 from qh3.asyncio import client as asyncio_client
 from qh3.asyncio import server as asyncio_server
@@ -476,6 +477,51 @@ def test_native_client_server_handshake() -> None:
     assert client.get_peercert() is not None
 
 
+def test_native_v1_v2_compatible_negotiation_handshake() -> None:
+    client, server = make_pair()
+    for connection in (client, server):
+        connection.configuration.supported_versions = [
+            QuicProtocolVersion.VERSION_2,
+            QuicProtocolVersion.VERSION_1,
+        ]
+    client.configuration.original_version = QuicProtocolVersion.VERSION_1
+
+    client_events, server_events, now = handshake(client, server)
+
+    assert client._version == server._version == QuicProtocolVersion.VERSION_2
+    assert client._core.version == server._core.version == QuicProtocolVersion.VERSION_2
+    assert events.HandshakeCompleted("h3", False, False) in client_events
+    assert events.HandshakeCompleted("h3", False, False) in server_events
+    client.send_stream_data(0, b"negotiated v2", end_stream=True)
+    transfer(client, server, CLIENT_ADDR, now)
+    assert server.next_event() == events.StreamDataReceived(
+        b"negotiated v2", True, 0
+    )
+
+
+def test_native_rejects_oversized_outbound_varints_transactionally() -> None:
+    client, server = make_pair()
+    _, _, now = handshake(client, server)
+    oversized = 2**62
+
+    with pytest.raises(ValueError, match="error code exceeds"):
+        client.reset_stream(0, oversized)
+    assert client.get_next_available_stream_id() == 0
+    assert client.open_outbound_streams == 0
+
+    with pytest.raises(ValueError, match="error code exceeds"):
+        client.stop_stream(1, oversized)
+    with pytest.raises(ValueError, match="error code exceeds"):
+        client.close(oversized)
+    assert client._close_event is None
+    assert client._core.state == "connected"
+
+    with pytest.raises(ValueError, match="CRYPTO end offset exceeds"):
+        client._core.send_crypto(int(tls.Epoch.INITIAL), oversized - 1, b"xx")
+    client.send_ping(123)
+    assert transfer(client, server, CLIENT_ADDR, now) == 1
+
+
 def test_native_datagram_limit_uses_encoded_size() -> None:
     client, server = make_pair()
     client.configuration.max_datagram_frame_size = 66
@@ -753,7 +799,9 @@ def test_native_validates_and_activates_rebound_path() -> None:
         server.receive_datagram(data, REBOUND_CLIENT_ADDR, now + 0.002)
 
     assert server._core.active_path[2] == REBOUND_CLIENT_ADDR
-    assert server._core.smoothed_rtt is None
+    # RFC 9000 section 9.4 allows retaining recovery state for a port-only
+    # change, which is the common NAT rebinding case.
+    assert server._core.smoothed_rtt is not None
 
     # disable_active_migration forbids deliberate peer IP migration, but RFC
     # 9000 requires port-only NAT rebinding to remain eligible for validation.
@@ -860,13 +908,13 @@ def test_native_close_is_retransmitted_after_authenticated_packet() -> None:
 def test_native_pmtu_probing_respects_configuration() -> None:
     client, server = make_pair()
     _, _, _ = handshake(client, server)
-    assert client._core.active_path[5] == 1452
-    assert server._core.active_path[5] == 1200
+    assert client._core.active_path[5] == 1472
+    assert server._core.active_path[5] == 1280
 
     client, server = make_pair()
     client.configuration.probe_datagram_size = False
     _, _, _ = handshake(client, server)
-    assert client._core.active_path[5] == 1200
+    assert client._core.active_path[5] == 1280
 
 
 def test_native_peer_max_udp_payload_size_caps_datagrams_and_pmtu() -> None:
@@ -909,7 +957,7 @@ def test_native_lost_pmtu_probe_does_not_reduce_congestion_window() -> None:
     congestion_window = client._core.congestion_window
     client.handle_timer(deadline)
     assert client._core.congestion_window == congestion_window
-    assert client._core.active_path[5] == 1200
+    assert client._core.active_path[5] == 1280
 
 
 def test_native_datagram_is_not_retransmitted_on_pto() -> None:
@@ -1130,6 +1178,25 @@ def test_native_retransmits_lost_flow_control_updates() -> None:
     client.send_stream_data(0, b"b" * 10, end_stream=True)
     transfer(client, server, CLIENT_ADDR, deadline + 0.001)
     assert server.next_event() == events.StreamDataReceived(b"b" * 10, True, 0)
+
+
+def test_native_reset_final_sizes_replenish_connection_credit() -> None:
+    client, server = make_pair()
+    server.configuration.max_data = 10
+    server.configuration.max_stream_data = 10
+    _, _, now = handshake(client, server)
+
+    for index in range(3):
+        stream_id = client.get_next_available_stream_id()
+        client.send_stream_data(stream_id, b"x" * 10)
+        assert client.datagrams_to_send(now)  # Drop the STREAM packet.
+        client.reset_stream(stream_id, index)
+        transfer(client, server, CLIENT_ADDR, now + 0.001)
+        assert server.next_event() == events.StreamReset(index, stream_id)
+
+        # Polling StreamReset consumes its final size and emits fresh MAX_DATA.
+        transfer(server, client, SERVER_ADDR, now + 0.002)
+        now += 0.01
 
 
 def test_native_retransmits_lost_handshake_done() -> None:

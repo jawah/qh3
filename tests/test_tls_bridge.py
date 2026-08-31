@@ -275,6 +275,17 @@ def test_tls_bridge_server_selects_compatible_version() -> None:
     ]
     bridge._on_alpn("h3")
     assert bridge.version == QuicProtocolVersion.VERSION_2
+    advertised = pull_quic_transport_parameters(
+        Buffer(data=bridge.tls.handshake_extensions[0][1])
+    )
+    assert advertised.version_information.chosen_version == QuicProtocolVersion.VERSION_2
+    bridge._on_traffic_secret(
+        tls.Direction.ENCRYPT,
+        tls.Epoch.HANDSHAKE,
+        tls.CipherSuite.AES_128_GCM_SHA256,
+        b"s" * 32,
+    )
+    assert bridge.next_traffic_secret().version == QuicProtocolVersion.VERSION_2
     assert bridge.next_event() == events.ProtocolNegotiated("h3")
 
 

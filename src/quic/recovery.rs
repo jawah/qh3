@@ -17,6 +17,8 @@ const TIME_THRESHOLD_DENOMINATOR: u32 = 8;
 const GRANULARITY: Duration = Duration::from_millis(1);
 const INITIAL_WINDOW_PACKETS: u64 = 10;
 const MINIMUM_WINDOW_PACKETS: u64 = 2;
+const INITIAL_WINDOW_MINIMUM: u64 = 14_720;
+const MAX_RECEIVED_RANGES: usize = 256;
 const CUBIC_C: f64 = 0.4;
 const CUBIC_BETA: f64 = 0.7;
 const CUBIC_MAX_IDLE: Duration = Duration::from_secs(2);
@@ -259,6 +261,7 @@ struct PacketSpace {
     ack_eliciting_in_flight: u64,
     last_ack_eliciting_sent: Option<Duration>,
     received: RangeSet,
+    received_floor: u64,
     largest_received: Option<(u64, Duration)>,
     ack_deadline: Option<Duration>,
     ack_eliciting_since_ack: u8,
@@ -296,7 +299,7 @@ pub struct CongestionController {
 
 impl CongestionController {
     fn new(max_datagram_size: u64) -> Self {
-        let congestion_window = max_datagram_size.saturating_mul(INITIAL_WINDOW_PACKETS);
+        let congestion_window = initial_congestion_window(max_datagram_size);
         Self {
             max_datagram_size,
             bytes_in_flight: 0,
@@ -347,9 +350,7 @@ impl CongestionController {
     }
 
     fn restart_after_idle(&mut self) {
-        self.congestion_window = self
-            .max_datagram_size
-            .saturating_mul(INITIAL_WINDOW_PACKETS);
+        self.congestion_window = initial_congestion_window(self.max_datagram_size);
         self.ssthresh = None;
         self.w_max = self.congestion_window;
         self.w_est = 0.0;
@@ -717,7 +718,8 @@ impl Recovery {
 
     pub fn is_packet_received(&self, space: PacketNumberSpace, packet_number: u64) -> bool {
         let space = &self.spaces[space.index()];
-        !space.discarded && space.received.contains(packet_number)
+        !space.discarded
+            && (packet_number < space.received_floor || space.received.contains(packet_number))
     }
 
     pub fn set_peer_completed_address_validation(&mut self, completed: bool) {
@@ -733,8 +735,74 @@ impl Recovery {
         self.pacer.max_datagram_size = size;
     }
 
-    pub fn reset_for_new_path(&mut self) {
+    pub fn reset_for_new_path(
+        &mut self,
+        previous_path_id: u64,
+        path_id: u64,
+        retain_congestion: bool,
+    ) {
+        if retain_congestion {
+            for space in &mut self.spaces {
+                for packet in space.outstanding.values_mut() {
+                    if packet.path_id == previous_path_id {
+                        packet.path_id = path_id;
+                    }
+                }
+            }
+            return;
+        }
+
         self.rtt.reset();
+        for space in &mut self.spaces {
+            for packet in space.outstanding.values_mut() {
+                if packet.path_id != path_id {
+                    packet.in_flight = false;
+                }
+            }
+        }
+        let max_datagram_size = self.congestion.max_datagram_size;
+        let bytes_in_flight = self
+            .spaces
+            .iter()
+            .flat_map(|space| space.outstanding.values())
+            .filter(|packet| packet.path_id == path_id && packet.in_flight)
+            .map(|packet| packet.sent_bytes)
+            .sum();
+        self.congestion = CongestionController::new(max_datagram_size);
+        self.congestion.bytes_in_flight = bytes_in_flight;
+        self.pacer = Pacer::new(max_datagram_size);
+        for space in &mut self.spaces {
+            space.ack_eliciting_in_flight = space
+                .outstanding
+                .values()
+                .filter(|packet| {
+                    packet.path_id == path_id
+                        && packet.ack_eliciting
+                        && packet.in_flight
+                        && !packet.is_pmtu_probe
+                })
+                .count() as u64;
+            space.last_ack_eliciting_sent = space
+                .outstanding
+                .values()
+                .filter(|packet| {
+                    packet.path_id == path_id
+                        && packet.ack_eliciting
+                        && packet.in_flight
+                        && !packet.is_pmtu_probe
+                })
+                .map(|packet| packet.sent_time)
+                .max();
+            space.loss_time = None;
+            space.pc_start = None;
+            space.pc_end = None;
+        }
+        self.last_ack_eliciting_sent = self
+            .spaces
+            .iter()
+            .filter_map(|space| space.last_ack_eliciting_sent)
+            .max();
+        self.pto_count = 0;
     }
 
     pub fn start_pacing(&mut self, now: Duration) {
@@ -817,13 +885,16 @@ impl Recovery {
         if space.discarded {
             return Err(RecoveryError::DiscardedSpace(space_id));
         }
-        if space.received.contains(packet_number) {
+        if packet_number < space.received_floor || space.received.contains(packet_number) {
             return Ok(false);
         }
         space
             .received
             .add(packet_number, packet_number + 1)
             .expect("a valid packet number forms a non-empty range");
+        if let Some(floor) = space.received.retain_last(MAX_RECEIVED_RANGES) {
+            space.received_floor = space.received_floor.max(floor);
+        }
         if space
             .largest_received
             .map_or(true, |(largest, _)| packet_number > largest)
@@ -903,6 +974,7 @@ impl Recovery {
         if space.discarded {
             return Err(RecoveryError::DiscardedSpace(space_id));
         }
+        space.received_floor = space.received_floor.max(end);
         space
             .received
             .subtract(0, end)
@@ -955,7 +1027,7 @@ impl Recovery {
             if packet.in_flight {
                 self.congestion.packet_acked(&packet, now);
             }
-            if packet.ack_eliciting && packet.packet_number == largest_acked {
+            if packet.in_flight && packet.ack_eliciting && packet.packet_number == largest_acked {
                 rtt_packet = Some(packet.sent_time);
             }
             largest_newly_acked = Some(packet.packet_number);
@@ -1363,6 +1435,16 @@ fn packet_ranges(packet_numbers: &RangeSet) -> Vec<AckRange> {
         .collect()
 }
 
+fn initial_congestion_window(max_datagram_size: u64) -> u64 {
+    max_datagram_size
+        .saturating_mul(INITIAL_WINDOW_PACKETS)
+        .min(
+            max_datagram_size
+                .saturating_mul(MINIMUM_WINDOW_PACKETS)
+                .max(INITIAL_WINDOW_MINIMUM),
+        )
+}
+
 fn duration_abs_diff(a: Duration, b: Duration) -> Duration {
     if a >= b {
         a - b
@@ -1736,6 +1818,60 @@ mod tests {
     }
 
     #[test]
+    fn packet_replay_after_ack_of_ack_remains_duplicate() {
+        let mut r = recovery();
+        r.on_packet_received(
+            PacketNumberSpace::ApplicationData,
+            7,
+            true,
+            Duration::from_millis(10),
+        )
+        .unwrap();
+        r.take_ack(
+            PacketNumberSpace::ApplicationData,
+            Duration::from_millis(11),
+        )
+        .unwrap();
+        r.acknowledge_ack(PacketNumberSpace::ApplicationData, 7)
+            .unwrap();
+
+        assert!(r.is_packet_received(PacketNumberSpace::ApplicationData, 7));
+        assert!(!r
+            .on_packet_received(
+                PacketNumberSpace::ApplicationData,
+                7,
+                true,
+                Duration::from_millis(20),
+            )
+            .unwrap());
+        assert_eq!(r.ack_deadline(PacketNumberSpace::ApplicationData), None);
+    }
+
+    #[test]
+    fn sparse_receive_ranges_are_bounded_by_a_duplicate_floor() {
+        let mut r = recovery();
+        for packet_number in (0..=(MAX_RECEIVED_RANGES as u64 * 2)).step_by(2) {
+            assert!(r
+                .on_packet_received(
+                    PacketNumberSpace::Initial,
+                    packet_number,
+                    true,
+                    Duration::from_millis(packet_number),
+                )
+                .unwrap());
+        }
+
+        let space = &r.spaces[PacketNumberSpace::Initial.index()];
+        assert_eq!(space.received.len(), MAX_RECEIVED_RANGES);
+        assert_eq!(space.received_floor, 2);
+        assert!(r.is_packet_received(PacketNumberSpace::Initial, 0));
+        assert!(r.is_packet_received(PacketNumberSpace::Initial, 1));
+        assert!(!r
+            .on_packet_received(PacketNumberSpace::Initial, 1, true, Duration::from_secs(1),)
+            .unwrap());
+    }
+
+    #[test]
     fn discarding_space_clears_receive_and_ack_state() {
         let mut r = recovery();
         let mut sent = packet(0, 0);
@@ -1927,6 +2063,69 @@ mod tests {
         let before = cc.congestion_window();
         cc.packet_acked(&p, Duration::from_millis(21));
         assert_eq!(cc.congestion_window(), before + 300);
+    }
+
+    #[test]
+    fn large_datagram_size_uses_rfc_initial_congestion_window() {
+        let r = Recovery::new(RecoveryConfig {
+            max_datagram_size: 2000,
+            ..RecoveryConfig::default()
+        })
+        .unwrap();
+
+        assert_eq!(r.congestion().congestion_window(), 14_720);
+    }
+
+    #[test]
+    fn migration_resets_congestion_and_excludes_old_path_packets() {
+        let mut r = recovery();
+        let old = packet(0, 1200);
+        let mut new = packet(1, 1200);
+        new.path_id = 1;
+        r.on_packet_sent(PacketNumberSpace::ApplicationData, old)
+            .unwrap();
+        r.on_packet_sent(PacketNumberSpace::ApplicationData, new)
+            .unwrap();
+        assert_eq!(r.congestion().bytes_in_flight(), 2400);
+
+        r.reset_for_new_path(0, 1, false);
+        assert_eq!(r.congestion().bytes_in_flight(), 1200);
+        assert_eq!(
+            r.congestion().congestion_window(),
+            initial_congestion_window(1200)
+        );
+
+        r.on_ack_received(
+            PacketNumberSpace::ApplicationData,
+            &[AckRange::new(0, 1)],
+            Duration::ZERO,
+            Duration::from_millis(1100),
+            true,
+        )
+        .unwrap();
+        assert_eq!(r.congestion().bytes_in_flight(), 1200);
+        assert_eq!(r.rtt().latest(), None);
+    }
+
+    #[test]
+    fn port_only_rebinding_retains_congestion_state() {
+        let mut r = recovery();
+        r.on_packet_sent(PacketNumberSpace::ApplicationData, packet(0, 1200))
+            .unwrap();
+        let congestion_window = r.congestion().congestion_window();
+
+        r.reset_for_new_path(0, 1, true);
+
+        assert_eq!(r.congestion().bytes_in_flight(), 1200);
+        assert_eq!(r.congestion().congestion_window(), congestion_window);
+        assert_eq!(
+            r.spaces[PacketNumberSpace::ApplicationData.index()]
+                .outstanding
+                .get(&0)
+                .unwrap()
+                .path_id,
+            1
+        );
     }
 
     #[test]

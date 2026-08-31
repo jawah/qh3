@@ -339,6 +339,15 @@ class QuicConnection:
             self._next_stream_id_uni if is_unidirectional else self._next_stream_id_bidi
         )
 
+    def _open_stream(self, is_unidirectional: bool = False) -> int:
+        stream_id = self.get_next_available_stream_id(is_unidirectional)
+        self._record_local_stream(stream_id)
+        if self._handshake_complete:
+            native_stream_id = self._require_core().open_stream(is_unidirectional)
+            if native_stream_id != stream_id:
+                raise RuntimeError("native stream allocation is out of sync")
+        return stream_id
+
     def send_stream_data(
         self, stream_id: int, data: bytes, end_stream: bool = False
     ) -> None:
@@ -389,10 +398,10 @@ class QuicConnection:
         reason_phrase: str = "",
     ) -> None:
         if self._core is not None and self._close_event is None:
+            self._core.close(error_code, frame_type, reason_phrase.encode("utf8"))
             self._close_event = events.ConnectionTerminated(
                 error_code, frame_type, reason_phrase
             )
-            self._core.close(error_code, frame_type, reason_phrase.encode("utf8"))
 
     def _create_core(self, remote_addr: NetworkAddress, initial_dcid: bytes) -> None:
         configuration = self._configuration
@@ -456,9 +465,14 @@ class QuicConnection:
             session_ticket_fetcher=self._session_ticket_fetcher,
             session_ticket_handler=self._session_ticket_handler,
             quic_logger=self._quic_logger,
+            version_change_handler=self._set_version,
         )
         self._tls = tls_bridge
         return tls_bridge
+
+    def _set_version(self, version: int) -> None:
+        self._require_core().set_version(version)
+        self._version = version
 
     def _receive_retry(self, data: bytes, address: NetworkAddress, now: float) -> bool:
         if not self._is_client:
@@ -574,7 +588,12 @@ class QuicConnection:
             kind = native[0]
             if kind == "crypto_data":
                 try:
-                    self._tls.receive_crypto(tls.Epoch(native[1]), native[3], native[2])
+                    self._tls.receive_crypto(
+                        tls.Epoch(native[1]),
+                        native[3],
+                        native[2],
+                        version=self._core.version,
+                    )
                     self._drain_tls()
                 except QuicTlsBridgeError as exc:
                     self._core.close(
@@ -637,6 +656,11 @@ class QuicConnection:
                 self._end_trace()
 
     def _drain_tls(self) -> None:
+        core = self._require_core()
+        assert self._tls is not None
+        if core.version != self._tls.version:
+            core.set_version(self._tls.version)
+        self._version = self._tls.version
         while True:
             secret = self._tls.next_traffic_secret()
             if secret is None:
