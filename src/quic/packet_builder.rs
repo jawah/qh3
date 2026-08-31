@@ -18,7 +18,7 @@ const MAX_CID_LEN: usize = 20;
 const PN_LEN: usize = 2;
 const HP_SAMPLE_OFFSET: usize = 4;
 const HP_SAMPLE_LEN: usize = 16;
-const MIN_INITIAL_DATAGRAM: usize = 1200;
+const INITIAL_DATAGRAM_SIZE: usize = 1280;
 
 impl PacketType {
     fn space(self) -> PacketSpace {
@@ -427,7 +427,7 @@ impl PacketBuilder {
         let target = if request.pad_to_capacity {
             datagram_capacity
         } else if requires_initial_padding {
-            MIN_INITIAL_DATAGRAM.min(datagram_capacity)
+            INITIAL_DATAGRAM_SIZE.min(datagram_capacity)
         } else {
             0
         };
@@ -869,7 +869,7 @@ mod tests {
     fn padding_is_authenticated_and_attributed_to_packet() {
         let mut cfg = config(1);
         cfg.is_client = true;
-        cfg.max_datagram_size = 1200;
+        cfg.max_datagram_size = 1280;
         let mut builder = PacketBuilder::new(cfg).unwrap();
         builder.enqueue(PacketSpace::Initial, frame(1, 0x06, 1));
         let mut p = protector();
@@ -880,9 +880,9 @@ mod tests {
         let datagram = builder.flush().unwrap();
         let packet = &datagram.packets[0];
         assert!(packet.padding_bytes > 1000);
-        assert_eq!(packet.sent_bytes, 1200);
-        assert_eq!(p.seen[0].2 + 44, 1200); // 28-byte header and 16-byte tag.
-        assert_eq!(datagram.bytes.len(), 1200);
+        assert_eq!(packet.sent_bytes, 1280);
+        assert_eq!(p.seen[0].2 + 44, 1280); // 28-byte header and 16-byte tag.
+        assert_eq!(datagram.bytes.len(), 1280);
         assert_eq!(datagram.flight_bytes, packet.sent_bytes);
     }
 

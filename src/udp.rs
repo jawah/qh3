@@ -156,7 +156,7 @@ impl PyUdpSocketState {
         #[cfg(unix)]
         {
             let mut buf = self.recv_buf.lock().map_err(|_| {
-                pyo3::exceptions::PyRuntimeError::new_err("UDP receive buffer lock poisoned")
+                pyo3::exceptions::PyOSError::new_err("UDP receive buffer lock poisoned")
             })?;
             let slot_count = buf.len() / RECV_BUF_LEN;
             let mut metas = vec![RecvMeta::default(); slot_count];

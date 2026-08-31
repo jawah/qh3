@@ -6,7 +6,7 @@ import socket
 from collections import deque
 from enum import IntEnum
 from hmac import compare_digest
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from .. import tls
 from .._hazmat import Buffer, QuicConnectionCore
@@ -28,6 +28,7 @@ from .tls_bridge import QuicTlsBridge, QuicTlsBridgeError
 
 logger = logging.getLogger("quic")
 NetworkAddress = Any
+_T = TypeVar("_T")
 
 __all__ = [
     "NetworkAddress",
@@ -239,8 +240,12 @@ class QuicConnection:
                 packet_end = len(data)
             if packet_end <= offset:
                 packet_end = len(data)
-            report = self._core.receive_datagram(
-                data[offset:packet_end], address, now, len(data)
+            report = self._call_core(
+                self._core.receive_datagram,
+                data[offset:packet_end],
+                address,
+                now,
+                len(data),
             )
             if report[2]:
                 self._log_packet(
@@ -270,7 +275,7 @@ class QuicConnection:
         address = self._normalize_address(addr)
         for data in datagrams:
             self._log_datagram("datagrams_received", data)
-        self._core.receive_many_datagrams(datagrams, address, now)
+        self._call_core(self._core.receive_many_datagrams, datagrams, address, now)
         self._drain_core()
 
     def receive_gro_buffer(
@@ -303,7 +308,9 @@ class QuicConnection:
             self._log_datagram(
                 "datagrams_received", buffer[offset : offset + segment_size]
             )
-        self._core.receive_gro_buffer(buffer, segment_size, address, now)
+        self._call_core(
+            self._core.receive_gro_buffer, buffer, segment_size, address, now
+        )
         self._drain_core()
 
     def datagrams_to_send(self, now: float) -> list[tuple[bytes, NetworkAddress]]:
@@ -311,7 +318,7 @@ class QuicConnection:
             return []
         datagrams = []
         while True:
-            transmit = self._core.poll_transmit(now)
+            transmit = self._call_core(self._core.poll_transmit, now)
             if transmit is None:
                 break
             self._log_datagram("datagrams_sent", transmit[0])
@@ -327,7 +334,7 @@ class QuicConnection:
 
     def handle_timer(self, now: float) -> None:
         if self._core is not None:
-            self._core.handle_timer(now)
+            self._call_core(self._core.handle_timer, now)
             self._drain_core()
 
     def next_event(self) -> events.QuicEvent | None:
@@ -343,9 +350,14 @@ class QuicConnection:
         stream_id = self.get_next_available_stream_id(is_unidirectional)
         self._record_local_stream(stream_id)
         if self._handshake_complete:
-            native_stream_id = self._require_core().open_stream(is_unidirectional)
+            core = self._require_core()
+            native_stream_id = self._call_core(core.open_stream, is_unidirectional)
             if native_stream_id != stream_id:
-                raise RuntimeError("native stream allocation is out of sync")
+                raise QuicConnectionError(
+                    QuicErrorCode.INTERNAL_ERROR,
+                    None,
+                    "native stream allocation is out of sync",
+                )
         return stream_id
 
     def send_stream_data(
@@ -362,7 +374,8 @@ class QuicConnection:
             if not self._pre_handshake_state_replayed:
                 self._replay_pre_handshake_state("connection start")
                 return
-        self._require_core().send_stream(stream_id, data, end_stream)
+        core = self._require_core()
+        self._call_core(core.send_stream, stream_id, data, end_stream)
 
     def _stream_can_send(self, stream_id: int) -> bool:
         if self._core is None:
@@ -370,26 +383,32 @@ class QuicConnection:
         return self._core.can_send_stream(stream_id)
 
     def reset_stream(self, stream_id: int, error_code: int) -> None:
-        self._require_core().reset_stream(stream_id, error_code)
+        core = self._require_core()
+        self._call_core(core.reset_stream, stream_id, error_code)
         self._record_local_stream(stream_id)
 
     def stop_stream(self, stream_id: int, error_code: int) -> None:
-        self._require_core().stop_sending(stream_id, error_code)
+        core = self._require_core()
+        self._call_core(core.stop_sending, stream_id, error_code)
 
     def send_datagram_frame(self, data: bytes) -> None:
-        self._require_core().send_datagram(data)
+        core = self._require_core()
+        self._call_core(core.send_datagram, data)
 
     def send_ping(self, uid: int) -> None:
-        self._require_core().send_ping(uid)
+        core = self._require_core()
+        self._call_core(core.send_ping, uid)
 
     def request_key_update(self) -> None:
         assert self._handshake_confirmed, (
             "cannot change key before handshake is confirmed"
         )
-        self._require_core().request_key_update()
+        core = self._require_core()
+        self._call_core(core.request_key_update)
 
     def change_connection_id(self) -> None:
-        self._require_core().change_connection_id()
+        core = self._require_core()
+        self._call_core(core.change_connection_id)
 
     def close(
         self,
@@ -398,7 +417,12 @@ class QuicConnection:
         reason_phrase: str = "",
     ) -> None:
         if self._core is not None and self._close_event is None:
-            self._core.close(error_code, frame_type, reason_phrase.encode("utf8"))
+            self._call_core(
+                self._core.close,
+                error_code,
+                frame_type,
+                reason_phrase.encode("utf8"),
+            )
             self._close_event = events.ConnectionTerminated(
                 error_code, frame_type, reason_phrase
             )
@@ -471,7 +495,8 @@ class QuicConnection:
         return tls_bridge
 
     def _set_version(self, version: int) -> None:
-        self._require_core().set_version(version)
+        core = self._require_core()
+        self._call_core(core.set_version, version)
         self._version = version
 
     def _receive_retry(self, data: bytes, address: NetworkAddress, now: float) -> bool:
@@ -596,8 +621,11 @@ class QuicConnection:
                     )
                     self._drain_tls()
                 except QuicTlsBridgeError as exc:
-                    self._core.close(
-                        exc.error_code, int(exc.frame_type), exc.reason_phrase.encode()
+                    self._call_core(
+                        self._core.close,
+                        exc.error_code,
+                        int(exc.frame_type),
+                        exc.reason_phrase.encode(),
                     )
                     self._close_event = events.ConnectionTerminated(
                         exc.error_code, exc.frame_type, exc.reason_phrase
@@ -659,7 +687,7 @@ class QuicConnection:
         core = self._require_core()
         assert self._tls is not None
         if core.version != self._tls.version:
-            core.set_version(self._tls.version)
+            self._call_core(core.set_version, self._tls.version)
         self._version = self._tls.version
         while True:
             secret = self._tls.next_traffic_secret()
@@ -669,7 +697,8 @@ class QuicConnection:
             direction = (
                 "send" if secret.direction == tls.Direction.ENCRYPT else "receive"
             )
-            self._core.install_packet_key(
+            self._call_core(
+                core.install_packet_key,
                 direction,
                 int(secret.epoch),
                 (aead_name.decode(), hp_name.decode()),
@@ -686,7 +715,9 @@ class QuicConnection:
             crypto = self._tls.next_crypto_data()
             if crypto is None:
                 break
-            self._core.send_crypto(int(crypto.epoch), crypto.offset, crypto.data)
+            self._call_core(
+                core.send_crypto, int(crypto.epoch), crypto.offset, crypto.data
+            )
         if (
             not self._pre_handshake_state_replayed
             and self._remembered_transport_parameters() is not None
@@ -704,7 +735,7 @@ class QuicConnection:
                 and not self._zero_rtt_resolved
             ):
                 if not self._tls.tls.early_data_accepted:
-                    self._core.reject_zero_rtt()
+                    self._call_core(core.reject_zero_rtt)
                 self._zero_rtt_resolved = True
             self._remote_max_datagram_frame_size = parameters.max_datagram_frame_size
             self._remote_max_stream_data_bidi_remote = (
@@ -712,7 +743,8 @@ class QuicConnection:
             )
             # preferred_address intentionally stays inactive: the native core
             # cannot yet install its CID/reset token and path atomically.
-            self._core.apply_peer_transport_parameters(
+            self._call_core(
+                core.apply_peer_transport_parameters,
                 parameters.initial_max_data or 0,
                 parameters.initial_max_stream_data_bidi_local or 0,
                 parameters.initial_max_stream_data_bidi_remote or 0,
@@ -754,7 +786,7 @@ class QuicConnection:
             self._pre_handshake_writes.clear()
             self._pre_handshake_state_replayed = True
             self._state = QuicConnectionState.CONNECTED
-            self._core.handshake_complete()
+            core.handshake_complete()
             if not self._is_client:
                 self._handshake_confirmed = True
             elif not self._tls.tls.early_data_accepted:
@@ -762,10 +794,10 @@ class QuicConnection:
                 # supplies fresh transport parameters. Keep this defensive for
                 # handshakes which complete without attempting early data.
                 if self._early_data_attempted and not self._zero_rtt_resolved:
-                    self._core.reject_zero_rtt()
+                    self._call_core(core.reject_zero_rtt)
                     self._zero_rtt_resolved = True
                 else:
-                    self._core.discard_keys(int(tls.Epoch.ZERO_RTT))
+                    core.discard_keys(int(tls.Epoch.ZERO_RTT))
 
     def _learn_remote_source_cid(self, data: bytes) -> None:
         if self._handshake_complete or self._tls is None:
@@ -781,8 +813,16 @@ class QuicConnection:
 
     def _require_core(self) -> QuicConnectionCore:
         if self._core is None:
-            raise RuntimeError("connection has not been started")
+            raise AssertionError("connection has not been started")
         return self._core
+
+    def _call_core(self, operation: Callable[..., _T], *args: Any) -> _T:
+        try:
+            return operation(*args)
+        except RuntimeError as exc:
+            raise QuicConnectionError(
+                QuicErrorCode.INTERNAL_ERROR, None, str(exc)
+            ) from exc
 
     def _record_local_stream(self, stream_id: int) -> None:
         local_initiator = stream_id & 1 == (0 if self._is_client else 1)
@@ -802,12 +842,14 @@ class QuicConnection:
     def _reopen_pre_handshake_streams(self, context: str) -> None:
         for expected_stream_id, is_unidirectional in self._pre_handshake_streams:
             while True:
-                stream_id = self._core.open_stream(is_unidirectional)
+                stream_id = self._call_core(self._core.open_stream, is_unidirectional)
                 if stream_id == expected_stream_id:
                     break
                 if stream_id > expected_stream_id:
-                    raise RuntimeError(
-                        f"native stream allocation changed across {context}"
+                    raise QuicConnectionError(
+                        QuicErrorCode.INTERNAL_ERROR,
+                        None,
+                        f"native stream allocation changed across {context}",
                     )
 
     def _replay_pre_handshake_state(self, context: str) -> None:
@@ -815,7 +857,7 @@ class QuicConnection:
             return
         self._reopen_pre_handshake_streams(context)
         for stream_id, data, end_stream in self._pre_handshake_writes:
-            self._core.send_stream(stream_id, data, end_stream)
+            self._call_core(self._core.send_stream, stream_id, data, end_stream)
         self._pre_handshake_state_replayed = True
 
     def _remembered_transport_parameters(self) -> QuicTransportParameters | None:

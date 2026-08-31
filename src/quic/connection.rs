@@ -395,6 +395,7 @@ pub struct ConnectionCore {
     crypto_receive_chunks: [BTreeMap<u64, u8>; 4],
     received_client_initial: bool,
     received_authenticated_packet: bool,
+    initial_mtu_fallback: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -545,6 +546,7 @@ impl ConnectionCore {
             crypto_receive_chunks: std::array::from_fn(|_| BTreeMap::new()),
             received_client_initial: false,
             received_authenticated_packet: false,
+            initial_mtu_fallback: false,
         })
     }
 
@@ -1042,7 +1044,11 @@ impl ConnectionCore {
                         }
                         _ => None,
                     };
-                    let epoch = packet_epoch(packet_type).expect("protected packet has epoch");
+                    let Some(epoch) = packet_epoch(packet_type) else {
+                        report.dropped += 1;
+                        offset = packet_end;
+                        continue;
+                    };
                     let space = epoch.packet_number_space();
                     let packet_destination_cid = header
                         .destination_cid
@@ -1485,7 +1491,13 @@ impl ConnectionCore {
                     if self
                         .flow
                         .stream_mut(stream_id)
-                        .expect("flow stream inserted")
+                        .ok_or_else(|| {
+                            protocol(
+                                frame_type,
+                                TransportErrorCode::INTERNAL_ERROR,
+                                "flow-control stream is missing",
+                            )
+                        })?
                         .increase_send_maximum(maximum.into_inner())
                         .map_err(|error| flow_protocol(frame_type, error))?
                     {
@@ -2226,6 +2238,21 @@ impl ConnectionCore {
             .loss_detection_time()
             .is_some_and(|deadline| deadline <= now)
         {
+            if self.config.role == Role::Client
+                && !self.received_authenticated_packet
+                && !self.initial_mtu_fallback
+                && self.config.max_datagram_size > MIN_INITIAL_DATAGRAM_SIZE
+            {
+                self.initial_mtu_fallback = true;
+                self.config.max_datagram_size = MIN_INITIAL_DATAGRAM_SIZE;
+                self.builder
+                    .set_max_datagram_size(MIN_INITIAL_DATAGRAM_SIZE)?;
+                self.recovery
+                    .set_max_datagram_size(MIN_INITIAL_DATAGRAM_SIZE as u64);
+                self.paths
+                    .fall_back_active_pmtu(MIN_INITIAL_DATAGRAM_SIZE as u16)
+                    .map_err(|_| ConnectionCoreError::InvalidConfig("invalid fallback path MTU"))?;
+            }
             let events = self.recovery.on_loss_detection_timeout(now)?;
             self.apply_recovery_events(events);
         }
@@ -2331,8 +2358,21 @@ impl ConnectionCore {
         let read_offset = self.crypto_receive_offsets[index];
         let chunks = &mut self.crypto_receive_chunks[index];
         for position in offset.max(read_offset)..end {
-            let source = usize::try_from(position - offset).expect("CRYPTO slice offset");
-            chunks.entry(position).or_insert(data[source]);
+            let source = usize::try_from(position - offset).map_err(|_| {
+                protocol(
+                    FrameType::CRYPTO,
+                    TransportErrorCode::FRAME_ENCODING_ERROR,
+                    "CRYPTO slice offset exceeds platform limits",
+                )
+            })?;
+            let byte = *data.get(source).ok_or_else(|| {
+                protocol(
+                    FrameType::CRYPTO,
+                    TransportErrorCode::FRAME_ENCODING_ERROR,
+                    "CRYPTO slice offset exceeds frame data",
+                )
+            })?;
+            chunks.entry(position).or_insert(byte);
         }
         if chunks.len() > MAX_CRYPTO_REASSEMBLY {
             return Err(protocol(
@@ -2995,7 +3035,7 @@ impl ConnectionCore {
                 let flow = self.flow.prepare_send(id, reservation.end_offset())?;
                 self.streams
                     .get_mut(id)
-                    .expect("stream exists")
+                    .ok_or(StreamError::StreamState("reserved stream is missing"))?
                     .send
                     .commit(&reservation)?;
                 self.flow.commit_send(flow)?;
@@ -3010,13 +3050,13 @@ impl ConnectionCore {
             Some(PendingStream::Reset(id, reservation, _)) => self
                 .streams
                 .get_mut(id)
-                .expect("stream exists")
+                .ok_or(StreamError::StreamState("reserved stream is missing"))?
                 .send
                 .commit_reset(&reservation)?,
             Some(PendingStream::Stop(id, reservation, _)) => self
                 .streams
                 .get_mut(id)
-                .expect("stream exists")
+                .ok_or(StreamError::StreamState("reserved stream is missing"))?
                 .recv
                 .commit_stop(&reservation)?,
             None => {}
@@ -3437,7 +3477,11 @@ fn encode_stream(
 }
 
 fn stream_frame_type(reservation: &super::stream::SendReservation) -> FrameType {
-    FrameType(VarInt::new(0x0e | u64::from(reservation.fin)).expect("STREAM type is a varint"))
+    if reservation.fin {
+        FrameType::STREAM_WITH_OFFSET_LENGTH_FIN
+    } else {
+        FrameType::STREAM_WITH_OFFSET_LENGTH
+    }
 }
 
 fn encode_stream_action(

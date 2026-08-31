@@ -180,9 +180,7 @@ pub fn pull_quic_header<'a>(
 
         let mut token_bytes: &[u8] = &[];
         let mut integrity_tag_bytes: &[u8] = &[];
-        let rest_length: u64;
-
-        if packet_type == PACKET_TYPE_INITIAL {
+        let rest_length = if packet_type == PACKET_TYPE_INITIAL {
             // Token
             let (token_len, consumed) =
                 read_uint_var(data, pos).map_err(BufferReadError::new_err)?;
@@ -196,11 +194,11 @@ pub fn pull_quic_header<'a>(
             // Rest length
             let (rl, consumed) = read_uint_var(data, pos).map_err(BufferReadError::new_err)?;
             pos += consumed;
-            rest_length = rl;
+            rl
         } else if packet_type == PACKET_TYPE_ZERO_RTT || packet_type == PACKET_TYPE_HANDSHAKE {
             let (rl, consumed) = read_uint_var(data, pos).map_err(BufferReadError::new_err)?;
             pos += consumed;
-            rest_length = rl;
+            rl
         } else {
             // Retry packet
             if datagram_length < pos + RETRY_INTEGRITY_TAG_SIZE {
@@ -211,8 +209,8 @@ pub fn pull_quic_header<'a>(
             pos += token_len;
             integrity_tag_bytes = &data[pos..pos + RETRY_INTEGRITY_TAG_SIZE];
             pos += RETRY_INTEGRITY_TAG_SIZE;
-            rest_length = 0;
-        }
+            0
+        };
 
         let encrypted_offset = pos - packet_start;
         let packet_end = pos + rest_length as usize;

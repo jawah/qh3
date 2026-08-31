@@ -203,6 +203,18 @@ impl PmtuState {
         Ok(())
     }
 
+    pub fn fall_back_to(&mut self, current: u16) -> Result<(), PathError> {
+        if current < MIN_INITIAL_DATAGRAM_SIZE || current > self.current {
+            return Err(PathError::InvalidPmtuBounds {
+                current,
+                upper_bound: self.upper_bound,
+            });
+        }
+        self.current = current;
+        self.advance();
+        Ok(())
+    }
+
     fn advance(&mut self) {
         if let Some(next_probe) = next_pmtu_probe(self.current, self.upper_bound) {
             self.next_probe = next_probe;
@@ -457,6 +469,14 @@ impl PathManager {
             path.pmtu.cap_upper_bound(upper_bound)?;
         }
         Ok(())
+    }
+
+    pub fn fall_back_active_pmtu(&mut self, current: u16) -> Result<(), PathError> {
+        self.paths
+            .get_mut(&self.active)
+            .ok_or(PathError::UnknownPath(self.active))?
+            .pmtu
+            .fall_back_to(current)
     }
 
     pub fn activate(&mut self, id: PathId) -> Result<Option<PathAction>, PathError> {
@@ -747,12 +767,16 @@ impl PeerCidStore {
             .ok_or(CidError::ActiveConnectionIdLimitExceeded {
                 limit: self.active_limit,
             })?;
-        self.assigned.insert(path, next);
         self.entries
             .get_mut(&previous)
-            .expect("assigned CID must exist")
+            .ok_or(CidError::UnknownSequence(previous))?
             .retired = true;
-        Ok((previous, &self.entries[&next]))
+        self.assigned.insert(path, next);
+        let current = self
+            .entries
+            .get(&next)
+            .ok_or(CidError::UnknownSequence(next))?;
+        Ok((previous, current))
     }
 
     pub fn move_assignment(
@@ -1480,7 +1504,7 @@ impl FlowController {
         let connection = self.consume_connection(amount)?;
         self.streams
             .get_mut(&stream)
-            .expect("stream was checked above")
+            .ok_or(FlowError::StreamNotFound(stream))?
             .receive
             .consume(amount)?;
         Ok(connection)

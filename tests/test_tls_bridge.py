@@ -212,6 +212,33 @@ def test_tls_bridge_rejects_malformed_and_client_only_parameters() -> None:
             ),
             "max_udp_payload_size must be >= 1200",
         ),
+        (
+            QuicTransportParameters(
+                initial_source_connection_id=b"remote",
+                original_destination_connection_id=b"odcid",
+                retry_source_connection_id=b"retry",
+                stateless_reset_token=b"short",
+            ),
+            "stateless_reset_token must be exactly 16 bytes",
+        ),
+        (
+            QuicTransportParameters(
+                initial_source_connection_id=b"remote",
+                original_destination_connection_id=b"odcid",
+                retry_source_connection_id=b"retry",
+                initial_max_streams_bidi=2**60 + 1,
+            ),
+            "initial_max_streams_bidi must not exceed 2^60",
+        ),
+        (
+            QuicTransportParameters(
+                initial_source_connection_id=b"remote",
+                original_destination_connection_id=b"odcid",
+                retry_source_connection_id=b"retry",
+                initial_max_streams_uni=2**60 + 1,
+            ),
+            "initial_max_streams_uni must not exceed 2^60",
+        ),
     ],
 )
 def test_tls_bridge_transport_parameter_checks(parameters, message) -> None:

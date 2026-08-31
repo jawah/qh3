@@ -201,7 +201,7 @@ def test_native_constructor_validation_and_unstarted_facade() -> None:
         lambda: client.send_ping(1),
         client.change_connection_id,
     ):
-        with pytest.raises(RuntimeError, match="not been started"):
+        with pytest.raises(AssertionError, match="not been started"):
             operation()
     with pytest.raises(AssertionError, match="before handshake"):
         client.request_key_update()
@@ -878,7 +878,7 @@ def test_native_close_semantics_and_single_terminal_event(
 
     client.close(42, frame_type, "finished")
     client.close(99, int(QuicFrameType.CRYPTO), "ignored")
-    with pytest.raises(RuntimeError, match="closed"):
+    with pytest.raises(QuicConnectionError, match="closed"):
         client.send_ping(1)
     transfer(client, server, CLIENT_ADDR, now)
 
@@ -1254,6 +1254,26 @@ def test_native_handshake_retransmits_lost_crypto() -> None:
 
     assert client._handshake_complete
     assert server._handshake_complete
+
+
+def test_native_initial_falls_back_from_1280_to_1200_on_pto() -> None:
+    client = make_client()
+    now = 1.0
+    client.connect(SERVER_ADDR, now)
+
+    first_flight = client.datagrams_to_send(now)
+    assert first_flight
+    assert all(len(data) == 1280 for data, _ in first_flight)
+    assert client._core.active_path[5] == 1280
+
+    deadline = client.get_timer()
+    assert deadline is not None
+    client.handle_timer(deadline)
+
+    retransmission = client.datagrams_to_send(deadline)
+    assert retransmission
+    assert all(len(data) == 1200 for data, _ in retransmission)
+    assert client._core.active_path[5] == 1200
 
 
 def test_native_client_restarts_after_retry() -> None:

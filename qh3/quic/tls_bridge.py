@@ -411,6 +411,19 @@ class QuicTlsBridge:
                 raise self._transport_parameter_error(
                     f"max_udp_payload_size must be >= {SMALLEST_MAX_DATAGRAM_SIZE}"
                 )
+            if (
+                parameters.stateless_reset_token is not None
+                and len(parameters.stateless_reset_token) != 16
+            ):
+                raise self._transport_parameter_error(
+                    "stateless_reset_token must be exactly 16 bytes"
+                )
+            for name in ("initial_max_streams_bidi", "initial_max_streams_uni"):
+                value = getattr(parameters, name)
+                if value is not None and value > 2**60:
+                    raise self._transport_parameter_error(
+                        f"{name} must not exceed 2^60"
+                    )
             information = parameters.version_information
             if information is not None:
                 if (

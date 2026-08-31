@@ -117,7 +117,7 @@ pub fn encode_varint(value: VarInt, output: &mut [u8]) -> Result<usize, WireErro
         2 => 0x40,
         4 => 0x80,
         8 => 0xc0,
-        _ => unreachable!(),
+        _ => return Err(WireError::InvalidVarInt { value }),
     };
     Ok(length)
 }
@@ -499,12 +499,12 @@ fn parse_frame(
         0x01 => Frame::Ping,
         0x02 | 0x03 => return parse_ack(cursor, value == 0x03),
         0x04 => Frame::ResetStream {
-            stream_id: stream_id(cursor.varint()?),
+            stream_id: stream_id(cursor.varint()?)?,
             error_code: cursor.varint()?,
             final_size: cursor.varint()?,
         },
         0x05 => Frame::StopSending {
-            stream_id: stream_id(cursor.varint()?),
+            stream_id: stream_id(cursor.varint()?)?,
             error_code: cursor.varint()?,
         },
         0x06 => {
@@ -523,7 +523,7 @@ fn parse_frame(
             }
         }
         0x08..=0x0f => {
-            let stream_id = stream_id(cursor.varint()?);
+            let stream_id = stream_id(cursor.varint()?)?;
             let offset = if value & 4 != 0 {
                 cursor.varint()?
             } else {
@@ -547,7 +547,7 @@ fn parse_frame(
             maximum: cursor.varint()?,
         },
         0x11 => Frame::MaxStreamData {
-            stream_id: stream_id(cursor.varint()?),
+            stream_id: stream_id(cursor.varint()?)?,
             maximum: cursor.varint()?,
         },
         0x12 | 0x13 => {
@@ -562,7 +562,7 @@ fn parse_frame(
             limit: cursor.varint()?,
         },
         0x15 => Frame::StreamDataBlocked {
-            stream_id: stream_id(cursor.varint()?),
+            stream_id: stream_id(cursor.varint()?)?,
             limit: cursor.varint()?,
         },
         0x16 | 0x17 => {
@@ -687,9 +687,8 @@ fn checked_stream_count(value: VarInt) -> Result<(), &'static str> {
     }
 }
 
-fn stream_id(value: VarInt) -> StreamId {
-    // A decoded varint is necessarily a valid StreamId representation.
-    StreamId::new(value.into_inner()).unwrap_or_else(|| unreachable!())
+fn stream_id(value: VarInt) -> Result<StreamId, &'static str> {
+    StreamId::new(value.into_inner()).ok_or("stream ID exceeds the QUIC varint maximum")
 }
 
 fn known_frame_type(frame_type: FrameType) -> bool {

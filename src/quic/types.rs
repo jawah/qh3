@@ -185,6 +185,8 @@ impl FrameType {
     #[cfg(test)]
     pub const NEW_TOKEN: Self = Self(VarInt(0x07));
     pub const STREAM_BASE: Self = Self(VarInt(0x08));
+    pub const STREAM_WITH_OFFSET_LENGTH: Self = Self(VarInt(0x0e));
+    pub const STREAM_WITH_OFFSET_LENGTH_FIN: Self = Self(VarInt(0x0f));
     pub const MAX_DATA: Self = Self(VarInt(0x10));
     pub const MAX_STREAM_DATA: Self = Self(VarInt(0x11));
     pub const MAX_STREAMS_BIDI: Self = Self(VarInt(0x12));

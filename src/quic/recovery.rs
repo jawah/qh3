@@ -702,7 +702,7 @@ impl Recovery {
             state
                 .sent
                 .add(0, next_packet_number)
-                .expect("one valid packet-number range is bounded");
+                .map_err(|_| RecoveryError::PacketNumberOutOfRange(next_packet_number))?;
         }
         state.largest_sent = next_packet_number.checked_sub(1);
         Ok(())
@@ -858,7 +858,7 @@ impl Recovery {
         space
             .sent
             .add(packet.packet_number, packet.packet_number + 1)
-            .expect("a valid packet number forms a bounded range");
+            .map_err(|_| RecoveryError::PacketNumberOutOfRange(packet.packet_number))?;
         if packet.in_flight
             || packet.ack_eliciting
             || packet.is_pmtu_probe
@@ -891,7 +891,7 @@ impl Recovery {
         space
             .received
             .add(packet_number, packet_number + 1)
-            .expect("a valid packet number forms a non-empty range");
+            .map_err(|_| RecoveryError::PacketNumberOutOfRange(packet_number))?;
         if let Some(floor) = space.received.retain_last(MAX_RECEIVED_RANGES) {
             space.received_floor = space.received_floor.max(floor);
         }
@@ -1014,10 +1014,12 @@ impl Recovery {
         let mut largest_newly_acked = None;
         let mut rtt_packet = None;
         for packet_number in packet_numbers {
-            let packet = self.spaces[space_id.index()]
+            let Some(packet) = self.spaces[space_id.index()]
                 .outstanding
                 .remove(&packet_number)
-                .expect("packet number was collected from outstanding map");
+            else {
+                continue;
+            };
             if packet.ack_eliciting && !packet.is_pmtu_probe && packet.in_flight {
                 let space = &mut self.spaces[space_id.index()];
                 space.ack_eliciting_in_flight = space.ack_eliciting_in_flight.saturating_sub(1);
@@ -1381,7 +1383,7 @@ impl Recovery {
             .map(|packet| packet.packet_number)
             .collect();
         self.retire_and_retransmit(PacketNumberSpace::ApplicationData, &packet_numbers)
-            .expect("existing application packet numbers are valid")
+            .unwrap_or_default()
     }
 
     pub fn discard_space(&mut self, space_id: PacketNumberSpace) -> Vec<RecoveryEvent> {

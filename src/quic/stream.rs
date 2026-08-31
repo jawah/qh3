@@ -247,9 +247,12 @@ impl RecvStream {
             return Ok(None);
         }
         for (missing_start, missing_end) in missing {
-            let from = usize::try_from(missing_start - offset).expect("slice starts in frame");
-            let to = usize::try_from(missing_end - offset).expect("slice ends in frame");
-            self.chunks.insert(missing_start, data[from..to].to_vec());
+            let from =
+                usize::try_from(missing_start - offset).map_err(|_| StreamError::OffsetOverflow)?;
+            let to =
+                usize::try_from(missing_end - offset).map_err(|_| StreamError::OffsetOverflow)?;
+            let chunk = data.get(from..to).ok_or(StreamError::OffsetOverflow)?;
+            self.chunks.insert(missing_start, chunk.to_vec());
         }
         self.buffered = attempted;
 
@@ -531,7 +534,7 @@ impl SendStream {
             self.buffer.extend_from_slice(data);
             self.pending
                 .add(self.buffer_end, end)
-                .expect("unbounded range set accepts non-empty ranges");
+                .map_err(|_| StreamError::OffsetOverflow)?;
             self.buffer_end = end;
         }
         if fin {
@@ -576,7 +579,9 @@ impl SendStream {
             }
             (start, end)
         } else if self.fin_pending && self.final_size.is_some_and(|size| size <= flow_limit) {
-            let size = self.final_size.expect("checked above");
+            let size = self.final_size.ok_or(StreamError::StreamState(
+                "final size missing while FIN is pending",
+            ))?;
             (size, size)
         } else {
             return Ok(None);
@@ -588,7 +593,7 @@ impl SendStream {
             token,
             stream_id: self.stream_id,
             offset,
-            length: usize::try_from(end - offset).unwrap(),
+            length: usize::try_from(end - offset).map_err(|_| StreamError::OffsetOverflow)?,
             fin,
         };
         self.active = Some(reservation.clone());
@@ -626,10 +631,10 @@ impl SendStream {
         if end > reservation.offset {
             self.pending
                 .subtract(reservation.offset, end)
-                .expect("unbounded range set accepts non-empty ranges");
+                .map_err(|_| StreamError::UnknownReservation)?;
             self.in_flight
                 .add(reservation.offset, end)
-                .expect("unbounded range set accepts non-empty ranges");
+                .map_err(|_| StreamError::OffsetOverflow)?;
             self.highest_sent = self.highest_sent.max(end);
         }
         if reservation.fin {
@@ -662,21 +667,21 @@ impl SendStream {
         if outcome != DeliveryOutcome::ProbeCopy && offset < end {
             self.in_flight
                 .subtract(offset, end)
-                .expect("unbounded range set accepts non-empty ranges");
+                .map_err(|_| StreamError::OffsetOverflow)?;
         }
         match outcome {
             DeliveryOutcome::Acked => {
                 if offset < end {
                     self.pending
                         .subtract(offset, end)
-                        .expect("unbounded range set accepts non-empty ranges");
+                        .map_err(|_| StreamError::OffsetOverflow)?;
                 }
                 if end > self.buffer_start {
                     self.acked
                         .add(offset.max(self.buffer_start), end)
-                        .expect("unbounded range set accepts non-empty ranges");
+                        .map_err(|_| StreamError::OffsetOverflow)?;
                 }
-                self.release_acked_prefix();
+                self.release_acked_prefix()?;
                 if fin {
                     self.fin_pending = false;
                     self.fin_in_flight = false;
@@ -694,12 +699,12 @@ impl SendStream {
                 if end > self.buffer_start {
                     self.pending
                         .add(offset.max(self.buffer_start), end)
-                        .expect("unbounded range set accepts non-empty ranges");
+                        .map_err(|_| StreamError::OffsetOverflow)?;
                     let acked: Vec<_> = self.acked.iter().cloned().collect();
                     for range in acked {
                         self.pending
                             .subtract(range.start, range.end)
-                            .expect("acked ranges are non-empty");
+                            .map_err(|_| StreamError::OffsetOverflow)?;
                     }
                 }
                 if fin && !self.fin_acked {
@@ -714,25 +719,33 @@ impl SendStream {
         Ok(())
     }
 
-    fn release_acked_prefix(&mut self) {
+    fn release_acked_prefix(&mut self) -> Result<(), StreamError> {
         while let Some(range) = self.acked.pop_first() {
             let start = range.start;
             let end = range.end;
             if start != self.buffer_start {
                 self.acked
                     .add(start, end)
-                    .expect("unbounded range set accepts non-empty ranges");
+                    .map_err(|_| StreamError::OffsetOverflow)?;
                 break;
             }
-            let count = usize::try_from(end - start).expect("buffered range fits usize");
+            let count = usize::try_from(end - start).map_err(|_| StreamError::OffsetOverflow)?;
             self.buffer_start = end;
-            self.buffer_index += count;
+            self.buffer_index = self
+                .buffer_index
+                .checked_add(count)
+                .ok_or(StreamError::OffsetOverflow)?;
         }
-        let live = self.buffer.len() - self.buffer_index;
+        let live = self
+            .buffer
+            .len()
+            .checked_sub(self.buffer_index)
+            .ok_or(StreamError::OffsetOverflow)?;
         if self.buffer_index > live {
             self.buffer.drain(..self.buffer_index);
             self.buffer_index = 0;
         }
+        Ok(())
     }
 
     pub fn request_reset(&mut self, error_code: u64) {
@@ -874,7 +887,10 @@ impl StreamManager {
             return Err(StreamError::InvalidStreamId(id));
         }
         if self.streams.contains_key(&id) {
-            return Ok(self.streams.get_mut(&id).expect("stream exists"));
+            return self
+                .streams
+                .get_mut(&id)
+                .ok_or(StreamError::StreamState("stream disappeared"));
         }
 
         let direction = stream_direction(id);
@@ -895,7 +911,9 @@ impl StreamManager {
         let readable = direction == StreamDirection::Bidirectional;
         self.streams
             .insert(id, Stream::new(id, readable, true, &self.config));
-        Ok(self.streams.get_mut(&id).expect("stream was inserted"))
+        self.streams
+            .get_mut(&id)
+            .ok_or(StreamError::StreamState("stream insertion failed"))
     }
 
     /// Return an existing stream or create a peer-initiated stream after validation.
@@ -904,7 +922,10 @@ impl StreamManager {
             return Err(StreamError::InvalidStreamId(id));
         }
         if self.streams.contains_key(&id) {
-            return Ok(self.streams.get_mut(&id).expect("stream exists"));
+            return self
+                .streams
+                .get_mut(&id)
+                .ok_or(StreamError::StreamState("stream disappeared"));
         }
         let direction = stream_direction(id);
         let limit = self.local_max_streams(direction);
@@ -919,7 +940,9 @@ impl StreamManager {
         let writable = direction == StreamDirection::Bidirectional;
         self.streams
             .insert(id, Stream::new(id, true, writable, &self.config));
-        Ok(self.streams.get_mut(&id).expect("stream was inserted"))
+        self.streams
+            .get_mut(&id)
+            .ok_or(StreamError::StreamState("stream insertion failed"))
     }
 
     /// Access a stream's receive side, creating valid peer streams as needed.
@@ -936,7 +959,11 @@ impl StreamManager {
             self.streams
                 .insert(id, Stream::new(id, true, true, &self.config));
         }
-        Ok(&mut self.streams.get_mut(&id).expect("stream exists").recv)
+        Ok(&mut self
+            .streams
+            .get_mut(&id)
+            .ok_or(StreamError::StreamState("stream disappeared"))?
+            .recv)
     }
 
     /// Access a stream's send side, creating valid peer bidirectional streams as needed.
@@ -956,7 +983,11 @@ impl StreamManager {
             self.streams
                 .insert(id, Stream::new(id, readable, true, &self.config));
         }
-        Ok(&mut self.streams.get_mut(&id).expect("stream exists").send)
+        Ok(&mut self
+            .streams
+            .get_mut(&id)
+            .ok_or(StreamError::StreamState("stream disappeared"))?
+            .send)
     }
 
     pub fn local_max_streams(&self, direction: StreamDirection) -> u64 {
