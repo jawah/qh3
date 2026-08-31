@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import binascii
 import ssl
+from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -98,6 +99,21 @@ class TestBuffer:
                 pass
 
 
+class TestCertificateStoreLoading:
+    def test_pem_loader_stops_at_non_certificate_data(self):
+        assert tls._load_pem_certs_as_der(b"not a certificate\n") == []
+
+    def test_capath_requires_hashed_certificate_name(self, tmp_path: Path):
+        assert tls._capath_contains_certs(str(tmp_path)) is False
+        (tmp_path / "README").write_text("not a certificate")
+        assert tls._capath_contains_certs(str(tmp_path)) is False
+        (tmp_path / "0123abcd.0").write_bytes(b"certificate")
+        assert tls._capath_contains_certs(str(tmp_path)) is True
+
+    def test_missing_capath_is_empty(self, tmp_path: Path):
+        assert tls._capath_contains_certs(str(tmp_path / "missing")) is False
+
+
 def create_buffers():
     return {
         tls.Epoch.INITIAL: Buffer(capacity=8192),
@@ -182,6 +198,22 @@ class TestContext:
         client.state = State.CLIENT_POST_HANDSHAKE
         with pytest.raises(tls.AlertUnexpectedMessage):
             client.handle_message(b"\x00\x00\x00\x00", create_buffers())
+
+    def test_rejects_handshake_message_at_wrong_epoch(self):
+        client = self.create_client()
+        client.state = State.CLIENT_EXPECT_SERVER_HELLO
+        with pytest.raises(tls.AlertUnexpectedMessage):
+            client.handle_message(
+                bytes([tls.HandshakeType.SERVER_HELLO, 0, 0, 0]),
+                create_buffers(),
+                epoch=tls.Epoch.HANDSHAKE,
+            )
+
+    def test_partial_handshake_message_is_buffered(self):
+        client = self.create_client()
+        client.state = State.CLIENT_EXPECT_SERVER_HELLO
+        client.handle_message(b"\x02\x00\x00", create_buffers())
+        assert client._receive_buffer == b"\x02\x00\x00"
 
     def test_client_bad_certificate_verify_data(self):
         client = self.create_client()
@@ -296,6 +328,39 @@ class TestContext:
         with pytest.raises(tls.AlertProtocolVersion) as cm:
             self._server_fail_hello(client, server)
         assert str(cm.value) == "No supported protocol version"
+
+    def test_server_rejects_client_without_supported_key_share(self):
+        client = self.create_client()
+        client._supported_groups = [tls.Group.GREASE]
+        server = self.create_server()
+
+        with pytest.raises(
+            tls.AlertHandshakeFailure,
+            match="No supported key share group in ClientHello",
+        ):
+            self._server_fail_hello(client, server)
+
+    def test_client_rejects_server_key_share_it_did_not_offer(self):
+        from unittest.mock import patch
+
+        client = self.create_client()
+        buffers = create_buffers()
+        client.handle_message(b"", buffers)
+        hello = ServerHello(
+            random=bytes(32),
+            legacy_session_id=client.legacy_session_id,
+            cipher_suite=tls.CipherSuite.AES_128_GCM_SHA256,
+            compression_method=tls.CompressionMethod.NULL,
+            key_share=(tls.Group.GREASE, b"unsupported"),
+            supported_version=tls.TLS_VERSION_1_3,
+        )
+
+        with patch("qh3.tls.pull_server_hello", return_value=hello):
+            with pytest.raises(
+                tls.AlertIllegalParameter,
+                match="selected a key share group we did not offer",
+            ):
+                client._client_handle_hello(Buffer(data=b""), buffers[tls.Epoch.INITIAL])
 
     def test_server_bad_finished_verify_data(self):
         client = self.create_client()

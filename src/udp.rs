@@ -9,11 +9,13 @@
 //! On macOS:  recvmsg_x + sendmsg_x (Apple private batch APIs)
 
 #[cfg(unix)]
+use std::borrow::Cow;
+#[cfg(unix)]
 use std::io::IoSliceMut;
 #[cfg(unix)]
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, SocketAddr, SocketAddrV6};
 #[cfg(unix)]
-use std::os::unix::io::{BorrowedFd, RawFd};
+use std::os::unix::io::{BorrowedFd, OwnedFd, RawFd};
 #[cfg(unix)]
 use std::sync::Mutex;
 
@@ -34,7 +36,7 @@ pub struct PyUdpSocketState {
     #[cfg(unix)]
     inner: quinn_udp::UdpSocketState,
     #[cfg(unix)]
-    fd: RawFd,
+    fd: OwnedFd,
     #[cfg(unix)]
     recv_buf: Mutex<Vec<u8>>,
     #[cfg(unix)]
@@ -54,9 +56,19 @@ impl PyUdpSocketState {
     fn new(fd: i64) -> PyResult<Self> {
         #[cfg(unix)]
         {
-            let raw_fd = fd as RawFd;
+            let raw_fd = RawFd::try_from(fd).map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err("file descriptor does not fit in int")
+            })?;
+            if raw_fd < 0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "file descriptor must be non-negative",
+                ));
+            }
             let borrowed = unsafe { BorrowedFd::borrow_raw(raw_fd) };
-            let sock_ref = UdpSockRef::from(&borrowed);
+            let owned = borrowed
+                .try_clone_to_owned()
+                .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))?;
+            let sock_ref = UdpSockRef::from(&owned);
 
             let state = quinn_udp::UdpSocketState::new(sock_ref)
                 .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))?;
@@ -84,7 +96,7 @@ impl PyUdpSocketState {
 
             Ok(Self {
                 inner: state,
-                fd: raw_fd,
+                fd: owned,
                 recv_buf: Mutex::new(vec![0u8; RECV_BUF_LEN * BATCH_SIZE]),
                 max_gso,
                 gro,
@@ -137,30 +149,27 @@ impl PyUdpSocketState {
 
     /// Batch-receive datagrams via recvmmsg with GRO splitting.
     ///
-    /// Returns ``(list[bytes], addr)`` where *addr* is
-    /// ``(ip_str, port, flowinfo, scope_id)`` from the first message.
-    /// All datagrams in the list originate from that address (client
-    /// sockets only talk to one peer).
-    ///
-    /// Returns ``([], None)`` when the socket would block.
-    fn recv<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+    /// Returns ``list[tuple[bytes, addr]]``, preserving the source address
+    /// from every receive slot for each datagram produced by GRO splitting.
+    /// Returns an empty list when the socket would block.
+    fn recv<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         #[cfg(unix)]
         {
-            let mut buf = self.recv_buf.lock().unwrap();
+            let mut buf = self.recv_buf.lock().map_err(|_| {
+                pyo3::exceptions::PyOSError::new_err("UDP receive buffer lock poisoned")
+            })?;
             let slot_count = buf.len() / RECV_BUF_LEN;
             let mut metas = vec![RecvMeta::default(); slot_count];
 
             let mut iovs: Vec<IoSliceMut<'_>> =
                 buf.chunks_mut(RECV_BUF_LEN).map(IoSliceMut::new).collect();
 
-            let borrowed = unsafe { BorrowedFd::borrow_raw(self.fd) };
-            let sock_ref = UdpSockRef::from(&borrowed);
+            let sock_ref = UdpSockRef::from(&self.fd);
 
             let n = match self.inner.recv(sock_ref, &mut iovs, &mut metas) {
                 Ok(n) => n,
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    let empty = PyList::empty(py);
-                    return PyTuple::new(py, [empty.as_any(), py.None().bind(py)]);
+                    return Ok(PyList::empty(py));
                 }
                 Err(e) => {
                     return Err(pyo3::exceptions::PyOSError::new_err(e.to_string()));
@@ -168,52 +177,23 @@ impl PyUdpSocketState {
             };
 
             if n == 0 {
-                let empty = PyList::empty(py);
-                return PyTuple::new(py, [empty.as_any(), py.None().bind(py)]);
+                return Ok(PyList::empty(py));
             }
 
-            // Build address tuple from first message's source.
-            let first_addr = &metas[0].addr;
-            let addr_obj = match first_addr {
-                SocketAddr::V4(a) => {
-                    let ip = a.ip().to_string();
-                    PyTuple::new(
-                        py,
-                        &[
-                            ip.into_pyobject(py)?.into_any(),
-                            a.port().into_pyobject(py)?.into_any(),
-                        ],
-                    )?
-                }
-                SocketAddr::V6(a) => {
-                    let ip = a.ip().to_string();
-                    PyTuple::new(
-                        py,
-                        &[
-                            ip.into_pyobject(py)?.into_any(),
-                            a.port().into_pyobject(py)?.into_any(),
-                            a.flowinfo().into_pyobject(py)?.into_any(),
-                            a.scope_id().into_pyobject(py)?.into_any(),
-                        ],
-                    )?
-                }
-            };
-
-            let mut segments: Vec<Bound<'py, PyBytes>> = Vec::new();
+            let datagrams = PyList::empty(py);
             for i in 0..n {
                 let meta = &metas[i];
                 let data = &iovs[i][..meta.len];
                 if meta.stride > 0 && meta.len > meta.stride {
                     for chunk in data.chunks(meta.stride) {
-                        segments.push(PyBytes::new(py, chunk));
+                        append_received_datagram(py, &datagrams, chunk, meta.addr)?;
                     }
                 } else {
-                    segments.push(PyBytes::new(py, data));
+                    append_received_datagram(py, &datagrams, data, meta.addr)?;
                 }
             }
 
-            let seg_list = PyList::new(py, &segments)?;
-            PyTuple::new(py, [seg_list.as_any(), addr_obj.as_any()])
+            Ok(datagrams)
         }
         #[cfg(not(unix))]
         {
@@ -234,8 +214,7 @@ impl PyUdpSocketState {
         &self,
         _py: Python<'py>,
         datagrams: Bound<'py, PyList>,
-        addr_ip: &str,
-        addr_port: u16,
+        addr: &Bound<'py, PyTuple>,
     ) -> PyResult<usize> {
         let count = datagrams.len();
         if count == 0 {
@@ -244,36 +223,31 @@ impl PyUdpSocketState {
 
         #[cfg(unix)]
         {
-            let ip: IpAddr = addr_ip.parse().map_err(|e: std::net::AddrParseError| {
-                pyo3::exceptions::PyValueError::new_err(e.to_string())
-            })?;
-            let dest = SocketAddr::new(ip, addr_port);
+            let dest = socket_addr_from_py(addr)?;
 
-            let borrowed = unsafe { BorrowedFd::borrow_raw(self.fd) };
             let mut sent = 0usize;
 
             // We keep the Bound<PyBytes> handles alive so the &[u8] borrows remain valid.
-            let items: Vec<Bound<'py, PyBytes>> = (0..count)
-                .map(|i| {
-                    datagrams
-                        .get_item(i)
-                        .expect("list index")
-                        .cast_into::<PyBytes>()
-                        .expect("expected bytes")
-                })
-                .collect();
+            let items: Vec<Bound<'py, PyBytes>> = datagrams
+                .iter()
+                .map(|item| item.cast_into::<PyBytes>().map_err(pyo3::PyErr::from))
+                .collect::<PyResult<_>>()?;
             let slices: Vec<&[u8]> = items.iter().map(|b| b.as_bytes()).collect();
 
             if self.max_gso > 1 {
                 let mut i = 0;
                 while i < slices.len() {
                     let seg_size = slices[i].len();
-                    let cap = self.max_gso.min(65000 / seg_size.max(1));
+                    let cap = 65000usize
+                        .checked_div(seg_size)
+                        .map_or(1, |cap| self.max_gso.min(cap).max(1));
                     let mut end = i + 1;
 
                     while end < slices.len() && end - i < cap {
                         let dlen = slices[end].len();
-                        if dlen == seg_size {
+                        if dlen == 0 {
+                            break;
+                        } else if dlen == seg_size {
                             end += 1;
                         } else if dlen < seg_size {
                             end += 1;
@@ -285,18 +259,12 @@ impl PyUdpSocketState {
 
                     let group_count = end - i;
 
-                    // GSO requires a single contiguous buffer
-                    // one copy here is unavoidable.
-                    let total_len: usize = slices[i..end].iter().map(|s| s.len()).sum();
-                    let mut contents = Vec::with_capacity(total_len);
-                    for s in &slices[i..end] {
-                        contents.extend_from_slice(s);
-                    }
+                    let contents = coalesce_gso_group(&slices[i..end]);
 
                     let transmit = Transmit {
                         destination: dest,
                         ecn: None,
-                        contents: &contents,
+                        contents: contents.as_ref(),
                         segment_size: if group_count > 1 {
                             Some(seg_size)
                         } else {
@@ -305,7 +273,7 @@ impl PyUdpSocketState {
                         src_ip: None,
                     };
 
-                    let sock_ref = UdpSockRef::from(&borrowed);
+                    let sock_ref = UdpSockRef::from(&self.fd);
                     match self.inner.try_send(sock_ref, &transmit) {
                         Ok(()) => sent += group_count,
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
@@ -327,7 +295,7 @@ impl PyUdpSocketState {
                         src_ip: None,
                     };
 
-                    let sock_ref = UdpSockRef::from(&borrowed);
+                    let sock_ref = UdpSockRef::from(&self.fd);
                     match self.inner.try_send(sock_ref, &transmit) {
                         Ok(()) => sent += 1,
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
@@ -342,10 +310,107 @@ impl PyUdpSocketState {
         }
         #[cfg(not(unix))]
         {
-            let _ = (_py, datagrams, addr_ip, addr_port);
+            let _ = (_py, datagrams, addr);
             Err(pyo3::exceptions::PyNotImplementedError::new_err(
                 "send is only supported on Unix platforms",
             ))
         }
+    }
+}
+
+#[cfg(unix)]
+fn socket_addr_to_py<'py>(py: Python<'py>, addr: SocketAddr) -> PyResult<Bound<'py, PyTuple>> {
+    match addr {
+        SocketAddr::V4(addr) => PyTuple::new(
+            py,
+            &[
+                addr.ip().to_string().into_pyobject(py)?.into_any(),
+                addr.port().into_pyobject(py)?.into_any(),
+            ],
+        ),
+        SocketAddr::V6(addr) => PyTuple::new(
+            py,
+            &[
+                addr.ip().to_string().into_pyobject(py)?.into_any(),
+                addr.port().into_pyobject(py)?.into_any(),
+                addr.flowinfo().into_pyobject(py)?.into_any(),
+                addr.scope_id().into_pyobject(py)?.into_any(),
+            ],
+        ),
+    }
+}
+
+#[cfg(unix)]
+fn append_received_datagram<'py>(
+    py: Python<'py>,
+    datagrams: &Bound<'py, PyList>,
+    data: &[u8],
+    addr: SocketAddr,
+) -> PyResult<()> {
+    let data = PyBytes::new(py, data);
+    let addr = socket_addr_to_py(py, addr)?;
+    datagrams.append(PyTuple::new(py, [data.as_any(), addr.as_any()])?)
+}
+
+#[cfg(unix)]
+fn socket_addr_from_py(addr: &Bound<'_, PyTuple>) -> PyResult<SocketAddr> {
+    let ip_text: String = addr.get_item(0)?.extract()?;
+    let port: u16 = addr.get_item(1)?.extract()?;
+    let ip: IpAddr = ip_text.parse().map_err(|e: std::net::AddrParseError| {
+        pyo3::exceptions::PyValueError::new_err(e.to_string())
+    })?;
+
+    match addr.len() {
+        2 => Ok(SocketAddr::new(ip, port)),
+        4 => {
+            let IpAddr::V6(ip) = ip else {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "flowinfo and scope_id require an IPv6 address",
+                ));
+            };
+            let flowinfo: u32 = addr.get_item(2)?.extract()?;
+            let scope_id: u32 = addr.get_item(3)?.extract()?;
+            Ok(SocketAddr::V6(SocketAddrV6::new(
+                ip, port, flowinfo, scope_id,
+            )))
+        }
+        _ => Err(pyo3::exceptions::PyValueError::new_err(
+            "address must be a 2-tuple or IPv6 4-tuple",
+        )),
+    }
+}
+
+#[cfg(unix)]
+fn coalesce_gso_group<'a>(group: &[&'a [u8]]) -> Cow<'a, [u8]> {
+    if group.len() == 1 {
+        return Cow::Borrowed(group[0]);
+    }
+    let total_len = group.iter().map(|slice| slice.len()).sum();
+    let mut contents = Vec::with_capacity(total_len);
+    for slice in group {
+        contents.extend_from_slice(slice);
+    }
+    Cow::Owned(contents)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_gso_group_borrows_original_datagram() {
+        let datagram = b"one packet";
+        let contents = coalesce_gso_group(&[datagram.as_slice()]);
+
+        assert!(matches!(contents, Cow::Borrowed(_)));
+        assert_eq!(contents.as_ptr(), datagram.as_ptr());
+    }
+
+    #[test]
+    fn multiple_gso_segments_are_coalesced() {
+        let contents = coalesce_gso_group(&[b"one".as_slice(), b"two".as_slice()]);
+
+        assert!(matches!(contents, Cow::Owned(_)));
+        assert_eq!(contents.as_ref(), b"onetwo");
     }
 }

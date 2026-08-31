@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "qh3"
-description = "A lightway and fast implementation of QUIC and HTTP/3"
+description = "A lightweight and fast implementation of QUIC and HTTP/3"
 readme = "README.rst"
 requires-python = ">=3.7"
 license = { file = "LICENSE" }
@@ -39,7 +39,7 @@ dynamic = [
 ]
 
 [tool.maturin]
-features = ["pyo3/extension-module", "pyo3/abi3-py37", "pyo3/generate-import-lib"]
+features = ["extension-module"]
 module-name = "qh3._hazmat"
 
 [tool.maturin.sbom]

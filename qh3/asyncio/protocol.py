@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from typing import Any, Callable, cast
 
 from ..quic import events
@@ -25,6 +26,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         self._quic = quic
         self._stream_readers: dict[int, asyncio.StreamReader] = {}
         self._stream_readers_done: set[int] = set()
+        self._stream_readers_done_order: deque[int] = deque()
         self._timer: asyncio.TimerHandle | None = None
         self._timer_at: float | None = None
         self._transmit_task: asyncio.Handle | None = None
@@ -74,9 +76,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         The returned reader and writer objects are instances of
         :class:`asyncio.StreamReader` and :class:`asyncio.StreamWriter` classes.
         """
-        stream_id = self._quic.get_next_available_stream_id(
-            is_unidirectional=is_unidirectional
-        )
+        stream_id = self._quic._open_stream(is_unidirectional=is_unidirectional)
         return self._create_stream(stream_id)
 
     def request_key_update(self) -> None:
@@ -111,6 +111,9 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
             datagrams: list[bytes] = []
             send_addr: NetworkAddress | None = None
             for data, addr in self._quic.datagrams_to_send(now=now):
+                if datagrams and addr != send_addr:
+                    sendto_many(datagrams, send_addr)
+                    datagrams = []
                 datagrams.append(data)
                 send_addr = addr
             if datagrams:
@@ -157,9 +160,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
 
     def datagrams_received(self, data: list[bytes], addr: NetworkAddress) -> None:
         now = self._loop_time()
-        receive = self._quic.receive_datagram
-        for dgram in data:
-            receive(dgram, addr, now=now)
+        self._quic.receive_many_datagrams(data, addr, now=now)
         self._process_events()
         self.transmit()
 
@@ -175,6 +176,9 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         if isinstance(event, events.ConnectionTerminated):
             for reader in self._stream_readers.values():
                 reader.feed_eof()
+            self._stream_readers.clear()
+            self._stream_readers_done.clear()
+            self._stream_readers_done_order.clear()
         elif isinstance(event, events.StreamDataReceived):
             reader = self._stream_readers.get(event.stream_id, None)
             if reader is None:
@@ -187,6 +191,8 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
             reader.feed_data(event.data)
             if event.end_stream:
                 reader.feed_eof()
+                self._stream_readers.pop(event.stream_id, None)
+                self._mark_stream_reader_done(event.stream_id)
         elif isinstance(event, events.StreamReset):
             # RFC 9000 3.5: peer abruptly terminated the stream. Surface
             # this to any waiting reader as an exception/EOF so that
@@ -201,16 +207,7 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
                     )
                 )
                 self._stream_readers.pop(event.stream_id, None)
-                self._stream_readers_done.add(event.stream_id)
-        elif isinstance(event, events.StopSendingReceived):
-            # RFC 9000 3.5: peer asked us to stop sending. Drop the
-            # reader so we no longer wait on it; the writer side is
-            # already torn down by the QUIC layer.
-            reader = self._stream_readers.get(event.stream_id, None)
-            if reader is not None:
-                reader.feed_eof()
-                self._stream_readers.pop(event.stream_id, None)
-                self._stream_readers_done.add(event.stream_id)
+                self._mark_stream_reader_done(event.stream_id)
 
     # private
 
@@ -230,6 +227,15 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
         self._quic.handle_timer(now=now)
         self._process_events()
         self.transmit()
+
+    def _mark_stream_reader_done(self, stream_id: int) -> None:
+        if stream_id in self._stream_readers_done:
+            return
+        self._stream_readers_done.add(stream_id)
+        self._stream_readers_done_order.append(stream_id)
+        if len(self._stream_readers_done_order) > 1024:
+            expired = self._stream_readers_done_order.popleft()
+            self._stream_readers_done.discard(expired)
 
     def _process_events(self) -> None:
         quic = self._quic
@@ -257,9 +263,9 @@ class QuicConnectionProtocol(asyncio.DatagramProtocol):
 
                 self._closed.set()
             elif isinstance(event, events.HandshakeCompleted):
+                self._connected = True
                 if self._connected_waiter is not None:
                     waiter = self._connected_waiter
-                    self._connected = True
                     self._connected_waiter = None
                     waiter.set_result(None)
             elif isinstance(event, events.PingAcknowledged):
@@ -291,6 +297,7 @@ class QuicStreamAdapter(asyncio.Transport):
         """
         if name == "stream_id":
             return self.stream_id
+        return default
 
     def write(self, data) -> None:
         self.protocol._quic.send_stream_data(self.stream_id, data)
@@ -300,19 +307,18 @@ class QuicStreamAdapter(asyncio.Transport):
         if self._closing:
             return
         self._closing = True
-        stream = self.protocol._quic._streams.get(self.stream_id)
-        if stream is None:
+        streams = getattr(self.protocol._quic, "_streams", None)
+        if streams is not None:
+            stream = streams.get(self.stream_id)
+            if stream is None:
+                return
+            sender = stream.sender
+            if sender.is_finished or sender.reset_pending:
+                return
+        can_send = getattr(self.protocol._quic, "_stream_can_send", None)
+        if can_send is not None and not can_send(self.stream_id):
             return
-        sender = stream.sender
-        if sender.is_finished or sender.reset_pending:
-            return
-        try:
-            self.protocol._quic.send_stream_data(self.stream_id, b"", end_stream=True)
-        except (
-            AssertionError,
-            KeyError,
-        ):  # Defensive: Lost a race with peer reset / connection teardown.
-            return
+        self.protocol._quic.send_stream_data(self.stream_id, b"", end_stream=True)
         self.protocol._transmit_soon()
 
     def close(self) -> None:

@@ -16,8 +16,7 @@ from ..tls import (
     load_pem_x509_certificates,
 )
 from .logger import QuicLogger
-from .packet import QuicProtocolVersion
-from .packet_builder import PACKET_MAX_SIZE
+from .packet import PACKET_MAX_SIZE, QuicProtocolVersion
 
 
 @dataclass

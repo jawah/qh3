@@ -9,6 +9,7 @@ from qh3._hazmat import Buffer, encode_uint_var
 from qh3.h3.connection import (
     H3_ALPN,
     ErrorCode,
+    FrameError,
     FrameType,
     FrameUnexpected,
     H3Connection,
@@ -19,18 +20,19 @@ from qh3.h3.connection import (
     encode_frame,
     encode_settings,
     parse_settings,
+    parse_max_push_id,
     validate_push_promise_headers,
     validate_request_headers,
     validate_response_headers,
     validate_trailers,
 )
-from qh3.h3.events import DataReceived, HeadersReceived, PushPromiseReceived, InformationalHeadersReceived, StreamReset as H3StreamReset, StopSending as H3StopSending
+from qh3.h3.events import DataReceived, GoawayReceived, HeadersReceived, PushPromiseReceived, InformationalHeadersReceived, StreamReset as H3StreamReset, StopSending as H3StopSending
 from qh3.h3.exceptions import NoAvailablePushIDError
 from qh3.quic.configuration import QuicConfiguration
 from qh3.quic.events import StreamDataReceived, StreamReset as QuicStreamReset, StopSendingReceived
 from qh3.quic.logger import QuicLogger
 
-from .test_connection import client_and_server, transfer
+from .quic_utils import client_and_server, transfer
 
 DUMMY_SETTINGS = {
     Setting.QPACK_MAX_TABLE_CAPACITY: 4096,
@@ -134,6 +136,78 @@ class FakeQuicConnection:
 
 class TestH3Connection:
     maxDiff = None
+
+    def test_parse_max_push_id_rejects_trailing_bytes(self):
+        with pytest.raises(FrameError, match="extra trailing bytes"):
+            parse_max_push_id(b"\x01\x00")
+
+    def test_validate_response_headers_rejects_non_numeric_status(self):
+        with pytest.raises(MessageError, match="Invalid :status"):
+            validate_response_headers([(b":status", b"two hundred")])
+
+    def test_handle_goaway_and_reject_trailing_bytes(self):
+        quic_client = FakeQuicConnection(
+            configuration=QuicConfiguration(is_client=True)
+        )
+        h3_client = H3Connection(quic_client)
+        control_stream_id = 3
+        settings = encode_frame(FrameType.SETTINGS, encode_settings(DUMMY_SETTINGS))
+
+        events = h3_client.handle_event(
+            StreamDataReceived(
+                stream_id=control_stream_id,
+                data=encode_uint_var(StreamType.CONTROL)
+                + settings
+                + encode_frame(FrameType.GOAWAY, encode_uint_var(4)),
+                end_stream=False,
+            )
+        )
+        assert events == [GoawayReceived(stream_id=4)]
+
+        h3_client.handle_event(
+            StreamDataReceived(
+                stream_id=control_stream_id,
+                data=encode_frame(FrameType.GOAWAY, b"\x04\x00"),
+                end_stream=False,
+            )
+        )
+        assert quic_client.closed == (
+            ErrorCode.H3_FRAME_ERROR,
+            "GOAWAY frame has extra trailing bytes",
+        )
+
+    def test_send_datagram_prefixes_flow_id(self):
+        quic_client = FakeQuicConnection(
+            configuration=QuicConfiguration(is_client=True)
+        )
+        quic_client.send_datagram_frame = lambda data: setattr(
+            quic_client, "sent_datagram", data
+        )
+        h3_client = H3Connection(quic_client)
+
+        h3_client.send_datagram(64, b"payload")
+
+        assert quic_client.sent_datagram == encode_uint_var(64) + b"payload"
+
+    def test_reset_and_stop_sending_remove_fully_ended_streams(self):
+        quic_client = FakeQuicConnection(
+            configuration=QuicConfiguration(is_client=True)
+        )
+        h3_client = H3Connection(quic_client)
+
+        reset_stream = h3_client._get_or_create_stream(0)
+        reset_stream.sending_ended = True
+        assert h3_client.handle_event(
+            QuicStreamReset(error_code=1, stream_id=0)
+        ) == [H3StreamReset(error_code=1, stream_id=0)]
+        assert 0 not in h3_client._stream
+
+        stopped_stream = h3_client._get_or_create_stream(4)
+        stopped_stream.receiving_ended = True
+        assert h3_client.handle_event(
+            StopSendingReceived(error_code=2, stream_id=4)
+        ) == [H3StopSending(error_code=2, stream_id=4)]
+        assert 4 not in h3_client._stream
 
     def _make_request(self, h3_client, h3_server):
         quic_client = h3_client._quic
