@@ -1,3 +1,11 @@
+2.0.1 (2026-09-01)
+==================
+
+**Fixed**
+- Added ``QuicConnection.should_wait_for_ack(now)`` as the supported replacement
+  for inspecting private loss-recovery state when coordinating flow control manually.
+- Missing typing on some key methods in ``QuicConnection`` such as ``get_peercert``.
+
 2.0.0 (2026-08-31)
 ==================
 

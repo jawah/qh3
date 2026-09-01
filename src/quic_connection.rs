@@ -518,6 +518,10 @@ impl PyQuicConnectionCore {
         self.inner.recovery().loss_total()
     }
 
+    fn should_wait_for_ack(&self, now: f64) -> PyResult<bool> {
+        Ok(self.inner.should_wait_for_ack(duration_from_seconds(now)?))
+    }
+
     #[getter]
     fn stream_limits(&self) -> (u64, u64, u64, u64) {
         let streams = self.inner.streams();

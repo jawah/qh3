@@ -10,6 +10,7 @@ from typing import Any, Callable, TypeVar
 
 from .. import tls
 from .._hazmat import Buffer, QuicConnectionCore
+from .._hazmat import Certificate as X509Certificate
 from .._hazmat import pull_quic_header as _pull_quic_header
 from . import events
 from .configuration import QuicConfiguration
@@ -175,10 +176,10 @@ class QuicConnection:
     def get_cipher(self) -> tls.CipherSuite | None:
         return None if self._tls is None else self._tls.cipher_suite
 
-    def get_peercert(self):
+    def get_peercert(self) -> X509Certificate | None:
         return None if self._tls is None else self._tls.peer_certificate
 
-    def get_issuercerts(self):
+    def get_issuercerts(self) -> list[X509Certificate]:
         return [] if self._tls is None else self._tls.peer_certificate_chain
 
     @property
@@ -336,6 +337,18 @@ class QuicConnection:
         if self._core is not None:
             self._call_core(self._core.handle_timer, now)
             self._drain_core()
+
+    def should_wait_for_ack(self, now: float) -> bool:
+        """Return whether the peer is expected to send an ACK soon.
+
+        This is a flow-control scheduling heuristic. It returns ``True`` when
+        at least two ACK-eliciting packets are outstanding, or when one has
+        remained outstanding for the peer's negotiated maximum ACK delay.
+        ``now`` must use the same clock as the other connection methods.
+        """
+        return self._core is not None and self._call_core(
+            self._core.should_wait_for_ack, now
+        )
 
     def next_event(self) -> events.QuicEvent | None:
         return self._events.popleft() if self._events else None

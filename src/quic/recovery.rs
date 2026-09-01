@@ -677,6 +677,19 @@ impl Recovery {
         self.loss_total
     }
 
+    pub fn should_wait_for_ack(&self, now: Duration) -> bool {
+        let outstanding = self
+            .spaces
+            .iter()
+            .map(|space| space.ack_eliciting_in_flight)
+            .sum::<u64>();
+        outstanding >= 2
+            || (outstanding == 1
+                && self
+                    .last_ack_eliciting_sent
+                    .is_some_and(|sent| saturating_add(sent, self.max_ack_delay) <= now))
+    }
+
     pub fn outstanding_packets(
         &self,
         space: PacketNumberSpace,
@@ -1564,6 +1577,21 @@ mod tests {
         assert_eq!(r.rtt.smoothed(), Some(Duration::from_millis(100)));
         assert_eq!(r.congestion.congestion_window(), 13_200);
         assert_eq!(r.congestion.bytes_in_flight(), 0);
+    }
+
+    #[test]
+    fn ack_wait_heuristic_uses_packet_count_and_peer_delay() {
+        let mut r = recovery();
+        assert!(!r.should_wait_for_ack(Duration::from_millis(1000)));
+
+        r.on_packet_sent(PacketNumberSpace::ApplicationData, packet(0, 1000))
+            .unwrap();
+        assert!(!r.should_wait_for_ack(Duration::from_millis(1024)));
+        assert!(r.should_wait_for_ack(Duration::from_millis(1025)));
+
+        r.on_packet_sent(PacketNumberSpace::Handshake, packet(1, 1010))
+            .unwrap();
+        assert!(r.should_wait_for_ack(Duration::from_millis(1010)));
     }
 
     #[test]
