@@ -189,6 +189,7 @@ def test_native_constructor_validation_and_unstarted_facade() -> None:
     assert client.tls is None
     assert client.datagrams_to_send(0) == []
     assert client.get_timer() is None
+    assert not client.should_wait_for_ack(0)
     client.handle_timer(0)
     client.close(reason_phrase="not started")
     client.receive_datagram(b"ignored", SERVER_ADDR, 0)
@@ -304,6 +305,7 @@ def test_native_core_event_translation_and_timer_paths() -> None:
                 ]
             )
             self.timer_calls = []
+            self.ack_wait_calls = []
 
         def next_event(self):
             return next(self.events)
@@ -314,9 +316,15 @@ def test_native_core_event_translation_and_timer_paths() -> None:
         def handle_timer(self, now):
             self.timer_calls.append(now)
 
+        def should_wait_for_ack(self, now):
+            self.ack_wait_calls.append(now)
+            return True
+
     core = EventCore()
     client._core = core
     assert client.get_timer() == 12.5
+    assert client.should_wait_for_ack(12.25)
+    assert core.ack_wait_calls == [12.25]
     client.handle_timer(12.5)
     assert core.timer_calls == [12.5]
     assert client.next_event() == events.StreamReset(2, 1)

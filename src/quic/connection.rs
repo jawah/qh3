@@ -565,6 +565,10 @@ impl ConnectionCore {
         &self.recovery
     }
 
+    pub fn should_wait_for_ack(&self, now: Duration) -> bool {
+        self.recovery.should_wait_for_ack(now)
+    }
+
     pub fn outstanding_application_packets(&self) -> Vec<(u64, u64, usize)> {
         self.recovery
             .outstanding_packets(PacketNumberSpace::ApplicationData)

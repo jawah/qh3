@@ -26,6 +26,7 @@ or write to sockets.
         - datagrams_to_send
         - get_timer
         - handle_timer
+        - should_wait_for_ack
         - next_event
         - get_next_available_stream_id
         - send_stream_data
