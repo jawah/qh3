@@ -2117,6 +2117,7 @@ impl ConnectionCore {
             self.next_packet_type()
         };
         let Some(packet_type) = packet_type else {
+            self.pending_streams = reservations;
             return Ok(None);
         };
         let mut request = PacketRequest::new(packet_type);
@@ -4351,12 +4352,21 @@ mod tests {
             .poll_transmit(Duration::from_millis(1))
             .unwrap()
             .is_none());
+        assert_eq!(client.pending_streams.len(), 1);
         install_application_pair(&mut client, &mut server);
         let report = transfer(&mut client, &mut server, Duration::from_millis(2));
         assert_eq!(report.packets, 1);
         assert!(matches!(
             server.poll_event(),
             Some(ConnectionEvent::StreamData { data, .. }) if data == b"later"
+        ));
+
+        client.send_stream(id, b" again", false).unwrap();
+        let report = transfer(&mut client, &mut server, Duration::from_millis(3));
+        assert_eq!(report.packets, 1);
+        assert!(matches!(
+            server.poll_event(),
+            Some(ConnectionEvent::StreamData { data, .. }) if data == b" again"
         ));
     }
 
