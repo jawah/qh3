@@ -235,6 +235,7 @@ class QuicConnectionCore:
         peer_max_streams_uni: int,
         initial_rtt: float,
         max_ack_delay: float,
+        initial_time: float,
     ) -> None: ...
     def receive_datagram(
         self,
