@@ -235,6 +235,18 @@ def test_native_preconnect_stream_staging_and_connect_validation() -> None:
         server.connect(CLIENT_ADDR, 1.0)
 
 
+def test_native_core_idle_timer_is_anchored_before_tls_drain(monkeypatch) -> None:
+    client = make_client()
+    observed_timers = []
+    monkeypatch.setattr(
+        client, "_drain_tls", lambda: observed_timers.append(client.get_timer())
+    )
+
+    client.connect(SERVER_ADDR, 1000.0)
+
+    assert observed_timers == [1030.0]
+
+
 def test_native_batch_and_gro_fallback_before_handshake(monkeypatch) -> None:
     client = make_client()
     seen = []

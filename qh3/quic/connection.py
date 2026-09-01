@@ -196,7 +196,9 @@ class QuicConnection:
             self._configuration.original_version
             or self._configuration.supported_versions[0]
         )
-        self._create_core(self._remote_addr, self._original_destination_connection_id)
+        self._create_core(
+            self._remote_addr, self._original_destination_connection_id, now
+        )
         self._create_tls(remote_source_cid=None)
         self._tls.start()
         self._drain_tls()
@@ -222,10 +224,10 @@ class QuicConnection:
                 return
             self._remote_addr = address
             self._version = version
-            self._create_core(address, destination_cid)
+            self._create_core(address, destination_cid, now)
             self._create_tls(remote_source_cid=None)
         else:
-            if self._receive_version_negotiation(data, address):
+            if self._receive_version_negotiation(data, address, now):
                 return
             if self._receive_retry(data, address, now):
                 return
@@ -440,7 +442,9 @@ class QuicConnection:
                 error_code, frame_type, reason_phrase
             )
 
-    def _create_core(self, remote_addr: NetworkAddress, initial_dcid: bytes) -> None:
+    def _create_core(
+        self, remote_addr: NetworkAddress, initial_dcid: bytes, now: float
+    ) -> None:
         configuration = self._configuration
         remembered = self._remembered_transport_parameters()
         self._core = QuicConnectionCore(
@@ -487,6 +491,7 @@ class QuicConnection:
             (remembered.initial_max_streams_uni or 0 if remembered is not None else 0),
             configuration.initial_rtt,
             0.025,
+            now,
         )
         self._applied_transport_parameters = None
         self._pre_handshake_state_replayed = False
@@ -551,14 +556,14 @@ class QuicConnection:
         self._transport_parameters_applied = False
         self._core = None
         self._tls = None
-        self._create_core(address, source_cid)
+        self._create_core(address, source_cid, now)
         self._require_core().set_initial_token(token)
         self._create_tls(remote_source_cid=None).start()
         self._drain_tls()
         return True
 
     def _receive_version_negotiation(
-        self, data: bytes, address: NetworkAddress
+        self, data: bytes, address: NetworkAddress, now: float
     ) -> bool:
         if (
             not self._is_client
@@ -613,7 +618,7 @@ class QuicConnection:
         self._transport_parameters_applied = False
         self._core = None
         self._tls = None
-        self._create_core(address, self._original_destination_connection_id)
+        self._create_core(address, self._original_destination_connection_id, now)
         self._create_tls(remote_source_cid=None).start()
         self._drain_tls()
         return True

@@ -60,6 +60,7 @@ pub struct ConnectionConfig {
     pub max_datagram_size: usize,
     pub probe_datagram_size: bool,
     pub idle_timeout: Option<Duration>,
+    pub initial_time: Duration,
     pub ack_delay_exponent: u8,
     /// Maximum encoded DATAGRAM frame size accepted from the peer.
     pub max_datagram_frame_size: Option<usize>,
@@ -95,6 +96,7 @@ impl Default for ConnectionConfig {
             max_datagram_size: 1200,
             probe_datagram_size: false,
             idle_timeout: Some(Duration::from_secs(30)),
+            initial_time: Duration::ZERO,
             ack_delay_exponent: 3,
             max_datagram_frame_size: None,
             peer_max_datagram_frame_size: None,
@@ -497,6 +499,7 @@ impl ConnectionCore {
         }
         let mut recovery = Recovery::new(recovery_config)?;
         recovery.start_pacing(Duration::ZERO);
+        let last_activity = config.initial_time;
         Ok(Self {
             state: ConnectionState::FirstFlight,
             recovery,
@@ -527,7 +530,7 @@ impl ConnectionCore {
             stream_tombstone_order: VecDeque::new(),
             pending_probes: VecDeque::new(),
             next_delivery_id: 0,
-            last_activity: Duration::ZERO,
+            last_activity,
             ack_eliciting_sent_since_receive: false,
             peer_idle_timeout: None,
             close_deadline: None,

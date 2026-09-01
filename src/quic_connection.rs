@@ -33,7 +33,7 @@ impl PyQuicConnectionCore {
         stream_send_limit_bidi_local, stream_send_limit_bidi_remote,
         stream_send_limit_uni, max_stream_reassembly, local_max_streams_bidi,
         local_max_streams_uni, peer_max_streams_bidi, peer_max_streams_uni,
-        initial_rtt, max_ack_delay
+        initial_rtt, max_ack_delay, initial_time
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -64,6 +64,7 @@ impl PyQuicConnectionCore {
         peer_max_streams_uni: u64,
         initial_rtt: f64,
         max_ack_delay: f64,
+        initial_time: f64,
     ) -> PyResult<Self> {
         let _ = max_ack_delay;
         let config = ConnectionConfig {
@@ -82,6 +83,7 @@ impl PyQuicConnectionCore {
             max_datagram_size,
             probe_datagram_size,
             idle_timeout: idle_timeout.map(duration_from_seconds).transpose()?,
+            initial_time: duration_from_seconds(initial_time)?,
             ack_delay_exponent,
             max_datagram_frame_size,
             peer_max_datagram_frame_size,

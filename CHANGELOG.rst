@@ -1,3 +1,9 @@
+2.0.2 (2026-09-01)
+==================
+
+**Fixed**
+- Address a very subtle and rare race condition in the QuicConnectionCore on initialization.
+
 2.0.1 (2026-09-01)
 ==================
 
