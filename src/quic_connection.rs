@@ -1,4 +1,5 @@
 use std::net::{IpAddr, SocketAddr, SocketAddrV6};
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -16,9 +17,9 @@ use crate::quic::types::{
     ConnectionState, Epoch, FrameType, PacketNumberSpace, Role, StreamDirection, StreamId,
 };
 
-#[pyclass(name = "QuicConnectionCore", module = "qh3._hazmat")]
+#[pyclass(name = "QuicConnectionCore", module = "qh3._hazmat", frozen)]
 pub struct PyQuicConnectionCore {
-    inner: ConnectionCore,
+    inner: Mutex<ConnectionCore>,
 }
 
 #[pymethods]
@@ -108,20 +109,20 @@ impl PyQuicConnectionCore {
             peer_disable_active_migration: false,
         };
         Ok(Self {
-            inner: ConnectionCore::new(config).map_err(core_error)?,
+            inner: Mutex::new(ConnectionCore::new(config).map_err(core_error)?),
         })
     }
 
     #[pyo3(signature = (data, addr, now, datagram_size=None))]
     fn receive_datagram(
-        &mut self,
+        &self,
         data: &Bound<'_, PyBytes>,
         addr: &Bound<'_, PyAny>,
         now: f64,
         datagram_size: Option<usize>,
     ) -> PyResult<(usize, usize, usize, usize, usize, usize)> {
         let meta = self.receive_meta(addr, now)?;
-        self.inner
+        self.lock_inner()
             .receive_datagram_with_size(
                 data.as_bytes(),
                 datagram_size.unwrap_or(data.as_bytes().len()),
@@ -132,7 +133,7 @@ impl PyQuicConnectionCore {
     }
 
     fn receive_many_datagrams(
-        &mut self,
+        &self,
         datagrams: Vec<Bound<'_, PyBytes>>,
         addr: &Bound<'_, PyAny>,
         now: f64,
@@ -145,35 +146,35 @@ impl PyQuicConnectionCore {
                 meta,
             })
             .collect();
-        self.inner
+        self.lock_inner()
             .receive_many_datagrams(&datagrams)
             .map(report_tuple)
             .map_err(core_error)
     }
 
     fn receive_gro_buffer(
-        &mut self,
+        &self,
         buffer: &Bound<'_, PyBytes>,
         segment_size: usize,
         addr: &Bound<'_, PyAny>,
         now: f64,
     ) -> PyResult<(usize, usize, usize, usize, usize, usize)> {
         let meta = self.receive_meta(addr, now)?;
-        self.inner
+        self.lock_inner()
             .receive_gro_buffer(buffer.as_bytes(), segment_size, meta)
             .map(report_tuple)
             .map_err(core_error)
     }
 
-    fn next_event(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        self.inner
+    fn next_event(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        self.lock_inner()
             .poll_event()
             .map(|event| event_to_python(py, event))
             .transpose()
     }
 
-    fn poll_transmit(&mut self, py: Python<'_>, now: f64) -> PyResult<Option<Py<PyAny>>> {
-        self.inner
+    fn poll_transmit(&self, py: Python<'_>, now: f64) -> PyResult<Option<Py<PyAny>>> {
+        self.lock_inner()
             .poll_transmit(duration_from_seconds(now)?)
             .map_err(core_error)?
             .map(|transmit| transmit_to_python(py, transmit))
@@ -181,7 +182,7 @@ impl PyQuicConnectionCore {
     }
 
     fn get_timer(&self) -> Option<(String, f64)> {
-        self.inner.next_timer().map(|timer| {
+        self.lock_inner().next_timer().map(|timer| {
             (
                 timer_name(timer.kind).to_owned(),
                 timer.deadline.as_secs_f64(),
@@ -189,24 +190,25 @@ impl PyQuicConnectionCore {
         })
     }
 
-    fn handle_timer(&mut self, now: f64) -> PyResult<()> {
-        self.inner
+    fn handle_timer(&self, now: f64) -> PyResult<()> {
+        self.lock_inner()
             .handle_timeout(duration_from_seconds(now)?)
             .map_err(core_error)
     }
 
-    fn set_initial_token(&mut self, token: &Bound<'_, PyBytes>) {
-        self.inner.set_initial_token(token.as_bytes().to_vec());
+    fn set_initial_token(&self, token: &Bound<'_, PyBytes>) {
+        self.lock_inner()
+            .set_initial_token(token.as_bytes().to_vec());
     }
 
-    fn open_stream(&mut self, unidirectional: bool) -> PyResult<u64> {
+    fn open_stream(&self, unidirectional: bool) -> PyResult<u64> {
         let direction = if unidirectional {
             StreamDirection::Unidirectional
         } else {
             StreamDirection::Bidirectional
         };
         match self
-            .inner
+            .lock_inner()
             .command(ConnectionCommand::OpenStream(direction))
             .map_err(core_error)?
         {
@@ -218,45 +220,40 @@ impl PyQuicConnectionCore {
     }
 
     #[pyo3(signature = (stream_id, data, fin=false))]
-    fn send_stream(
-        &mut self,
-        stream_id: u64,
-        data: &Bound<'_, PyBytes>,
-        fin: bool,
-    ) -> PyResult<()> {
-        self.inner
+    fn send_stream(&self, stream_id: u64, data: &Bound<'_, PyBytes>, fin: bool) -> PyResult<()> {
+        self.lock_inner()
             .send_stream(parse_stream_id(stream_id)?, data.as_bytes(), fin)
             .map(|_| ())
             .map_err(core_error)
     }
 
-    fn reset_stream(&mut self, stream_id: u64, error_code: u64) -> PyResult<()> {
+    fn reset_stream(&self, stream_id: u64, error_code: u64) -> PyResult<()> {
         self.command(ConnectionCommand::ResetStream {
             stream_id: parse_stream_id(stream_id)?,
             error_code,
         })
     }
 
-    fn stop_sending(&mut self, stream_id: u64, error_code: u64) -> PyResult<()> {
+    fn stop_sending(&self, stream_id: u64, error_code: u64) -> PyResult<()> {
         self.command(ConnectionCommand::StopSending {
             stream_id: parse_stream_id(stream_id)?,
             error_code,
         })
     }
 
-    fn send_datagram(&mut self, data: &Bound<'_, PyBytes>) -> PyResult<()> {
-        self.inner
+    fn send_datagram(&self, data: &Bound<'_, PyBytes>) -> PyResult<()> {
+        self.lock_inner()
             .send_datagram(data.as_bytes())
             .map(|_| ())
             .map_err(core_error)
     }
 
-    fn send_ping(&mut self, uid: u64) -> PyResult<()> {
+    fn send_ping(&self, uid: u64) -> PyResult<()> {
         self.command(ConnectionCommand::SendPing(uid))
     }
 
-    fn send_crypto(&mut self, epoch: u8, offset: u64, data: &Bound<'_, PyBytes>) -> PyResult<()> {
-        self.inner
+    fn send_crypto(&self, epoch: u8, offset: u64, data: &Bound<'_, PyBytes>) -> PyResult<()> {
+        self.lock_inner()
             .send_crypto(parse_epoch(epoch)?, offset, data.as_bytes())
             .map(|_| ())
             .map_err(core_error)
@@ -264,7 +261,7 @@ impl PyQuicConnectionCore {
 
     #[pyo3(signature = (error_code, frame_type=None, reason=None))]
     fn close(
-        &mut self,
+        &self,
         error_code: u64,
         frame_type: Option<u64>,
         reason: Option<&Bound<'_, PyBytes>>,
@@ -282,7 +279,7 @@ impl PyQuicConnectionCore {
     #[pyo3(signature = (direction, epoch, algorithms, key, iv, hp, phase, traffic_secret=None, version=None))]
     #[allow(clippy::too_many_arguments)]
     fn install_packet_key(
-        &mut self,
+        &self,
         direction: &str,
         epoch: u8,
         algorithms: (String, String),
@@ -321,8 +318,8 @@ impl PyQuicConnectionCore {
         }
         .map_err(crypto_value_error)?;
         match direction {
-            "send" => self.inner.install_send_key(epoch, packet_key),
-            "receive" => self.inner.install_receive_key(epoch, packet_key),
+            "send" => self.lock_inner().install_send_key(epoch, packet_key),
+            "receive" => self.lock_inner().install_receive_key(epoch, packet_key),
             _ => {
                 return Err(PyValueError::new_err(
                     "direction must be 'send' or 'receive'",
@@ -332,28 +329,28 @@ impl PyQuicConnectionCore {
         Ok(())
     }
 
-    fn request_key_update(&mut self) -> PyResult<()> {
-        self.inner.request_key_update().map_err(core_error)
+    fn request_key_update(&self) -> PyResult<()> {
+        self.lock_inner().request_key_update().map_err(core_error)
     }
 
-    fn change_connection_id(&mut self) -> PyResult<()> {
-        self.inner.change_connection_id().map_err(core_error)
+    fn change_connection_id(&self) -> PyResult<()> {
+        self.lock_inner().change_connection_id().map_err(core_error)
     }
 
-    fn discard_keys(&mut self, epoch: u8) -> PyResult<()> {
-        self.inner.discard_keys(parse_epoch(epoch)?);
+    fn discard_keys(&self, epoch: u8) -> PyResult<()> {
+        self.lock_inner().discard_keys(parse_epoch(epoch)?);
         Ok(())
     }
 
-    fn set_version(&mut self, version: u32) -> PyResult<()> {
-        self.inner.set_version(version).map_err(core_error)
+    fn set_version(&self, version: u32) -> PyResult<()> {
+        self.lock_inner().set_version(version).map_err(core_error)
     }
 
-    fn reject_zero_rtt(&mut self) -> PyResult<()> {
-        self.inner.reject_zero_rtt().map_err(core_error)
+    fn reject_zero_rtt(&self) -> PyResult<()> {
+        self.lock_inner().reject_zero_rtt().map_err(core_error)
     }
 
-    fn restore_send_packet_number(&mut self, space: u8, packet_number: u64) -> PyResult<()> {
+    fn restore_send_packet_number(&self, space: u8, packet_number: u64) -> PyResult<()> {
         let space = match space {
             0 => PacketNumberSpace::Initial,
             1 => PacketNumberSpace::Handshake,
@@ -364,7 +361,7 @@ impl PyQuicConnectionCore {
                 ))
             }
         };
-        self.inner
+        self.lock_inner()
             .restore_send_packet_number(space, packet_number)
             .map_err(core_error)
     }
@@ -379,7 +376,7 @@ impl PyQuicConnectionCore {
     ))]
     #[allow(clippy::too_many_arguments)]
     fn apply_peer_transport_parameters(
-        &mut self,
+        &self,
         connection_send_limit: u64,
         stream_send_limit_bidi_local: u64,
         stream_send_limit_bidi_remote: u64,
@@ -402,7 +399,7 @@ impl PyQuicConnectionCore {
                 })
             })
             .transpose()?;
-        self.inner
+        self.lock_inner()
             .apply_peer_transport_parameters(
                 connection_send_limit,
                 stream_send_limit_bidi_local,
@@ -422,17 +419,17 @@ impl PyQuicConnectionCore {
             .map_err(core_error)
     }
 
-    fn handshake_complete(&mut self) {
-        self.inner.handshake_complete();
+    fn handshake_complete(&self) {
+        self.lock_inner().handshake_complete();
     }
 
-    fn handshake_confirmed(&mut self) {
-        self.inner.confirm_handshake();
+    fn handshake_confirmed(&self) {
+        self.lock_inner().confirm_handshake();
     }
 
     #[getter]
     fn state(&self) -> &'static str {
-        match self.inner.state() {
+        match self.lock_inner().state() {
             ConnectionState::FirstFlight => "first_flight",
             ConnectionState::Connected => "connected",
             ConnectionState::Closing => "closing",
@@ -443,22 +440,22 @@ impl PyQuicConnectionCore {
 
     #[getter]
     fn version(&self) -> u32 {
-        self.inner.version()
+        self.lock_inner().version()
     }
 
     #[getter]
     fn has_events(&self) -> bool {
-        self.inner.has_events()
+        self.lock_inner().has_events()
     }
 
     #[getter]
     fn received_authenticated_packet(&self) -> bool {
-        self.inner.received_authenticated_packet()
+        self.lock_inner().received_authenticated_packet()
     }
 
     #[getter]
     fn local_error(&self) -> Option<(u64, Option<u64>, String)> {
-        self.inner.local_error().map(|error| {
+        self.lock_inner().local_error().map(|error| {
             (
                 error.code.value(),
                 error.frame_type.map(|frame| frame.value()),
@@ -469,27 +466,30 @@ impl PyQuicConnectionCore {
 
     #[getter]
     fn send_key_phase(&self) -> Option<u8> {
-        self.inner.crypto().send_key_phase()
+        self.lock_inner().crypto().send_key_phase()
     }
 
     #[getter]
     fn receive_key_phase(&self) -> Option<u8> {
-        self.inner.crypto().receive_key_phase()
+        self.lock_inner().crypto().receive_key_phase()
     }
 
     #[getter]
     fn bytes_in_flight(&self) -> u64 {
-        self.inner.recovery().congestion().bytes_in_flight()
+        self.lock_inner().recovery().congestion().bytes_in_flight()
     }
 
     #[getter]
     fn congestion_window(&self) -> u64 {
-        self.inner.recovery().congestion().congestion_window()
+        self.lock_inner()
+            .recovery()
+            .congestion()
+            .congestion_window()
     }
 
     #[getter]
     fn smoothed_rtt(&self) -> Option<f64> {
-        self.inner
+        self.lock_inner()
             .recovery()
             .rtt()
             .smoothed()
@@ -498,7 +498,7 @@ impl PyQuicConnectionCore {
 
     #[getter]
     fn latest_rtt(&self) -> Option<f64> {
-        self.inner
+        self.lock_inner()
             .recovery()
             .rtt()
             .latest()
@@ -507,26 +507,29 @@ impl PyQuicConnectionCore {
 
     #[getter]
     fn pto_count(&self) -> u32 {
-        self.inner.recovery().pto_count()
+        self.lock_inner().recovery().pto_count()
     }
 
     #[getter]
     fn pto_total(&self) -> u64 {
-        self.inner.recovery().pto_total()
+        self.lock_inner().recovery().pto_total()
     }
 
     #[getter]
     fn loss_total(&self) -> u64 {
-        self.inner.recovery().loss_total()
+        self.lock_inner().recovery().loss_total()
     }
 
     fn should_wait_for_ack(&self, now: f64) -> PyResult<bool> {
-        Ok(self.inner.should_wait_for_ack(duration_from_seconds(now)?))
+        Ok(self
+            .lock_inner()
+            .should_wait_for_ack(duration_from_seconds(now)?))
     }
 
     #[getter]
     fn stream_limits(&self) -> (u64, u64, u64, u64) {
-        let streams = self.inner.streams();
+        let inner = self.lock_inner();
+        let streams = inner.streams();
         (
             streams.peer_max_streams(StreamDirection::Bidirectional),
             streams.peer_max_streams(StreamDirection::Unidirectional),
@@ -537,26 +540,28 @@ impl PyQuicConnectionCore {
 
     #[getter]
     fn active_local_streams(&self) -> (u64, u64) {
+        let inner = self.lock_inner();
         (
-            self.inner
-                .active_local_streams(StreamDirection::Bidirectional),
-            self.inner
-                .active_local_streams(StreamDirection::Unidirectional),
+            inner.active_local_streams(StreamDirection::Bidirectional),
+            inner.active_local_streams(StreamDirection::Unidirectional),
         )
     }
 
     fn can_send_stream(&self, stream_id: u64) -> PyResult<bool> {
-        Ok(self.inner.can_send_stream(parse_stream_id(stream_id)?))
+        Ok(self
+            .lock_inner()
+            .can_send_stream(parse_stream_id(stream_id)?))
     }
 
     #[getter]
     fn outstanding_application_packets(&self) -> Vec<(u64, u64, usize)> {
-        self.inner.outstanding_application_packets()
+        self.lock_inner().outstanding_application_packets()
     }
 
     #[getter]
     fn active_path(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let path = self.inner.paths().active_path();
+        let inner = self.lock_inner();
+        let path = inner.paths().active_path();
         let local = address_to_python(py, path.local)?;
         let remote = address_to_python(py, path.remote)?;
         let value = (
@@ -572,17 +577,24 @@ impl PyQuicConnectionCore {
 }
 
 impl PyQuicConnectionCore {
+    fn lock_inner(&self) -> MutexGuard<'_, ConnectionCore> {
+        self.inner.lock().unwrap()
+    }
+
     fn receive_meta(&self, addr: &Bound<'_, PyAny>, now: f64) -> PyResult<ReceiveMeta> {
         Ok(ReceiveMeta {
             now: duration_from_seconds(now)?,
-            local: self.inner.paths().active_path().local,
+            local: self.lock_inner().paths().active_path().local,
             remote: parse_address(addr)?.into(),
             ecn: None,
         })
     }
 
-    fn command(&mut self, command: ConnectionCommand) -> PyResult<()> {
-        self.inner.command(command).map(|_| ()).map_err(core_error)
+    fn command(&self, command: ConnectionCommand) -> PyResult<()> {
+        self.lock_inner()
+            .command(command)
+            .map(|_| ())
+            .map_err(core_error)
     }
 }
 
