@@ -1,3 +1,9 @@
+2.0.3 (2026-09-02)
+==================
+
+**Fixed**
+- Rare HTTP/3 hang caused by losing QUIC stream reservations before application keys became available.
+
 2.0.2 (2026-09-01)
 ==================
 
