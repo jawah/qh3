@@ -1,6 +1,7 @@
 use crate::verify::{context_for_verify, verify_signature};
 use crate::{CryptoError, ReasonFlags};
-use bincode::{deserialize, serialize};
+use bincode::{serialize, Options};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::PyBytesMethods;
 use pyo3::types::{PyBytes, PyType};
 use pyo3::{pyclass, pymethods, Bound, PyResult, Python};
@@ -9,7 +10,6 @@ use x509_parser::certificate::X509Certificate;
 use x509_parser::prelude::FromDer;
 use x509_parser::prelude::ReasonCode as InternalCode;
 use x509_parser::revocation_list::CertificateRevocationList as InternalCrl;
-use x509_parser::time::ASN1Time;
 
 #[pyclass(module = "qh3._hazmat", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
@@ -56,12 +56,13 @@ pub struct CertificateRevocationList {
     raw: Vec<u8>,
 }
 
-#[pymethods]
 impl CertificateRevocationList {
-    #[new]
-    pub fn py_new(crl_der: Bound<'_, PyBytes>) -> PyResult<Self> {
-        match InternalCrl::from_der(crl_der.as_bytes()) {
-            Ok((_rem, crl)) => {
+    fn from_der(raw: &[u8], raise_on_missing_nextupdate: bool) -> PyResult<Self> {
+        match InternalCrl::from_der(raw) {
+            Ok(([], crl)) => {
+                if raise_on_missing_nextupdate && crl.next_update().is_none() {
+                    return Err(PyValueError::new_err("CRL is missing nextUpdate"));
+                }
                 let mut revoked_list = Vec::new();
 
                 for revoked in crl.iter_revoked_certificates() {
@@ -92,35 +93,63 @@ impl CertificateRevocationList {
                     container: revoked_list,
                     issuer: format!("{}", crl.issuer()),
                     last_updated_at: crl.last_update().timestamp(),
-                    next_update_at: crl.next_update().unwrap_or(ASN1Time::now()).timestamp() + 3600,
+                    // Match OCSP's opt-out: use the signed thisUpdate without
+                    // granting extra cache lifetime. Keep the fallback nonzero
+                    // because downstream consumers treat zero as "no expiry".
+                    next_update_at: crl
+                        .next_update()
+                        .map(|time| time.timestamp())
+                        .unwrap_or_else(|| crl.last_update().timestamp().max(1)),
                     tbs_inner: crl.tbs_cert_list.as_ref().to_vec(),
                     signature: crl.signature_value.data.to_vec(),
-                    raw: crl_der.as_bytes().to_vec(),
+                    raw: raw.to_vec(),
                 })
             }
-            Err(_) => Err(CryptoError::new_err("unable to parse crl")),
+            _ => Err(CryptoError::new_err("unable to parse crl")),
         }
     }
+}
 
-    pub fn authenticate_for(&self, issuer_der: Bound<'_, PyBytes>) -> bool {
-        let issuer = X509Certificate::from_der(issuer_der.as_bytes()).unwrap().1;
+#[pymethods]
+impl CertificateRevocationList {
+    #[new]
+    #[pyo3(signature = (crl_der, *, raise_on_missing_nextupdate=true))]
+    pub fn py_new(
+        crl_der: Bound<'_, PyBytes>,
+        raise_on_missing_nextupdate: bool,
+    ) -> PyResult<Self> {
+        Self::from_der(crl_der.as_bytes(), raise_on_missing_nextupdate)
+    }
+
+    pub fn authenticate_for(&self, issuer_der: Bound<'_, PyBytes>) -> PyResult<bool> {
+        let issuer = match X509Certificate::from_der(issuer_der.as_bytes()) {
+            Ok(([], issuer)) => issuer,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "Invalid DER for CRL issuer certificate",
+                ))
+            }
+        };
 
         match InternalCrl::from_der(self.raw.as_ref()) {
-            Ok((_rem, crl)) => {
+            Ok(([], crl)) => {
+                if crl.signature_value.unused_bits != 0 {
+                    return Err(PyValueError::new_err("CRL signature is not byte-aligned"));
+                }
                 let pubkey_info = match context_for_verify(&crl.signature_algorithm, &issuer) {
                     Some(info) => info,
-                    _ => return false,
+                    _ => return Ok(false),
                 };
 
-                verify_signature(
+                Ok(verify_signature(
                     pubkey_info.1.as_ref(),
                     pubkey_info.0,
-                    self.tbs_inner.as_ref(),
-                    self.signature.as_ref(),
+                    crl.tbs_cert_list.as_ref(),
+                    crl.signature_value.data.as_ref(),
                 )
-                .is_ok()
+                .is_ok())
             }
-            _ => false,
+            _ => Err(PyValueError::new_err("Invalid DER for CRL")),
         }
     }
 
@@ -154,11 +183,24 @@ impl CertificateRevocationList {
     }
 
     pub fn serialize<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        Ok(PyBytes::new(py, &serialize(&self).unwrap()))
+        let encoded =
+            serialize(self).map_err(|_| PyValueError::new_err("Unable to serialize CRL"))?;
+        Ok(PyBytes::new(py, &encoded))
     }
 
     #[classmethod]
     pub fn deserialize(_cls: Bound<'_, PyType>, encoded: Bound<'_, PyBytes>) -> PyResult<Self> {
-        Ok(deserialize(encoded.as_bytes()).unwrap())
+        let crl: Self = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .with_limit(encoded.as_bytes().len() as u64)
+            .reject_trailing_bytes()
+            .deserialize(encoded.as_bytes())
+            .map_err(|_| PyValueError::new_err("Invalid serialized CRL"))?;
+
+        // Retain the existing cache layout, but derive revocations, expiry, and
+        // signature data from the original DER instead of trusting cached fields.
+        // An opt-out accepted at construction also survives a cache round-trip.
+        Self::from_der(&crl.raw, false)
+            .map_err(|_| PyValueError::new_err("Invalid DER in serialized CRL"))
     }
 }
