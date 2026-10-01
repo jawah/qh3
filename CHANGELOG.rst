@@ -1,3 +1,16 @@
+2.0.4 (2026-10-01)
+==================
+
+**Changed**
+- Updated aws-lc-rs v1.18.0 to v1.18.1
+- Updated quinn-udp v0.6.1 to v0.6.3
+- Updated rustls v0.23.43 to v0.23.45
+
+**Misc**
+- OCSP responses without the optional ``nextUpdate`` field now raise
+  ``ValueError`` instead of panicking. (private)
+- Hardened CRL parsing against panics. (private)
+
 2.0.3 (2026-09-02)
 ==================
 

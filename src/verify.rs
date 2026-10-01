@@ -81,7 +81,7 @@ pub fn context_for_verify(
     let algo = if signature_oid == &RSA_PSS {
         let params = signature_algorithm.parameters.as_ref()?;
 
-        let params = RsaSsaPssParams::try_from(params).unwrap();
+        let params = RsaSsaPssParams::try_from(params).ok()?;
 
         let hash_oid = params.hash_algorithm_oid();
 
@@ -169,10 +169,9 @@ pub fn verify_signature(
                 Err(_) => return Err(CryptoError::new_err("Invalid Ed25519 public key")),
             };
 
-        let res = ed25519_verifier.verify(
-            message,
-            &Ed25519Signature::from_bytes(signature[0..64].try_into()?),
-        );
+        let signature = Ed25519Signature::from_slice(signature)
+            .map_err(|_| SignatureError::new_err("Invalid Ed25519 signature length"))?;
+        let res = ed25519_verifier.verify(message, &signature);
 
         match res {
             Err(_) => Err(SignatureError::new_err("signature mismatch (ed25519)")),

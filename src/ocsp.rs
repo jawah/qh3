@@ -7,16 +7,17 @@ use pyo3::types::{PyBytes, PyType};
 use pyo3::{pyclass, Bound};
 use pyo3::{PyResult, Python};
 
+use der::oid::AssociatedOid;
 use der::{Decode, Encode};
 use pyo3::exceptions::PyValueError;
 use x509_cert::Certificate;
 use x509_ocsp::builder::OcspRequestBuilder;
 use x509_ocsp::{
     BasicOcspResponse, CertStatus as InternalCertStatus, OcspRequest as InternalOcspRequest,
-    OcspResponse, OcspResponseStatus as InternalOcspResponseStatus, Request, SingleResponse,
+    OcspResponse, OcspResponseStatus as InternalOcspResponseStatus, Request,
 };
 
-use bincode::{deserialize, serialize};
+use bincode::{serialize, Options};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 
@@ -75,40 +76,64 @@ pub struct OCSPResponse {
     raw: Vec<u8>,
 }
 
-#[pymethods]
+fn parse_response(raw: &[u8]) -> PyResult<(InternalOcspResponseStatus, BasicOcspResponse)> {
+    let response = OcspResponse::from_der(raw)
+        .map_err(|_| PyValueError::new_err("OCSP DER given is invalid"))?;
+    let response_bytes = response
+        .response_bytes
+        .ok_or_else(|| PyValueError::new_err("OCSP Server did not provide answers"))?;
+    if response_bytes.response_type != BasicOcspResponse::OID {
+        return Err(PyValueError::new_err("Unsupported OCSP response type"));
+    }
+    let basic = BasicOcspResponse::from_der(response_bytes.response.as_bytes())
+        .map_err(|_| PyValueError::new_err("Failed to parse basic OCSP response"))?;
+    if basic.tbs_response_data.responses.is_empty() {
+        return Err(PyValueError::new_err("OCSP Server did not provide answers"));
+    }
+    Ok((response.response_status, basic))
+}
+
+fn parse_certificate<'a>(der: &'a [u8], description: &str) -> PyResult<X509Certificate<'a>> {
+    match X509Certificate::from_der(der) {
+        Ok(([], certificate)) => Ok(certificate),
+        _ => Err(PyValueError::new_err(format!(
+            "Invalid DER for OCSP {} certificate",
+            description
+        ))),
+    }
+}
+
 impl OCSPResponse {
-    #[new]
-    pub fn py_new(raw_response: Bound<'_, PyBytes>) -> PyResult<Self> {
-        let ocsp_res: OcspResponse = match OcspResponse::from_der(raw_response.as_bytes()) {
-            Ok(ocsp_res) => ocsp_res,
-            Err(_) => return Err(PyValueError::new_err("OCSP DER given is invalid")),
-        };
+    fn from_der(raw: &[u8], raise_on_missing_nextupdate: bool) -> PyResult<Self> {
+        let (response_status, inner_resp) = parse_response(raw)?;
+        let first_resp_for_cert = inner_resp
+            .tbs_response_data
+            .responses
+            .first()
+            .ok_or_else(|| PyValueError::new_err("OCSP Server did not provide answers"))?;
 
-        if ocsp_res.response_bytes.is_none() {
-            return Err(PyValueError::new_err("OCSP Server did not provide answers"));
+        if raise_on_missing_nextupdate && first_resp_for_cert.next_update.is_none() {
+            return Err(PyValueError::new_err("OCSP response is missing nextUpdate"));
         }
-
-        let inner_resp: BasicOcspResponse =
-            match BasicOcspResponse::from_der(ocsp_res.response_bytes.unwrap().response.as_bytes())
-            {
-                Ok(resp) => resp,
-                Err(_) => return Err(PyValueError::new_err("Failed to parse basic OCSP response")),
-            };
-
-        if inner_resp.tbs_response_data.responses.is_empty() {
-            return Err(PyValueError::new_err("OCSP Server did not provide answers"));
-        }
-
-        let first_resp_for_cert: &SingleResponse = &inner_resp.tbs_response_data.responses[0];
 
         Ok(OCSPResponse {
+            // nextUpdate is optional in RFC 6960. Existing consumers require
+            // an integer, so use thisUpdate as a conservative cache deadline
+            // when its absence is allowed: grant no additional cache lifetime.
+            // Keep the fallback nonzero because consumers treat zero as
+            // "no expiry". The signed DER remains unchanged.
             next_update: first_resp_for_cert
                 .next_update
-                .unwrap()
-                .0
-                .to_unix_duration()
-                .as_secs(),
-            response_status: match ocsp_res.response_status {
+                .map(|time| time.0.to_unix_duration().as_secs())
+                .unwrap_or_else(|| {
+                    first_resp_for_cert
+                        .this_update
+                        .0
+                        .to_unix_duration()
+                        .as_secs()
+                        .max(1)
+                }),
+            response_status: match response_status {
                 InternalOcspResponseStatus::Successful => OCSPResponseStatus::SUCCESSFUL,
                 InternalOcspResponseStatus::MalformedRequest => {
                     OCSPResponseStatus::MALFORMED_REQUEST
@@ -142,8 +167,20 @@ impl OCSPResponse {
                 },
                 InternalCertStatus::Good(_) | InternalCertStatus::Unknown(_) => None,
             },
-            raw: raw_response.as_bytes().to_vec(),
+            raw: raw.to_vec(),
         })
+    }
+}
+
+#[pymethods]
+impl OCSPResponse {
+    #[new]
+    #[pyo3(signature = (raw_response, *, raise_on_missing_nextupdate=true))]
+    pub fn py_new(
+        raw_response: Bound<'_, PyBytes>,
+        raise_on_missing_nextupdate: bool,
+    ) -> PyResult<Self> {
+        Self::from_der(raw_response.as_bytes(), raise_on_missing_nextupdate)
     }
 
     #[getter]
@@ -167,40 +204,27 @@ impl OCSPResponse {
     }
 
     pub fn authenticate_for(&self, issuer_der: Bound<'_, PyBytes>) -> PyResult<bool> {
-        let issuer = X509Certificate::from_der(issuer_der.as_bytes()).unwrap().1;
-
-        let ocsp_res: OcspResponse = match OcspResponse::from_der(self.raw.as_ref()) {
-            Ok(ocsp_res) => ocsp_res,
-            Err(_) => return Err(PyValueError::new_err("OCSP DER given is invalid")),
-        };
-
-        if ocsp_res.response_bytes.is_none() {
-            return Err(PyValueError::new_err("OCSP Server did not provide answers"));
-        }
-
-        let raw_ocsp_response = ocsp_res.response_bytes.unwrap();
-
-        let inner_resp: BasicOcspResponse =
-            BasicOcspResponse::from_der(raw_ocsp_response.response.as_bytes()).unwrap();
-
-        if inner_resp.tbs_response_data.responses.is_empty() {
-            return Err(PyValueError::new_err("OCSP Server did not provide answers"));
-        }
+        let issuer = parse_certificate(issuer_der.as_bytes(), "issuer")?;
+        let (_, inner_resp) = parse_response(&self.raw)?;
 
         // applying some trick to get that signature algorithm matching
         // the x509_parser inner struct.
-        let der_bytes = inner_resp.signature_algorithm.to_der().unwrap();
+        let der_bytes = inner_resp.signature_algorithm.to_der().map_err(|_| {
+            PyValueError::new_err("Unable to encode OCSP response signature algorithm")
+        })?;
 
         // Convert to AlgorithmIdentifier
-        let res = AlgorithmIdentifier::from_der(der_bytes.as_slice());
-
-        if res.is_err() {
-            return Err(PyValueError::new_err(
-                "Unable to extract ocsp response signature algorithm identifier",
-            ));
-        }
-
-        let algorithm = res.unwrap().1;
+        let (_, algorithm) = AlgorithmIdentifier::from_der(der_bytes.as_slice()).map_err(|_| {
+            PyValueError::new_err("Unable to extract ocsp response signature algorithm identifier")
+        })?;
+        let signed_data = inner_resp
+            .tbs_response_data
+            .to_der()
+            .map_err(|_| PyValueError::new_err("Unable to encode OCSP response signed data"))?;
+        let signature = inner_resp
+            .signature
+            .as_bytes()
+            .ok_or_else(|| PyValueError::new_err("OCSP response signature is not byte-aligned"))?;
 
         // this branch handle the case where the issuer CA
         // does not have EKU OCSP signing, they probably issued
@@ -209,34 +233,26 @@ impl OCSPResponse {
         if let Some(certs) = &inner_resp.certs {
             let der_blobs: Vec<Vec<u8>> = certs
                 .iter()
-                .map(|crt| crt.to_der().expect("DER encoding failed"))
-                .collect();
+                .map(|crt| crt.to_der())
+                .collect::<Result<_, _>>()
+                .map_err(|_| PyValueError::new_err("Unable to encode OCSP signer certificate"))?;
 
-            let mut extra_chain: Vec<X509Certificate<'_>> = der_blobs
+            let extra_chain: Vec<X509Certificate<'_>> = der_blobs
                 .iter()
-                .map(|der| {
-                    let (_, cert) = X509Certificate::from_der(der).expect("parse failed");
-                    cert
-                })
-                .collect();
-
-            extra_chain.push(issuer);
+                .map(|der| parse_certificate(der, "signer"))
+                .collect::<PyResult<_>>()?;
 
             // Find the OCSP signer certificate that chains up to the issuer
             let mut ocsp_signer = None;
-            let remaining_certs = extra_chain.clone();
-            let issuer_idx = remaining_certs.len() - 1; // issuer is last
 
             // Try to find which certificate is signed by the issuer
-            for (idx, cert) in remaining_certs[..issuer_idx].iter().enumerate() {
-                if is_parent(cert, &remaining_certs[issuer_idx]).is_ok() {
-                    ocsp_signer = Some(cert);
-
+            for (idx, cert) in extra_chain.iter().enumerate() {
+                if is_parent(cert, &issuer).is_ok() {
                     // Verify the complete chain if there are intermediate certs
                     if idx > 0 {
                         // Build the chain from ocsp_signer to issuer
-                        let mut chain_to_verify = vec![cert];
-                        let mut certs_to_check: Vec<_> = remaining_certs[..issuer_idx]
+                        let mut chain_tip = cert;
+                        let mut certs_to_check: Vec<_> = extra_chain
                             .iter()
                             .enumerate()
                             .filter(|(i, _)| *i != idx)
@@ -247,8 +263,8 @@ impl OCSPResponse {
                             let mut found = false;
                             for i in (0..certs_to_check.len()).rev() {
                                 let (_, candidate) = certs_to_check[i];
-                                if is_parent(chain_to_verify.last().unwrap(), candidate).is_ok() {
-                                    chain_to_verify.push(candidate);
+                                if is_parent(chain_tip, candidate).is_ok() {
+                                    chain_tip = candidate;
                                     certs_to_check.remove(i);
                                     found = true;
                                     break;
@@ -260,15 +276,11 @@ impl OCSPResponse {
                         }
 
                         // Verify the chain is complete to issuer
-                        if is_parent(
-                            chain_to_verify.last().unwrap(),
-                            &remaining_certs[issuer_idx],
-                        )
-                        .is_err()
-                        {
+                        if is_parent(chain_tip, &issuer).is_err() {
                             continue; // This wasn't the right OCSP signer
                         }
                     }
+                    ocsp_signer = Some(cert);
                     break;
                 }
             }
@@ -290,8 +302,8 @@ impl OCSPResponse {
             Ok(verify_signature(
                 ctx_verify.1.as_bytes(),
                 ctx_verify.0,
-                inner_resp.tbs_response_data.to_der().unwrap().as_bytes(),
-                inner_resp.signature.as_bytes().unwrap(),
+                &signed_data,
+                signature,
             )
             .is_ok())
         } else {
@@ -308,20 +320,31 @@ impl OCSPResponse {
             Ok(verify_signature(
                 ctx_verify.1.as_bytes(),
                 ctx_verify.0,
-                inner_resp.tbs_response_data.to_der().unwrap().as_bytes(),
-                inner_resp.signature.as_bytes().unwrap(),
+                &signed_data,
+                signature,
             )
             .is_ok())
         }
     }
 
     pub fn serialize<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        Ok(PyBytes::new(py, &serialize(&self).unwrap()))
+        let encoded = serialize(self)
+            .map_err(|_| PyValueError::new_err("Unable to serialize OCSP response"))?;
+        Ok(PyBytes::new(py, &encoded))
     }
 
     #[classmethod]
     pub fn deserialize(_cls: Bound<'_, PyType>, encoded: Bound<'_, PyBytes>) -> PyResult<Self> {
-        Ok(deserialize(encoded.as_bytes()).unwrap())
+        // Keep the existing bincode layout, but bound decoding by the input
+        // length and revalidate the DER instead of trusting cached metadata.
+        let response: Self = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .with_limit(encoded.as_bytes().len() as u64)
+            .reject_trailing_bytes()
+            .deserialize(encoded.as_bytes())
+            .map_err(|_| PyValueError::new_err("Invalid serialized OCSP response"))?;
+        // Restore responses that were explicitly accepted with the opt-out.
+        Self::from_der(&response.raw, false)
     }
 }
 
@@ -337,12 +360,15 @@ impl OCSPRequest {
         peer_certificate: Bound<'_, PyBytes>,
         issuer_certificate: Bound<'_, PyBytes>,
     ) -> PyResult<Self> {
-        let issuer = Certificate::from_der(issuer_certificate.as_bytes()).unwrap();
-        let cert = Certificate::from_der(peer_certificate.as_bytes()).unwrap();
+        let issuer = Certificate::from_der(issuer_certificate.as_bytes())
+            .map_err(|_| PyValueError::new_err("Invalid DER for OCSP issuer certificate"))?;
+        let cert = Certificate::from_der(peer_certificate.as_bytes())
+            .map_err(|_| PyValueError::new_err("Invalid DER for OCSP peer certificate"))?;
 
-        let req: InternalOcspRequest = OcspRequestBuilder::default()
-            .with_request(Request::from_cert::<Sha1>(&issuer, &cert).unwrap())
-            .build();
+        let request = Request::from_cert::<Sha1>(&issuer, &cert)
+            .map_err(|_| PyValueError::new_err("Unable to build OCSP request"))?;
+
+        let req: InternalOcspRequest = OcspRequestBuilder::default().with_request(request).build();
 
         match req.to_der() {
             Ok(raw_der) => Ok(OCSPRequest {
