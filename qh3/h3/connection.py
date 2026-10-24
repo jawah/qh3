@@ -15,7 +15,11 @@ from .._hazmat import (
     StreamBlocked,
     encode_uint_var,
 )
-from ..quic.connection import QuicConnection, stream_is_unidirectional
+from ..quic.connection import (
+    QuicConnection,
+    stream_is_client_initiated,
+    stream_is_unidirectional,
+)
 from ..quic.events import (
     DatagramFrameReceived,
     QuicEvent,
@@ -464,6 +468,16 @@ class H3Connection:
             self._local_encoder_stream_id,
         )
 
+    def _check_server_critical_stream_end(self, stream: H3Stream) -> None:
+        if (
+            not self._is_client
+            and stream.receiving_ended
+            and self._is_critical_stream(stream.stream_id)
+        ):
+            raise ClosedCriticalStream(
+                f"Critical stream {stream.stream_id} closed by peer"
+            )
+
     def _receive_stream_reset(self, stream_id: int, error_code: int) -> list[H3Event]:
         # RFC 9114 6.2.1: a peer-initiated reset of a critical stream is a
         # connection error of type H3_CLOSED_CRITICAL_STREAM.
@@ -716,6 +730,13 @@ class H3Connection:
         stream = self._stream.get(stream_id)
         if stream is None:
             stream = H3Stream(stream_id)
+            if stream_is_unidirectional(stream_id):
+                # The nonexistent half is already ended. Otherwise a peer can
+                # leak one H3Stream per completed unknown unidirectional stream.
+                if stream_is_client_initiated(stream_id) == self._is_client:
+                    stream.receiving_ended = True
+                else:
+                    stream.sending_ended = True
             self._stream[stream_id] = stream
         return stream
 
@@ -1251,6 +1272,8 @@ class H3Connection:
 
         if stream_ended:
             stream.receiving_ended = True
+            # Reject FIN before the QPACK fast path can process more input.
+            self._check_server_critical_stream_end(stream)
 
         if (
             data
@@ -1295,6 +1318,10 @@ class H3Connection:
                             "Only one QPACK encoder stream is allowed"
                         )
                     self._peer_encoder_stream_id = stream.stream_id
+
+                # FIN can arrive with the type, including a fragmented varint.
+                # The peer IDs above remain reserved for this connection's life.
+                self._check_server_critical_stream_end(stream)
 
                 # for PUSH, logging is performed once the push_id is known
                 if stream.stream_type != StreamType.PUSH:
