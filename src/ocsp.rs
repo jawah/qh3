@@ -1,6 +1,10 @@
 // OCSP Response Parser and Request Builder
 // This module is created for Niquests
 // qh3 has no use for it and we won't implement it for this package
+// PyO3 generates FromPyObject impls which clone Copy enums outside their
+// definitions, so an allowance on the enums does not cover the generated code.
+#![allow(clippy::clone_on_copy)]
+
 use pyo3::pymethods;
 use pyo3::types::PyBytesMethods;
 use pyo3::types::{PyBytes, PyType};

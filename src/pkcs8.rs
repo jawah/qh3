@@ -1,3 +1,7 @@
+// PyO3 generates FromPyObject impls which clone Copy enums outside their
+// definitions, so an allowance on the enums does not cover the generated code.
+#![allow(clippy::clone_on_copy)]
+
 use pyo3::types::PyBytes;
 use pyo3::types::PyBytesMethods;
 use pyo3::Python;
