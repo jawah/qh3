@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import array
+import platform
 
 import pytest
 
 from qh3._compat import as_contiguous_buffer
 from qh3._hazmat import Buffer, BufferWriteError
-from qh3.h3.connection import H3Connection
+from qh3.h3.connection import FrameType, FrameUnexpected, H3Connection, encode_frame
 from qh3.h3.events import DataReceived
 from qh3.quic.events import StreamDataReceived
 
@@ -122,6 +123,7 @@ def test_send_copies_into_owned_queue_before_return(phase, view):
     else:
         client.send_stream_data(0, data, end_stream=True)
     if view:
+        assert data.tobytes() == b"original"
         data.release()
     source[:] = b"changed!"
     source.extend(b"can resize after send")
@@ -144,6 +146,50 @@ def test_buffer_view_keeps_original_storage(data):
     else:
         assert isinstance(view, memoryview)
         assert view.obj is data
+        view.release()
+
+
+def test_frame_releases_temporary_buffer_views():
+    source = bytearray(b"payload")
+    frame = encode_frame(FrameType.DATA, source)
+    source.extend(b"can resize after framing")
+    assert frame == encode_frame(FrameType.DATA, b"payload")
+
+
+@pytest.mark.parametrize("headers_sent", [False, True])
+def test_h3_releases_temporary_buffer_views(headers_sent):
+    source = bytearray(b"payload")
+    with h3_fake_client_and_server() as (client, _):
+        sender = H3Connection(client)
+        if headers_sent:
+            sender.send_headers(
+                0,
+                [
+                    (b":method", b"POST"),
+                    (b":scheme", b"https"),
+                    (b":authority", b"localhost"),
+                    (b":path", b"/"),
+                ],
+            )
+            sender.send_data(0, source, end_stream=True)
+        else:
+            with pytest.raises(FrameUnexpected):
+                sender.send_data(0, source, end_stream=True)
+        source.extend(b"can resize after sending")
+
+
+@pytest.mark.parametrize("capacity", [0, 7])
+def test_buffer_releases_export_after_success_or_failure(capacity):
+    source = bytearray(b"payload")
+    buffer = Buffer(capacity=capacity)
+    if capacity:
+        buffer.push_bytes(source)
+        assert buffer.data == b"payload"
+    else:
+        with pytest.raises(BufferWriteError):
+            buffer.push_bytes(source)
+        assert buffer.data == b""
+    source.extend(b"can resize after writing")
 
 
 @pytest.mark.parametrize("data", [None, "text", 4, [1, 2, 3]])
@@ -199,6 +245,18 @@ def test_released_memoryview_is_rejected():
     client, _ = make_pair()
     with pytest.raises(ValueError):
         client.send_stream_data(0, view)
+    sender = H3Connection(client)
+    with pytest.raises(ValueError):
+        sender.send_data(0, view, end_stream=True)
+
+
+@pytest.mark.skipif(
+    platform.python_implementation() == "PyPy",
+    reason="PyPy can segfault passing a released memoryview to any C extension",
+)
+def test_native_released_memoryview_is_rejected():
+    view = memoryview(b"data")
+    view.release()
     with pytest.raises(ValueError):
         Buffer(capacity=4).push_bytes(view)
 

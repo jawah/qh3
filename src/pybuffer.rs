@@ -30,12 +30,33 @@ pub fn with_buffer<R>(
 
     // A private view pins the export even if the caller releases its own view.
     let view = PyMemoryView::from(value)?;
+    // Dropping a Python reference does not promptly release an export on PyPy.
+    #[cfg(PyPy)]
+    struct ReleaseView<'a, 'py>(&'a Bound<'py, PyMemoryView>);
+    #[cfg(PyPy)]
+    impl Drop for ReleaseView<'_, '_> {
+        fn drop(&mut self) {
+            // This private view has no outstanding exports after AsReadBuffer.
+            let _ = self.0.call_method0("release");
+        }
+    }
+    #[cfg(PyPy)]
+    let _release = ReleaseView(&view);
+    // Older PyPy versions accept strided views in AsReadBuffer, potentially
+    // exposing bytes outside the view. Check its layout before reading memory.
+    #[cfg(PyPy)]
+    if !view.getattr("c_contiguous")?.is_truthy()? {
+        return Err(PyBufferError::new_err(
+            "send data must be a C-contiguous buffer",
+        ));
+    }
     let owner = view.getattr("obj")?;
     let mut pointer = std::ptr::null();
     let mut length = 0;
     // SAFETY: the object is a live memoryview and both output pointers are valid.
     // Its export outlives this call, including after AsReadBuffer releases its
-    // temporary export. Non-C-contiguous views are rejected by this API.
+    // temporary export. CPython rejects non-contiguous views here; PyPy's
+    // layout was checked explicitly above.
     if unsafe { PyObject_AsReadBuffer(view.as_ptr(), &mut pointer, &mut length) } != 0 {
         return Err(PyErr::fetch(value.py()));
     }

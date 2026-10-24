@@ -24,7 +24,9 @@ def as_contiguous_buffer(data: BufferProtocol) -> bytes | memoryview:
     """Get a byte-oriented view without copying the payload."""
     if isinstance(data, bytes):
         return data
-    view = memoryview(data)
-    if not view.c_contiguous:
-        raise BufferError("send data must be a C-contiguous buffer")
-    return view.cast("B")
+    # Explicitly release this intermediate view: PyPy need not collect it when
+    # the function returns, which otherwise prevents resizing the exporter.
+    with memoryview(data) as view:
+        if not view.c_contiguous:
+            raise BufferError("send data must be a C-contiguous buffer")
+        return view.cast("B")

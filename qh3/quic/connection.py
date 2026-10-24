@@ -416,19 +416,23 @@ class QuicConnection:
         Non-contiguous views raise BufferError.
         """
         data = as_contiguous_buffer(data)
-        self._record_local_stream(stream_id)
-        if not self._handshake_complete:
-            self._pre_handshake_writes.append((stream_id, bytes(data), end_stream))
-            if self._core is None or (
-                not self._transport_parameters_applied
-                and self._remembered_transport_parameters() is None
-            ):
-                return
-            if not self._pre_handshake_state_replayed:
-                self._replay_pre_handshake_state("connection start")
-                return
-        core = self._require_core()
-        self._call_core(core.send_stream, stream_id, data, end_stream)
+        try:
+            self._record_local_stream(stream_id)
+            if not self._handshake_complete:
+                self._pre_handshake_writes.append((stream_id, bytes(data), end_stream))
+                if self._core is None or (
+                    not self._transport_parameters_applied
+                    and self._remembered_transport_parameters() is None
+                ):
+                    return
+                if not self._pre_handshake_state_replayed:
+                    self._replay_pre_handshake_state("connection start")
+                    return
+            core = self._require_core()
+            self._call_core(core.send_stream, stream_id, data, end_stream)
+        finally:
+            if isinstance(data, memoryview):
+                data.release()
 
     def _stream_can_send(self, stream_id: int) -> bool:
         if self._core is None:

@@ -201,10 +201,14 @@ class StreamCreationError(ProtocolError):
 
 def encode_frame(frame_type: int, frame_data: BufferProtocol) -> bytes:
     frame_data = as_contiguous_buffer(frame_data)
-    # Allocate the final frame once, copying directly from the payload buffer.
-    return b"".join(
-        (encode_uint_var(frame_type), encode_uint_var(len(frame_data)), frame_data)
-    )
+    try:
+        # Allocate the final frame once, copying directly from the payload buffer.
+        return b"".join(
+            (encode_uint_var(frame_type), encode_uint_var(len(frame_data)), frame_data)
+        )
+    finally:
+        if isinstance(frame_data, memoryview):
+            frame_data.release()
 
 
 def encode_settings(settings: dict[int, int]) -> bytes:
@@ -587,13 +591,18 @@ class H3Connection:
         :param end_stream: Whether to end the stream.
         """
         data = as_contiguous_buffer(data)
-        # check DATA frame is allowed
-        stream = self._get_or_create_stream(stream_id)
-        if stream.headers_send_state != HeadersState.AFTER_HEADERS:
-            raise FrameUnexpected("DATA frame is not allowed in this state")
+        try:
+            # check DATA frame is allowed
+            stream = self._get_or_create_stream(stream_id)
+            if stream.headers_send_state != HeadersState.AFTER_HEADERS:
+                raise FrameUnexpected("DATA frame is not allowed in this state")
 
-        # Validate and frame the buffer before committing FIN to stream state.
-        frame = encode_frame(FrameType.DATA, data)
+            # Validate and frame the buffer before committing FIN to stream state.
+            data_length = len(data)
+            frame = encode_frame(FrameType.DATA, data)
+        finally:
+            if isinstance(data, memoryview):
+                data.release()
 
         if end_stream:
             stream.finish_sending()
@@ -606,7 +615,7 @@ class H3Connection:
                 category="http",
                 event="frame_created",
                 data=self._quic_logger.encode_http3_data_frame(
-                    length=len(data), stream_id=stream_id
+                    length=data_length, stream_id=stream_id
                 ),
             )
 
