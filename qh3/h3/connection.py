@@ -10,6 +10,7 @@ from .._hazmat import (
     DecoderStreamError,
     DecompressionFailed,
     EncoderStreamError,
+    HeaderTooLarge,
     QpackDecoder,
     QpackEncoder,
     StreamBlocked,
@@ -180,6 +181,10 @@ class FrameUnexpected(ProtocolError):
 
 class MessageError(ProtocolError):
     error_code = ErrorCode.H3_MESSAGE_ERROR
+
+
+class FieldSectionTooLarge(ProtocolError):
+    error_code = ErrorCode.H3_EXCESSIVE_LOAD
 
 
 class MissingSettingsError(ProtocolError):
@@ -369,16 +374,24 @@ class H3Connection:
     """
 
     def __init__(self, quic: QuicConnection, enable_webtransport: bool = False) -> None:
+        self._is_client = quic.configuration.is_client
         # settings
         self._max_table_capacity = 65536
         self._blocked_streams = 100
+        self._max_field_section_size = 1048576 if self._is_client else 262144
+        # Huffman can use up to 30 bits per decoded octet. Keep a separate
+        # bounded allowance for encoded bytes, including the QPACK prefix.
+        self._max_encoded_field_section_size = self._max_field_section_size * 4 + 32
         self._enable_webtransport = enable_webtransport
 
-        self._is_client = quic.configuration.is_client
         self._is_done = False
         self._quic = quic
         self._quic_logger: QuicLoggerTrace | None = quic._quic_logger
-        self._decoder = QpackDecoder(self._max_table_capacity, self._blocked_streams)
+        self._decoder = QpackDecoder(
+            self._max_table_capacity,
+            self._blocked_streams,
+            max_field_section_size=self._max_field_section_size,
+        )
         self._decoder_bytes_received = 0
         self._decoder_bytes_sent = 0
         self._encoder = QpackEncoder()
@@ -708,8 +721,10 @@ class H3Connection:
                 )
             self._decoder_bytes_sent += len(decoder)
             self._quic.send_stream_data(self._local_decoder_stream_id, decoder)
-        except DecompressionFailed as exc:
+        except (DecompressionFailed, DecoderStreamError) as exc:
             raise QpackDecompressionFailed() from exc
+        except HeaderTooLarge as exc:
+            raise FieldSectionTooLarge(str(exc)) from exc
 
         return headers
 
@@ -753,7 +768,7 @@ class H3Connection:
         """
         settings: dict[int, int] = {
             Setting.QPACK_MAX_TABLE_CAPACITY: self._max_table_capacity,
-            Setting.MAX_FIELD_SECTION_SIZE: 262144,
+            Setting.MAX_FIELD_SECTION_SIZE: self._max_field_section_size,
             Setting.QPACK_BLOCKED_STREAMS: self._blocked_streams,
             Setting.H3_DATAGRAM: 1,
             Setting.DUMMY: 1,
@@ -1033,6 +1048,8 @@ class H3Connection:
         if stream_ended:
             stream.receiving_ended = True
         if stream.blocked:
+            if len(s_buffer) + len(data) > self._max_encoded_field_section_size:
+                raise FieldSectionTooLarge("QPACK-blocked stream buffer limit exceeded")
             s_buffer.extend(data)
             return http_events
 
@@ -1149,6 +1166,17 @@ class H3Connection:
                 except BufferReadError:
                     break
                 consumed = buf_tell()
+
+                if stream.frame_type in (FrameType.HEADERS, FrameType.PUSH_PROMISE):
+                    # PUSH_PROMISE also carries a QUIC-varint push ID (at most
+                    # eight bytes) before its QPACK field section.
+                    limit = self._max_encoded_field_section_size
+                    if stream.frame_type == FrameType.PUSH_PROMISE:
+                        limit += 8
+                    if stream.frame_size > limit:
+                        raise FieldSectionTooLarge(
+                            "Encoded field section exceeds the configured limit"
+                        )
 
                 # WEBTRANSPORT_STREAM frames last until the end of the stream
                 if stream.frame_type == FrameType.WEBTRANSPORT_STREAM:
@@ -1415,6 +1443,8 @@ class H3Connection:
 
         try:
             self._decoder.feed_encoder(data)
+        except HeaderTooLarge as exc:
+            raise FieldSectionTooLarge(str(exc)) from exc
         except EncoderStreamError as exc:
             raise QpackEncoderStreamError() from exc
         self._encoder_bytes_received += len(data)
@@ -1427,6 +1457,10 @@ class H3Connection:
                 unblocked_streams.add(blocked_id)
             except StreamBlocked:
                 continue
+            except HeaderTooLarge as exc:
+                raise FieldSectionTooLarge(str(exc)) from exc
+            except DecoderStreamError as exc:
+                raise QpackDecompressionFailed() from exc
 
         http_events: list[H3Event] = []
         for stream_id in unblocked_streams:

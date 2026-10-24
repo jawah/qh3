@@ -55,6 +55,15 @@ when it stages writes before the handshake.
 
 ## Exceptions
 
+HTTP/3 endpoints enforce their advertised decoded field-section limit while
+QPACK fields are decoded: **1 MiB for clients** and **256 KiB for servers**.
+The count includes each name, value, and 32 bytes of per-field overhead. Limits
+apply to response/request headers, trailers, push promises, and sections resumed
+after QPACK blocking. Oversized encoded field-section declarations and excessive
+data buffered behind a blocked section are also rejected. Exceeding these limits
+closes the connection with `H3_EXCESSIVE_LOAD` before expanded headers reach the
+application.
+
 ::: qh3.h3.exceptions.H3Error
     options:
       show_root_heading: true

@@ -1,4 +1,4 @@
-use ls_qpack_rs::decoder::{BuffersDecoded, Decoder, DecoderOutput};
+use ls_qpack_rs::decoder::{BuffersDecoded, Decoder, DecoderErrorKind, DecoderOutput};
 use ls_qpack_rs::encoder::Encoder;
 use ls_qpack_rs::StreamId;
 use pyo3::exceptions::{PyException, PyValueError};
@@ -12,6 +12,7 @@ pyo3::create_exception!(_hazmat, StreamBlocked, PyException);
 pyo3::create_exception!(_hazmat, EncoderStreamError, PyException);
 pyo3::create_exception!(_hazmat, DecoderStreamError, PyException);
 pyo3::create_exception!(_hazmat, DecompressionFailed, PyException);
+pyo3::create_exception!(_hazmat, HeaderTooLarge, PyException);
 
 #[pyclass(name = "QpackDecoder", module = "qh3._hazmat")]
 pub struct QpackDecoder {
@@ -136,9 +137,21 @@ impl QpackEncoder {
 #[pymethods]
 impl QpackDecoder {
     #[new]
-    pub fn py_new(max_table_capacity: u32, blocked_streams: u32) -> Self {
+    #[pyo3(signature = (max_table_capacity, blocked_streams, *, max_field_section_size=None))]
+    pub fn py_new(
+        max_table_capacity: u32,
+        blocked_streams: u32,
+        max_field_section_size: Option<usize>,
+    ) -> Self {
         QpackDecoder {
-            decoder: Decoder::new(max_table_capacity, blocked_streams),
+            decoder: match max_field_section_size {
+                Some(maximum) => Decoder::with_max_field_section_size(
+                    max_table_capacity,
+                    blocked_streams,
+                    maximum,
+                ),
+                None => Decoder::new(max_table_capacity, blocked_streams),
+            },
         }
     }
 
@@ -149,6 +162,9 @@ impl QpackDecoder {
 
         match res {
             Ok(_) => Ok(()),
+            Err(error) if error.kind() == DecoderErrorKind::FieldSectionTooLarge => Err(
+                HeaderTooLarge::new_err("QPACK field section exceeds the configured limit"),
+            ),
             Err(_) => Err(EncoderStreamError::new_err(
                 "an error occurred while feeding data from encoder with qpack data",
             )),
@@ -176,6 +192,9 @@ impl QpackDecoder {
             Ok(DecoderOutput::BlockedStream) => Err(StreamBlocked::new_err(
                 "stream is blocked, need more data to pursue decoding",
             )),
+            Err(error) if error.kind() == DecoderErrorKind::FieldSectionTooLarge => Err(
+                HeaderTooLarge::new_err("QPACK field section exceeds the configured limit"),
+            ),
             Err(_) => Err(DecoderStreamError::new_err(
                 "an error occurred while decoding the stream qpack data",
             )),
@@ -196,6 +215,9 @@ impl QpackDecoder {
             Ok(DecoderOutput::BlockedStream) => Err(StreamBlocked::new_err(
                 "stream is blocked, need more data to pursue decoding",
             )),
+            Err(error) if error.kind() == DecoderErrorKind::FieldSectionTooLarge => Err(
+                HeaderTooLarge::new_err("QPACK field section exceeds the configured limit"),
+            ),
             Err(_) => Err(DecoderStreamError::new_err(
                 "an error occurred while decoding the stream qpack data",
             )),
