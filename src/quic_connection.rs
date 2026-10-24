@@ -220,11 +220,14 @@ impl PyQuicConnectionCore {
     }
 
     #[pyo3(signature = (stream_id, data, fin=false))]
-    fn send_stream(&self, stream_id: u64, data: &Bound<'_, PyBytes>, fin: bool) -> PyResult<()> {
-        self.lock_inner()
-            .send_stream(parse_stream_id(stream_id)?, data.as_bytes(), fin)
-            .map(|_| ())
-            .map_err(core_error)
+    fn send_stream(&self, stream_id: u64, data: &Bound<'_, PyAny>, fin: bool) -> PyResult<()> {
+        let stream_id = parse_stream_id(stream_id)?;
+        crate::pybuffer::with_buffer(data, |data| {
+            self.lock_inner()
+                .send_stream(stream_id, data, fin)
+                .map(|_| ())
+                .map_err(core_error)
+        })
     }
 
     fn reset_stream(&self, stream_id: u64, error_code: u64) -> PyResult<()> {

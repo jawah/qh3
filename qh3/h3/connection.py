@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from enum import Enum, IntEnum
 
-from .._compat import UINT_VAR_MAX_SIZE
+from .._compat import UINT_VAR_MAX_SIZE, BufferProtocol, as_contiguous_buffer
 from .._hazmat import (
     Buffer,
     BufferReadError,
@@ -190,7 +190,8 @@ class StreamCreationError(ProtocolError):
     error_code = ErrorCode.H3_STREAM_CREATION_ERROR
 
 
-def encode_frame(frame_type: int, frame_data: bytes) -> bytes:
+def encode_frame(frame_type: int, frame_data: BufferProtocol) -> bytes:
+    frame_data = as_contiguous_buffer(frame_data)
     frame_length = len(frame_data)
     buf = Buffer(capacity=frame_length + 2 * UINT_VAR_MAX_SIZE)
     buf.push_uint_var(frame_type)
@@ -545,7 +546,7 @@ class H3Connection:
 
         return push_stream_id
 
-    def send_data(self, stream_id: int, data: bytes, end_stream: bool) -> None:
+    def send_data(self, stream_id: int, data: BufferProtocol, end_stream: bool) -> None:
         """
         Send data on the given stream.
 
@@ -554,13 +555,20 @@ class H3Connection:
         method.
 
         :param stream_id: The stream ID on which to send the data.
-        :param data: The data to send.
+        :param data: A C-contiguous buffer, such as bytes, bytearray, memoryview,
+            or a CPU-backed Arrow buffer. Its raw bytes are copied by the existing
+            framing and send queue; no intermediate bytes conversion is made.
+            Do not mutate it during this call. It may be reused after return.
         :param end_stream: Whether to end the stream.
         """
+        data = as_contiguous_buffer(data)
         # check DATA frame is allowed
         stream = self._get_or_create_stream(stream_id)
         if stream.headers_send_state != HeadersState.AFTER_HEADERS:
             raise FrameUnexpected("DATA frame is not allowed in this state")
+
+        # Validate and frame the buffer before committing FIN to stream state.
+        frame = encode_frame(FrameType.DATA, data)
 
         if end_stream:
             stream.finish_sending()
@@ -577,9 +585,7 @@ class H3Connection:
                 ),
             )
 
-        self._quic.send_stream_data(
-            stream_id, encode_frame(FrameType.DATA, data), end_stream
-        )
+        self._quic.send_stream_data(stream_id, frame, end_stream)
 
     def send_headers(
         self, stream_id: int, headers: Headers, end_stream: bool = False

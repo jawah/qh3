@@ -987,6 +987,7 @@ dependencies = [
  "pkcs1",
  "pkcs8",
  "pyo3",
+ "pyo3-build-config",
  "quinn-udp",
  "rand",
  "rsa",

@@ -38,6 +38,21 @@ h3.send_headers(
         - received_settings
         - sent_settings
 
+## Sending buffers
+
+`send_data()` accepts `bytes`, `bytearray`, `memoryview`, and other objects
+exporting a C-contiguous buffer, including CPU-backed `pyarrow.Buffer` objects.
+Typed and multidimensional buffers are sent as their raw bytes; frame lengths
+use the byte count rather than the element count. Non-contiguous views raise
+`BufferError` instead of being flattened with an extra copy.
+
+The existing framing and Rust send queue retain their ownership copies. Buffer
+inputs are read directly without an intermediate `bytes()` or `tobytes()`
+conversion. Leave the source unchanged during the call; afterward it can be
+modified, resized, released, or discarded without changing the queued payload.
+`QuicConnection.send_stream_data()` supports the same buffer inputs, including
+when it stages writes before the handshake.
+
 ## Exceptions
 
 ::: qh3.h3.exceptions.H3Error

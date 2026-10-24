@@ -9,6 +9,7 @@ from hmac import compare_digest
 from typing import Any, Callable, TypeVar
 
 from .. import tls
+from .._compat import BufferProtocol, as_contiguous_buffer
 from .._hazmat import Buffer, QuicConnectionCore
 from .._hazmat import Certificate as X509Certificate
 from .._hazmat import pull_quic_header as _pull_quic_header
@@ -404,8 +405,17 @@ class QuicConnection:
         return stream_id
 
     def send_stream_data(
-        self, stream_id: int, data: bytes, end_stream: bool = False
+        self, stream_id: int, data: BufferProtocol, end_stream: bool = False
     ) -> None:
+        """Queue raw bytes from a C-contiguous buffer.
+
+        Accepts bytes, bytearray, memoryview, and other buffer exporters. The
+        existing send queue (or pre-handshake staging) owns a copy after return;
+        callers must not mutate the source during the call. Buffer inputs are
+        passed directly to native code without an intermediate bytes conversion.
+        Non-contiguous views raise BufferError.
+        """
+        data = as_contiguous_buffer(data)
         self._record_local_stream(stream_id)
         if not self._handshake_complete:
             self._pre_handshake_writes.append((stream_id, bytes(data), end_stream))

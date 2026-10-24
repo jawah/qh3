@@ -40,6 +40,9 @@ quinn-udp = { version = "0.6.1", features = ["fast-apple-datapath"] }
 [package.metadata.maturin]
 python-source = "qh3"
 
+[build-dependencies]
+pyo3-build-config = "0.28.2"
+
 [profile.release]
 opt-level = 3
 debug = false

@@ -14,6 +14,7 @@ mod ocsp;
 mod packet;
 mod pkcs8;
 mod private_key;
+mod pybuffer;
 mod quic;
 mod quic_connection;
 mod rsa;
