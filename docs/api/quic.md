@@ -27,6 +27,7 @@ or write to sockets.
         - get_timer
         - handle_timer
         - should_wait_for_ack
+        - get_send_buffer_size
         - next_event
         - get_next_available_stream_id
         - send_stream_data

@@ -557,6 +557,15 @@ impl SendStream {
         !self.reset_requested && (!self.pending.is_empty() || self.fin_pending)
     }
 
+    /// Bytes queued for their first transmission, excluding retransmissions.
+    pub fn send_buffer_size(&self) -> u64 {
+        if self.reset_requested || self.finished {
+            0
+        } else {
+            self.buffer_end.saturating_sub(self.highest_sent)
+        }
+    }
+
     /// Reserve the next STREAM frame without consuming pending data.
     pub fn reserve(
         &mut self,
@@ -644,7 +653,6 @@ impl SendStream {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn cancel(&mut self, reservation: &SendReservation) -> Result<(), StreamError> {
         if self.active.as_ref() != Some(reservation) {
             return Err(StreamError::UnknownReservation);

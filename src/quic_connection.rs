@@ -526,6 +526,13 @@ impl PyQuicConnectionCore {
             .should_wait_for_ack(duration_from_seconds(now)?))
     }
 
+    #[pyo3(signature = (stream_id=None))]
+    fn get_send_buffer_size(&self, stream_id: Option<u64>) -> PyResult<u64> {
+        Ok(self
+            .lock_inner()
+            .send_buffer_size(stream_id.map(parse_stream_id).transpose()?))
+    }
+
     #[getter]
     fn stream_limits(&self) -> (u64, u64, u64, u64) {
         let inner = self.lock_inner();
