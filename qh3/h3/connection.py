@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from enum import Enum, IntEnum
 
-from .._compat import UINT_VAR_MAX_SIZE, BufferProtocol, as_contiguous_buffer
+from .._compat import BufferProtocol, as_contiguous_buffer
 from .._hazmat import (
     Buffer,
     BufferReadError,
@@ -192,12 +192,10 @@ class StreamCreationError(ProtocolError):
 
 def encode_frame(frame_type: int, frame_data: BufferProtocol) -> bytes:
     frame_data = as_contiguous_buffer(frame_data)
-    frame_length = len(frame_data)
-    buf = Buffer(capacity=frame_length + 2 * UINT_VAR_MAX_SIZE)
-    buf.push_uint_var(frame_type)
-    buf.push_uint_var(frame_length)
-    buf.push_bytes(frame_data)
-    return buf.data
+    # Allocate the final frame once, copying directly from the payload buffer.
+    return b"".join(
+        (encode_uint_var(frame_type), encode_uint_var(len(frame_data)), frame_data)
+    )
 
 
 def encode_settings(settings: dict[int, int]) -> bytes:
@@ -669,7 +667,14 @@ class H3Connection:
         self._quic.send_stream_data(stream_id, encode_uint_var(stream_type))
         return stream_id
 
-    def _decode_headers(self, stream_id: int, frame_data: bytes | None) -> Headers:
+    def _decode_headers(
+        self,
+        stream_id: int,
+        frame_data: bytes | None,
+        *,
+        offset: int = 0,
+        length: int | None = None,
+    ) -> Headers:
         """
         Decode a HEADERS block and send decoder updates on the decoder stream.
 
@@ -682,9 +687,11 @@ class H3Connection:
             else:
                 # todo: investigate why the underlying implementation
                 #  seems to ignore bad frames..
-                if not frame_data:
+                if not frame_data or length == 0:
                     raise DecompressionFailed()
-                decoder, headers = self._decoder.feed_header(stream_id, frame_data)
+                decoder, headers = self._decoder.feed_header(
+                    stream_id, frame_data, offset=offset, length=length
+                )
             self._decoder_bytes_sent += len(decoder)
             self._quic.send_stream_data(self._local_decoder_stream_id, decoder)
         except DecompressionFailed as exc:
@@ -781,6 +788,9 @@ class H3Connection:
         frame_data: bytes | None,
         stream: H3Stream,
         stream_ended: bool,
+        *,
+        frame_offset: int = 0,
+        frame_length: int | None = None,
     ) -> list[H3Event]:
         """
         Handle a frame received on a request or push stream.
@@ -809,7 +819,9 @@ class H3Connection:
                 raise FrameUnexpected("HEADERS frame is not allowed in this state")
 
             # try to decode HEADERS, may raise pylsqpack.StreamBlocked
-            headers = self._decode_headers(stream.stream_id, frame_data)
+            headers = self._decode_headers(
+                stream.stream_id, frame_data, offset=frame_offset, length=frame_length
+            )
 
             status_code: int | None = None
 
@@ -824,15 +836,15 @@ class H3Connection:
 
             # log frame
             if self._quic_logger is not None:
+                if frame_data is None:
+                    frame_length = stream.blocked_frame_size
+                elif frame_length is None:
+                    frame_length = len(frame_data)
                 self._quic_logger.log_event(
                     category="http",
                     event="frame_parsed",
                     data=self._quic_logger.encode_http3_headers_frame(
-                        length=(
-                            stream.blocked_frame_size
-                            if frame_data is None
-                            else len(frame_data)
-                        ),
+                        length=frame_length,
                         headers=headers,
                         stream_id=stream.stream_id,
                     ),
@@ -1160,8 +1172,16 @@ class H3Connection:
                 break
 
             # read available data
-            frame_data = buf_pull_bytes(chunk_size)
             frame_type = stream.frame_type
+            frame_offset = 0
+            if frame_type == FrameType.HEADERS:
+                # QPACK retains its own copy if decoding blocks; avoid first
+                # making a separate Python bytes object for the encoded block.
+                frame_data = parse_data
+                frame_offset = consumed
+                buf.seek(frame_offset + chunk_size)
+            else:
+                frame_data = buf_pull_bytes(chunk_size)
             consumed = buf_tell()
 
             # detect end of frame
@@ -1173,15 +1193,17 @@ class H3Connection:
             try:
                 http_events.extend(
                     handle_frame(
-                        frame_type=frame_type,
-                        frame_data=frame_data,
-                        stream=stream,
-                        stream_ended=stream.receiving_ended and buf_eof(),
+                        frame_type,
+                        frame_data,
+                        stream,
+                        stream.receiving_ended and buf_eof(),
+                        frame_offset=frame_offset,
+                        frame_length=chunk_size,
                     )
                 )
             except StreamBlocked:
                 stream.blocked = True
-                stream.blocked_frame_size = len(frame_data)
+                stream.blocked_frame_size = chunk_size
                 self._blocked_stream_map[s_stream_id] = stream
                 break
 
@@ -1227,13 +1249,21 @@ class H3Connection:
     ) -> list[H3Event]:
         http_events: list[H3Event] = []
 
-        stream.buffer.extend(data)
         if stream_ended:
             stream.receiving_ended = True
 
+        if (
+            data
+            and not stream.buffer
+            and stream.stream_type
+            in (StreamType.QPACK_ENCODER, StreamType.QPACK_DECODER)
+        ):
+            return self._receive_qpack_data(stream.stream_type, data)
+
+        stream.buffer.extend(data)
+
         buf = Buffer(data=bytes(stream.buffer))
         consumed = 0
-        unblocked_streams: set[int] = set()
 
         while (
             stream.stream_type
@@ -1327,36 +1357,14 @@ class H3Connection:
                         )
                     )
                 return http_events
-            elif stream.stream_type == StreamType.QPACK_DECODER:
-                # feed unframed data to decoder
+            elif stream.stream_type in (
+                StreamType.QPACK_ENCODER,
+                StreamType.QPACK_DECODER,
+            ):
+                # The first receive may also contain the stream-type prefix.
                 data = buf.pull_bytes(buf.capacity - buf.tell())
                 consumed = buf.tell()
-                try:
-                    self._encoder.feed_decoder(data)
-                except DecoderStreamError as exc:
-                    raise QpackDecoderStreamError() from exc
-                self._decoder_bytes_received += len(data)
-            elif stream.stream_type == StreamType.QPACK_ENCODER:
-                # feed unframed data to encoder
-                data = buf.pull_bytes(buf.capacity - buf.tell())
-                consumed = buf.tell()
-                try:
-                    self._decoder.feed_encoder(data)
-                except EncoderStreamError as exc:
-                    raise QpackEncoderStreamError() from exc
-
-                for blocked_id, blocked_stream in self._blocked_stream_map.items():
-                    try:
-                        stream_data, headers = self._decoder.resume_header(blocked_id)
-                        blocked_stream._pending = (  # type: ignore[attr-defined]
-                            stream_data,
-                            headers,
-                        )
-                        unblocked_streams.add(blocked_id)
-                    except StreamBlocked:
-                        continue
-
-                self._encoder_bytes_received += len(data)
+                http_events.extend(self._receive_qpack_data(stream.stream_type, data))
             else:
                 # unknown stream type, discard data
                 buf.seek(buf.capacity)
@@ -1366,7 +1374,34 @@ class H3Connection:
         if consumed:
             del stream.buffer[:consumed]
 
-        # process unblocked streams
+        return http_events
+
+    def _receive_qpack_data(self, stream_type: int, data: bytes) -> list[H3Event]:
+        """Feed unframed bytes directly; QPACK handles partial instructions."""
+        if stream_type == StreamType.QPACK_DECODER:
+            try:
+                self._encoder.feed_decoder(data)
+            except DecoderStreamError as exc:
+                raise QpackDecoderStreamError() from exc
+            self._decoder_bytes_received += len(data)
+            return []
+
+        try:
+            self._decoder.feed_encoder(data)
+        except EncoderStreamError as exc:
+            raise QpackEncoderStreamError() from exc
+        self._encoder_bytes_received += len(data)
+
+        unblocked_streams: set[int] = set()
+        for blocked_id, blocked_stream in self._blocked_stream_map.items():
+            try:
+                stream_data, headers = self._decoder.resume_header(blocked_id)
+                blocked_stream._pending = (stream_data, headers)  # type: ignore[attr-defined]
+                unblocked_streams.add(blocked_id)
+            except StreamBlocked:
+                continue
+
+        http_events: list[H3Event] = []
         for stream_id in unblocked_streams:
             stream = self._stream[stream_id]
 
