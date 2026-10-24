@@ -1049,7 +1049,13 @@ class H3Connection:
                     )
                     stream.frame_size -= data_len
                     return http_events
-                # data completes or exceeds frame - fall through to general path
+                if data_len == stream.frame_size:
+                    stream.frame_size = None
+                    stream.frame_type = None
+                    return self._handle_request_or_push_frame(
+                        FrameType.DATA, data, stream, stream.receiving_ended
+                    )
+                # data also contains another frame - use the general parser
             else:
                 s_buffer.extend(data)
                 buf_len = len(s_buffer)
@@ -1083,10 +1089,17 @@ class H3Connection:
                 ]
             return []
 
-        if data:
-            s_buffer.extend(data)
+        buffered = bool(s_buffer)
+        if buffered:
+            if data:
+                s_buffer.extend(data)
+            parse_data = bytes(s_buffer)
+        else:
+            # Buffer borrows these immutable bytes. Only an incomplete suffix
+            # needs to be copied into stream.buffer for the next receive call.
+            parse_data = data
 
-        buf = Buffer(data=bytes(s_buffer))
+        buf = Buffer(data=parse_data)
         consumed = 0
         buf_tell = buf.tell
         buf_eof = buf.eof
@@ -1109,7 +1122,7 @@ class H3Connection:
                     stream.session_id = stream.frame_size
                     stream.frame_size = None
 
-                    frame_data = bytes(s_buffer[consumed:])
+                    frame_data = parse_data[consumed:]
                     s_buffer.clear()
 
                     self._log_stream_type(
@@ -1178,12 +1191,15 @@ class H3Connection:
                 stream.headers_recv_state is HeadersState.AFTER_TRAILERS
                 and stream.receiving_ended
             ):
-                consumed = len(s_buffer)
+                consumed = buf.capacity
                 break
 
-        # remove processed data from buffer
-        if consumed:
-            del s_buffer[:consumed]
+        # Keep only unparsed data, including a partially received frame header.
+        if buffered:
+            if consumed:
+                del s_buffer[:consumed]
+        elif consumed < buf.capacity:
+            s_buffer.extend(memoryview(parse_data)[consumed:])
 
         # If the stream ended but no event carried stream_ended=True
         # (e.g. the last frame was GREASE or PUSH_PROMISE after DATA),
