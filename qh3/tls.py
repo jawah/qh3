@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import glob
 import hashlib
+import ipaddress
 import logging
 import os
 import re
@@ -447,11 +448,14 @@ def verify_certificate(
             server_name_candidate.replace("*.", "unverified.")
 
             if ":" in server_name_candidate:
-                if len(server_name_candidate) == 11:
-                    server_name = ".".join(
-                        str(int(p)) for p in server_name_candidate.split(":")
+                try:
+                    server_name = str(
+                        ipaddress.ip_address(
+                            bytes.fromhex(server_name_candidate.replace(":", ""))
+                        )
                     )
-                else:
+                except ValueError:
+                    # Non-IP SANs, such as URIs, can also contain colons.
                     continue
 
             else:

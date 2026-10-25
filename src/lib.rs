@@ -14,6 +14,7 @@ mod ocsp;
 mod packet;
 mod pkcs8;
 mod private_key;
+mod pybuffer;
 mod quic;
 mod quic_connection;
 mod rsa;
@@ -34,8 +35,8 @@ pub use self::certificate::{
 pub use self::chain::rebuild_chain;
 pub use self::crl::{CertificateRevocationList, RevokedCertificate};
 pub use self::headers::{
-    DecoderStreamError, DecompressionFailed, EncoderStreamError, QpackDecoder, QpackEncoder,
-    StreamBlocked,
+    DecoderStreamError, DecompressionFailed, EncoderStreamError, HeaderTooLarge, QpackDecoder,
+    QpackEncoder, StreamBlocked,
 };
 pub use self::hpke::HpkeContext;
 pub use self::intldomain::{idna_decode, idna_encode};
@@ -64,6 +65,7 @@ fn _hazmat(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QpackDecoder>()?;
     m.add_class::<QpackEncoder>()?;
     m.add("StreamBlocked", py.get_type::<StreamBlocked>())?;
+    m.add("HeaderTooLarge", py.get_type::<HeaderTooLarge>())?;
     m.add("EncoderStreamError", py.get_type::<EncoderStreamError>())?;
     m.add("DecoderStreamError", py.get_type::<DecoderStreamError>())?;
     m.add("DecompressionFailed", py.get_type::<DecompressionFailed>())?;

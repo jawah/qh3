@@ -190,6 +190,36 @@ impl RecvStream {
             });
         }
 
+        // The common in-order case needs one owned event buffer, not a
+        // temporary BTreeMap chunk followed by a second copy for delivery.
+        if offset == self.read_offset && self.chunks.is_empty() && !self.reset {
+            if data.len() > self.max_buffered {
+                return Err(StreamError::ReassemblyLimit {
+                    limit: self.max_buffered,
+                    attempted: data.len(),
+                });
+            }
+            let was_finished = self.finished;
+            if fin {
+                self.final_size = Some(end);
+            }
+            self.highest_offset = self.highest_offset.max(end);
+            self.read_offset = end;
+            let end_stream = self.final_size == Some(end);
+            if end_stream {
+                self.finished = true;
+            }
+            return if data.is_empty() && (!end_stream || was_finished) {
+                Ok(None)
+            } else {
+                Ok(Some(ReceiveEvent {
+                    stream_id: self.stream_id,
+                    data: data.to_vec(),
+                    end_stream,
+                }))
+            };
+        }
+
         // Determine all genuinely new slices before changing any state.
         let start = offset.max(self.read_offset);
         let mut missing = Vec::new();
@@ -260,7 +290,11 @@ impl RecvStream {
         while let Some(chunk) = self.chunks.remove(&self.read_offset) {
             self.read_offset += chunk.len() as u64;
             self.buffered -= chunk.len();
-            contiguous.extend_from_slice(&chunk);
+            if contiguous.is_empty() {
+                contiguous = chunk;
+            } else {
+                contiguous.extend_from_slice(&chunk);
+            }
         }
         let end_stream = self.final_size == Some(self.read_offset);
         if end_stream {
@@ -557,6 +591,15 @@ impl SendStream {
         !self.reset_requested && (!self.pending.is_empty() || self.fin_pending)
     }
 
+    /// Bytes queued for their first transmission, excluding retransmissions.
+    pub fn send_buffer_size(&self) -> u64 {
+        if self.reset_requested || self.finished {
+            0
+        } else {
+            self.buffer_end.saturating_sub(self.highest_sent)
+        }
+    }
+
     /// Reserve the next STREAM frame without consuming pending data.
     pub fn reserve(
         &mut self,
@@ -644,7 +687,6 @@ impl SendStream {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn cancel(&mut self, reservation: &SendReservation) -> Result<(), StreamError> {
         if self.active.as_ref() != Some(reservation) {
             return Err(StreamError::UnknownReservation);
@@ -1156,6 +1198,41 @@ mod tests {
     }
 
     #[test]
+    fn in_order_delivery_honors_an_earlier_fin_and_ignores_duplicates() {
+        let mut recv = receiver();
+        assert_eq!(recv.receive(8, b"", true).unwrap(), None);
+        let first = recv.receive(0, b"abcd", false).unwrap().unwrap();
+        assert_eq!(first.data, b"abcd");
+        assert!(!first.end_stream);
+        assert_eq!(recv.buffered_len(), 0);
+        let last = recv.receive(4, b"efgh", false).unwrap().unwrap();
+        assert_eq!(last.data, b"efgh");
+        assert!(last.end_stream);
+        assert_eq!(recv.receive(8, b"", true).unwrap(), None);
+        assert_eq!(recv.receive(0, b"abcdefgh", true).unwrap(), None);
+    }
+
+    #[test]
+    fn in_order_reassembly_limit_failure_does_not_commit_fin() {
+        let mut recv = RecvStream::new(stream_id(0), true, 10, 3);
+        assert_eq!(recv.receive(0, b"", false).unwrap(), None);
+        assert_eq!(
+            recv.receive(0, b"four", true),
+            Err(StreamError::ReassemblyLimit {
+                limit: 3,
+                attempted: 4
+            })
+        );
+        assert_eq!(recv.read_offset, 0);
+        assert_eq!(recv.highest_offset(), 0);
+        assert_eq!(recv.final_size(), None);
+        assert_eq!(recv.buffered_len(), 0);
+        let event = recv.receive(0, b"yes", true).unwrap().unwrap();
+        assert_eq!(event.data, b"yes");
+        assert!(event.end_stream);
+    }
+
+    #[test]
     fn receive_reordered_emits_only_contiguous_data() {
         let mut recv = receiver();
         assert_eq!(recv.receive(5, b"world", true).unwrap(), None);
@@ -1163,6 +1240,39 @@ mod tests {
         assert_eq!(event.data, b"helloworld");
         assert!(event.end_stream);
         assert_eq!(recv.buffered_len(), 0);
+    }
+
+    #[test]
+    fn receive_all_fragment_orders_and_duplicate_fin() {
+        for order in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            let mut recv = receiver();
+            let mut data = Vec::new();
+            let mut fins = 0;
+            for index in order {
+                if let Some(event) = recv
+                    .receive(
+                        (index * 2) as u64,
+                        &b"abcdef"[index * 2..index * 2 + 2],
+                        index == 2,
+                    )
+                    .unwrap()
+                {
+                    data.extend(event.data);
+                    fins += usize::from(event.end_stream);
+                }
+            }
+            assert_eq!(data, b"abcdef");
+            assert_eq!(fins, 1);
+            assert_eq!(recv.buffered_len(), 0);
+            assert_eq!(recv.receive(4, b"ef", true).unwrap(), None);
+        }
     }
 
     #[test]

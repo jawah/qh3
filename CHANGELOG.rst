@@ -1,3 +1,38 @@
+2.1.0 (2026-10-25)
+==================
+
+**Security**
+- Enforce decoded HTTP/3 field-section limits during QPACK expansion: 1 MiB
+  for clients and 256 KiB for servers, including per-field overhead, trailers,
+  push promises, and blocked sections. Raised ls-qpack-rs to 0.3.3 minimum.
+- Reject client closure of HTTP/3 critical streams before processing more QPACK
+  input, and release completed unidirectional streams from the H3 registry.
+
+**Fixed**
+- QUIC sends now respect shared connection credit, retain blocked stream data,
+  and resume when peer flow-control limits increase.
+- UDP/GSO fallback now preserves datagram boundaries and partial-send progress,
+  disables rejected offload, and retains valid traffic after oversized or
+  interrupted sends. Hardened receive error reporting and transport cleanup.
+
+**Added**
+- ``QuicConnection.get_send_buffer_size(stream_id=None)`` reports stream bytes
+  awaiting their first transmission for upload backpressure.
+- ``H3Connection.send_data()`` and ``QuicConnection.send_stream_data()`` accept
+  C-contiguous buffer objects, including ``bytearray``, ``memoryview``, and Arrow
+  buffers, without extra payload conversion copies.
+- Explicit support for Python 3.15
+
+**Changed**
+- (Perf) Reduced receive-side copying for in-order QUIC data and HTTP/3 DATA frames.
+- (Perf) Reduced HTTP/3 frame construction and QPACK instruction copies, and avoided
+  an intermediate copy when passing HEADERS blocks to the decoder.
+- Updated aws-lc-rs v1.18.1 to v1.18.2
+- Updated rustls v0.23.45 to v0.23.46
+
+**Misc**
+- Publishing 3.15t prebuilt wheel.
+
 2.0.4 (2026-10-01)
 ==================
 

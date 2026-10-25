@@ -1,18 +1,18 @@
-use ls_qpack_rs::decoder::{Decoder, DecoderOutput};
+use ls_qpack_rs::decoder::{BuffersDecoded, Decoder, DecoderErrorKind, DecoderOutput};
 use ls_qpack_rs::encoder::Encoder;
 use ls_qpack_rs::StreamId;
-use pyo3::exceptions::PyException;
+use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::pymethods;
 use pyo3::types::PyBytesMethods;
-use pyo3::types::PyListMethods;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use pyo3::{pyclass, Bound};
-use pyo3::{IntoPyObject, PyResult, Python};
+use pyo3::{PyResult, Python};
 
 pyo3::create_exception!(_hazmat, StreamBlocked, PyException);
 pyo3::create_exception!(_hazmat, EncoderStreamError, PyException);
 pyo3::create_exception!(_hazmat, DecoderStreamError, PyException);
 pyo3::create_exception!(_hazmat, DecompressionFailed, PyException);
+pyo3::create_exception!(_hazmat, HeaderTooLarge, PyException);
 
 #[pyclass(name = "QpackDecoder", module = "qh3._hazmat")]
 pub struct QpackDecoder {
@@ -22,6 +22,36 @@ pub struct QpackDecoder {
 #[pyclass(name = "QpackEncoder", module = "qh3._hazmat")]
 pub struct QpackEncoder {
     encoder: Encoder,
+}
+
+fn decoded_to_python(py: Python<'_>, buffer: BuffersDecoded) -> PyResult<Bound<'_, PyTuple>> {
+    // PyList::new preallocates from this exact-size iterator. No temporary
+    // vector or repeated Python-list growth is needed.
+    let headers = PyList::new(
+        py,
+        buffer.headers().iter().map(|header| {
+            (
+                PyBytes::new(py, header.name().as_bytes()),
+                PyBytes::new(py, header.value().as_bytes()),
+            )
+        }),
+    )?;
+    PyTuple::new(
+        py,
+        [
+            PyBytes::new(py, buffer.stream()).into_any(),
+            headers.into_any(),
+        ],
+    )
+}
+
+fn header_range(data: &[u8], offset: usize, length: Option<usize>) -> PyResult<&[u8]> {
+    let end = match length {
+        Some(length) => offset.checked_add(length),
+        None => Some(data.len()),
+    };
+    end.and_then(|end| data.get(offset..end))
+        .ok_or_else(|| PyValueError::new_err("QPACK input range is out of bounds"))
 }
 
 #[pymethods]
@@ -94,7 +124,7 @@ impl QpackEncoder {
 
                 let stream_data = PyBytes::new(py, buffer.stream());
 
-                Ok(PyTuple::new(py, [stream_data, encoded_buffer]).unwrap())
+                PyTuple::new(py, [stream_data, encoded_buffer])
             }
             Err(abc) => Err(EncoderStreamError::new_err(format!(
                 "unable to encode headers {:?}",
@@ -107,9 +137,21 @@ impl QpackEncoder {
 #[pymethods]
 impl QpackDecoder {
     #[new]
-    pub fn py_new(max_table_capacity: u32, blocked_streams: u32) -> Self {
+    #[pyo3(signature = (max_table_capacity, blocked_streams, *, max_field_section_size=None))]
+    pub fn py_new(
+        max_table_capacity: u32,
+        blocked_streams: u32,
+        max_field_section_size: Option<usize>,
+    ) -> Self {
         QpackDecoder {
-            decoder: Decoder::new(max_table_capacity, blocked_streams),
+            decoder: match max_field_section_size {
+                Some(maximum) => Decoder::with_max_field_section_size(
+                    max_table_capacity,
+                    blocked_streams,
+                    maximum,
+                ),
+                None => Decoder::new(max_table_capacity, blocked_streams),
+            },
         }
     }
 
@@ -120,57 +162,39 @@ impl QpackDecoder {
 
         match res {
             Ok(_) => Ok(()),
+            Err(error) if error.kind() == DecoderErrorKind::FieldSectionTooLarge => Err(
+                HeaderTooLarge::new_err("QPACK field section exceeds the configured limit"),
+            ),
             Err(_) => Err(EncoderStreamError::new_err(
                 "an error occurred while feeding data from encoder with qpack data",
             )),
         }
     }
 
+    #[pyo3(signature = (stream_id, data, *, offset=0, length=None))]
     pub fn feed_header<'a>(
         &mut self,
         py: Python<'a>,
         stream_id: u64,
         data: Bound<'_, PyBytes>,
+        offset: usize,
+        length: Option<usize>,
     ) -> PyResult<Bound<'a, PyTuple>> {
-        let input_data = data.as_bytes();
+        let input_data = header_range(data.as_bytes(), offset, length)?;
+        if input_data.is_empty() {
+            return Err(DecoderStreamError::new_err("Empty QPACK header block"));
+        }
 
         let output = py.detach(|| self.decoder.decode(StreamId::new(stream_id), input_data));
 
         match output {
-            Ok(DecoderOutput::Done(ref buffer)) => {
-                let decoded_headers = PyList::new(
-                    py,
-                    Vec::<(String, String)>::with_capacity(buffer.headers().len()),
-                )
-                .unwrap();
-
-                for header in buffer.headers() {
-                    let _ = decoded_headers.append(
-                        PyTuple::new(
-                            py,
-                            [
-                                PyBytes::new(py, header.name().as_bytes()),
-                                PyBytes::new(py, header.value().as_bytes()),
-                            ],
-                        )
-                        .unwrap(),
-                    );
-                }
-
-                Ok(PyTuple::new(
-                    py,
-                    [
-                        PyBytes::new(py, buffer.stream())
-                            .into_pyobject(py)?
-                            .into_any(),
-                        decoded_headers.into_pyobject(py)?.into_any(),
-                    ],
-                )
-                .unwrap())
-            }
+            Ok(DecoderOutput::Done(buffer)) => decoded_to_python(py, buffer),
             Ok(DecoderOutput::BlockedStream) => Err(StreamBlocked::new_err(
                 "stream is blocked, need more data to pursue decoding",
             )),
+            Err(error) if error.kind() == DecoderErrorKind::FieldSectionTooLarge => Err(
+                HeaderTooLarge::new_err("QPACK field section exceeds the configured limit"),
+            ),
             Err(_) => Err(DecoderStreamError::new_err(
                 "an error occurred while decoding the stream qpack data",
             )),
@@ -182,50 +206,18 @@ impl QpackDecoder {
         py: Python<'a>,
         stream_id: u64,
     ) -> PyResult<Bound<'a, PyTuple>> {
-        let output = py.detach(|| self.decoder.unblocked(StreamId::new(stream_id)));
-
-        if output.is_none() {
-            return Err(DecoderStreamError::new_err("stream id is unknown"));
-        }
-
-        let res = output.unwrap();
+        let res = py
+            .detach(|| self.decoder.unblocked(StreamId::new(stream_id)))
+            .ok_or_else(|| DecoderStreamError::new_err("stream id is unknown"))?;
 
         match res {
-            Ok(DecoderOutput::Done(ref buffer)) => {
-                let headers_iter = buffer.headers();
-                let decoded_headers = PyList::new(
-                    py,
-                    Vec::<(String, String)>::with_capacity(headers_iter.len()),
-                )
-                .unwrap();
-
-                for header in headers_iter {
-                    let _ = decoded_headers.append(
-                        PyTuple::new(
-                            py,
-                            [
-                                PyBytes::new(py, header.name().as_bytes()),
-                                PyBytes::new(py, header.value().as_bytes()),
-                            ],
-                        )
-                        .unwrap(),
-                    );
-                }
-
-                Ok(PyTuple::new(
-                    py,
-                    [
-                        PyBytes::new(py, buffer.stream())
-                            .into_pyobject(py)?
-                            .into_any(),
-                        decoded_headers.into_pyobject(py)?.into_any(),
-                    ],
-                )
-                .unwrap())
-            }
+            Ok(DecoderOutput::Done(buffer)) => decoded_to_python(py, buffer),
             Ok(DecoderOutput::BlockedStream) => Err(StreamBlocked::new_err(
                 "stream is blocked, need more data to pursue decoding",
             )),
+            Err(error) if error.kind() == DecoderErrorKind::FieldSectionTooLarge => Err(
+                HeaderTooLarge::new_err("QPACK field section exceeds the configured limit"),
+            ),
             Err(_) => Err(DecoderStreamError::new_err(
                 "an error occurred while decoding the stream qpack data",
             )),

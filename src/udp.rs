@@ -17,6 +17,8 @@ use std::net::{IpAddr, SocketAddr, SocketAddrV6};
 #[cfg(unix)]
 use std::os::unix::io::{BorrowedFd, OwnedFd, RawFd};
 #[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
 use std::sync::Mutex;
 
 use pyo3::prelude::*;
@@ -40,7 +42,7 @@ pub struct PyUdpSocketState {
     #[cfg(unix)]
     recv_buf: Mutex<Vec<u8>>,
     #[cfg(unix)]
-    max_gso: usize,
+    gso_disabled: AtomicBool,
     #[cfg(unix)]
     gro: usize,
 }
@@ -49,9 +51,8 @@ pub struct PyUdpSocketState {
 impl PyUdpSocketState {
     /// Create a UdpSocketState from a file descriptor.
     ///
-    /// The caller (Python transport) is responsible for socket creation,
-    /// binding, and enabling GRO/GSO via setsockopt. This constructor
-    /// only initialises the quinn-udp state needed for recv/send syscalls.
+    /// The caller owns socket creation and binding. This constructor duplicates
+    /// the descriptor and lets quinn-udp configure native UDP socket options.
     #[new]
     fn new(fd: i64) -> PyResult<Self> {
         #[cfg(unix)]
@@ -65,13 +66,10 @@ impl PyUdpSocketState {
                 ));
             }
             let borrowed = unsafe { BorrowedFd::borrow_raw(raw_fd) };
-            let owned = borrowed
-                .try_clone_to_owned()
-                .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))?;
+            let owned = borrowed.try_clone_to_owned().map_err(io_error)?;
             let sock_ref = UdpSockRef::from(&owned);
 
-            let state = quinn_udp::UdpSocketState::new(sock_ref)
-                .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))?;
+            let state = quinn_udp::UdpSocketState::new(sock_ref).map_err(io_error)?;
 
             // Enable Apple's private sendmsg_x/recvmsg_x batch APIs when available.
             // These are resolved via dlsym at runtime; if the symbols are absent
@@ -91,14 +89,13 @@ impl PyUdpSocketState {
                 state.set_apple_fast_path();
             }
 
-            let max_gso = state.max_gso_segments();
             let gro = state.gro_segments();
 
             Ok(Self {
                 inner: state,
                 fd: owned,
                 recv_buf: Mutex::new(vec![0u8; RECV_BUF_LEN * BATCH_SIZE]),
-                max_gso,
+                gso_disabled: AtomicBool::new(false),
                 gro,
             })
         }
@@ -115,12 +112,22 @@ impl PyUdpSocketState {
     fn max_gso_segments(&self) -> usize {
         #[cfg(unix)]
         {
-            self.max_gso
+            if self.gso_disabled.load(Ordering::Relaxed) {
+                1
+            } else {
+                self.inner.max_gso_segments()
+            }
         }
         #[cfg(not(unix))]
         {
             1
         }
+    }
+
+    /// Permanently disable segmentation for this socket after a driver rejection.
+    fn disable_gso(&self) {
+        #[cfg(unix)]
+        self.gso_disabled.store(true, Ordering::Relaxed);
     }
 
     #[getter]
@@ -172,7 +179,7 @@ impl PyUdpSocketState {
                     return Ok(PyList::empty(py));
                 }
                 Err(e) => {
-                    return Err(pyo3::exceptions::PyOSError::new_err(e.to_string()));
+                    return Err(io_error(e));
                 }
             };
 
@@ -209,10 +216,12 @@ impl PyUdpSocketState {
     /// Accepts a Python list of `bytes` objects and accesses their
     /// underlying buffers directly via `PyBytes::as_bytes()`.
     ///
-    /// Returns the number of datagrams successfully sent.
+    /// Returns the number of datagrams successfully sent before completion or
+    /// would-block. On other I/O errors, the OSError retains its errno and its
+    /// `datagrams_sent` attribute identifies the prefix already transmitted.
     fn send<'py>(
         &self,
-        _py: Python<'py>,
+        py: Python<'py>,
         datagrams: Bound<'py, PyList>,
         addr: &Bound<'py, PyTuple>,
     ) -> PyResult<usize> {
@@ -225,8 +234,6 @@ impl PyUdpSocketState {
         {
             let dest = socket_addr_from_py(addr)?;
 
-            let mut sent = 0usize;
-
             // We keep the Bound<PyBytes> handles alive so the &[u8] borrows remain valid.
             let items: Vec<Bound<'py, PyBytes>> = datagrams
                 .iter()
@@ -234,88 +241,90 @@ impl PyUdpSocketState {
                 .collect::<PyResult<_>>()?;
             let slices: Vec<&[u8]> = items.iter().map(|b| b.as_bytes()).collect();
 
-            if self.max_gso > 1 {
-                let mut i = 0;
-                while i < slices.len() {
-                    let seg_size = slices[i].len();
-                    let cap = 65000usize
-                        .checked_div(seg_size)
-                        .map_or(1, |cap| self.max_gso.min(cap).max(1));
-                    let mut end = i + 1;
-
-                    while end < slices.len() && end - i < cap {
-                        let dlen = slices[end].len();
-                        if dlen == 0 {
-                            break;
-                        } else if dlen == seg_size {
-                            end += 1;
-                        } else if dlen < seg_size {
-                            end += 1;
-                            break;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    let group_count = end - i;
-
-                    let contents = coalesce_gso_group(&slices[i..end]);
-
+            let result = send_datagrams(
+                &slices,
+                || self.max_gso_segments(),
+                |contents, segment_size| {
                     let transmit = Transmit {
                         destination: dest,
                         ecn: None,
-                        contents: contents.as_ref(),
-                        segment_size: if group_count > 1 {
-                            Some(seg_size)
-                        } else {
-                            None
-                        },
+                        contents,
+                        segment_size,
                         src_ip: None,
                     };
-
-                    let sock_ref = UdpSockRef::from(&self.fd);
-                    match self.inner.try_send(sock_ref, &transmit) {
-                        Ok(()) => sent += group_count,
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                        Err(e) => {
-                            return Err(pyo3::exceptions::PyOSError::new_err(e.to_string()));
-                        }
-                    }
-
-                    i = end;
-                }
-            } else {
-                // Non-GSO
-                for s in &slices {
-                    let transmit = Transmit {
-                        destination: dest,
-                        ecn: None,
-                        contents: s,
-                        segment_size: None,
-                        src_ip: None,
-                    };
-
-                    let sock_ref = UdpSockRef::from(&self.fd);
-                    match self.inner.try_send(sock_ref, &transmit) {
-                        Ok(()) => sent += 1,
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                        Err(e) => {
-                            return Err(pyo3::exceptions::PyOSError::new_err(e.to_string()));
-                        }
-                    }
+                    self.inner.try_send(UdpSockRef::from(&self.fd), &transmit)
+                },
+            );
+            match result {
+                Ok(sent) => Ok(sent),
+                Err((sent, error)) => {
+                    let error = io_error(error);
+                    error.value(py).setattr("datagrams_sent", sent)?;
+                    Err(error)
                 }
             }
-
-            Ok(sent)
         }
         #[cfg(not(unix))]
         {
-            let _ = (_py, datagrams, addr);
+            let _ = (py, datagrams, addr);
             Err(pyo3::exceptions::PyNotImplementedError::new_err(
                 "send is only supported on Unix platforms",
             ))
         }
     }
+}
+
+#[cfg(unix)]
+fn io_error(error: std::io::Error) -> PyErr {
+    // PyO3's legacy std::io::Error conversion keeps only the message. Supply
+    // the errno explicitly so Python can classify MTU and offload failures.
+    match error.raw_os_error() {
+        Some(errno) => pyo3::exceptions::PyOSError::new_err((errno, error.to_string())),
+        None => pyo3::exceptions::PyOSError::new_err(error.to_string()),
+    }
+}
+
+#[cfg(unix)]
+fn send_datagrams(
+    datagrams: &[&[u8]],
+    max_gso: impl Fn() -> usize,
+    mut send: impl FnMut(&[u8], Option<usize>) -> std::io::Result<()>,
+) -> Result<usize, (usize, std::io::Error)> {
+    let mut sent = 0;
+    while sent < datagrams.len() {
+        let segment_size = datagrams[sent].len();
+        // Read the live limit for each group: quinn-udp may lower it while
+        // retrying a send with unsupported socket control messages.
+        let cap = 65000usize
+            .checked_div(segment_size)
+            .map_or(1, |cap| max_gso().min(cap).max(1));
+        let mut end = sent + 1;
+        while end < datagrams.len() && end - sent < cap {
+            let size = datagrams[end].len();
+            if size == 0 || size > segment_size {
+                break;
+            }
+            end += 1;
+            if size < segment_size {
+                break;
+            }
+        }
+        let contents = coalesce_gso_group(&datagrams[sent..end]);
+        let segmentation = (end - sent > 1).then_some(segment_size);
+        match send(contents.as_ref(), segmentation) {
+            Ok(()) => sent = end,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                return Ok(sent)
+            }
+            Err(error) => return Err((sent, error)),
+        }
+    }
+    Ok(sent)
 }
 
 #[cfg(unix)]
@@ -396,6 +405,106 @@ fn coalesce_gso_group<'a>(group: &[&'a [u8]]) -> Cow<'a, [u8]> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn send_error_retains_the_successful_prefix() {
+        for max_gso in [1, 64] {
+            let mut calls = 0;
+            let result = send_datagrams(
+                &[b"aa", b"aa", b"larger", b"tail"],
+                || max_gso,
+                |_, _| {
+                    calls += 1;
+                    if calls == 2 {
+                        Err(Error::new(ErrorKind::PermissionDenied, "rejected"))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            let (sent, error) = result.unwrap_err();
+            assert_eq!(sent, if max_gso == 1 { 1 } else { 2 });
+            assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+            assert_eq!(calls, 2);
+        }
+    }
+
+    #[test]
+    fn blocked_or_interrupted_send_preserves_group_boundaries() {
+        for kind in [ErrorKind::WouldBlock, ErrorKind::Interrupted] {
+            for fail_at in [1, 2] {
+                let mut calls = 0;
+                let sent = send_datagrams(
+                    &[b"a", b"same", b"same", b"tail"],
+                    || 64,
+                    |_, _| {
+                        calls += 1;
+                        if calls == fail_at {
+                            Err(Error::new(kind, "retry"))
+                        } else {
+                            Ok(())
+                        }
+                    },
+                )
+                .unwrap();
+                assert_eq!(sent, fail_at - 1);
+                assert_eq!(calls, fail_at);
+            }
+        }
+    }
+
+    #[test]
+    fn gso_limit_is_rechecked_after_each_send() {
+        let max_gso = Cell::new(2);
+        let mut transmissions = Vec::new();
+        let sent = send_datagrams(
+            &[b"aa", b"aa", b"bb", b"bb"],
+            || max_gso.get(),
+            |data, segment| {
+                transmissions.push((data.to_vec(), segment));
+                max_gso.set(1);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(sent, 4);
+        assert_eq!(
+            transmissions,
+            vec![
+                (b"aaaa".to_vec(), Some(2)),
+                (b"bb".to_vec(), None),
+                (b"bb".to_vec(), None)
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_datagrams_are_not_coalesced_away() {
+        let mut transmissions = Vec::new();
+        assert_eq!(
+            send_datagrams(
+                &[b"", b"", b"aa", b"a", b""],
+                || 64,
+                |data, segment| {
+                    transmissions.push((data.to_vec(), segment));
+                    Ok(())
+                }
+            )
+            .unwrap(),
+            5
+        );
+        assert_eq!(
+            transmissions,
+            vec![
+                (vec![], None),
+                (vec![], None),
+                (b"aaa".to_vec(), Some(2)),
+                (vec![], None)
+            ]
+        );
+    }
 
     #[test]
     fn single_gso_group_borrows_original_datagram() {

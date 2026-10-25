@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import pytest
 import binascii
+import hashlib
+import hmac
+import logging
 import ssl
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
+from cryptography.hazmat.primitives.kdf.hkdf import HKDFExpand as CryptoHKDFExpand
 
 from qh3 import tls
 from qh3._hazmat import Certificate as InnerCertificate
@@ -92,6 +96,12 @@ SERVER_QUIC_TRANSPORT_PARAMETERS_3 = binascii.unhexlify(
 
 
 class TestBuffer:
+    def test_pull_block_requires_consuming_declared_length(self):
+        buf = Buffer(data=b"\x02ab")
+        with pytest.raises(tls.AlertDecodeError, match="extra bytes"):
+            with pull_block(buf, 1):
+                assert buf.pull_bytes(1) == b"a"
+
     def test_pull_block_truncated(self):
         buf = Buffer(capacity=0)
         with pytest.raises(BufferReadError):
@@ -100,6 +110,16 @@ class TestBuffer:
 
 
 class TestCertificateStoreLoading:
+    def test_load_hashed_ca_directory(self, tmp_path):
+        (tmp_path / "0123abcd.0").write_bytes(load("pycacert.pem"))
+        anchors, intermediates, other = tls.load_store_and_sort(capath=str(tmp_path))
+        assert anchors == [
+            cert.public_bytes()
+            for cert in load_pem_x509_certificates(load("pycacert.pem"))
+        ]
+        assert intermediates == []
+        assert other == []
+
     def test_pem_loader_stops_at_non_certificate_data(self):
         assert tls._load_pem_certs_as_der(b"not a certificate\n") == []
 
@@ -214,6 +234,19 @@ class TestContext:
         client.state = State.CLIENT_EXPECT_SERVER_HELLO
         client.handle_message(b"\x02\x00\x00", create_buffers())
         assert client._receive_buffer == b"\x02\x00\x00"
+
+    def test_handshake_rejects_unconsumed_parser_payload(self, monkeypatch):
+        client = self.create_client()
+        client.state = State.CLIENT_EXPECT_SERVER_HELLO
+
+        def incomplete_parser(input_buf, output_buf):
+            input_buf.pull_uint8()
+
+        monkeypatch.setattr(client, "_client_handle_hello", incomplete_parser)
+        with pytest.raises(
+            tls.AlertDecodeError, match="extra bytes at the end of a handshake message"
+        ):
+            client.handle_message(load("tls_server_hello.bin"), create_buffers())
 
     def test_client_bad_certificate_verify_data(self):
         client = self.create_client()
@@ -456,6 +489,399 @@ class TestContext:
         assert client.alpn_negotiated == None
         assert server.alpn_negotiated == None
 
+    def test_handshake_with_trace_logging(self, caplog):
+        from qh3._compat import TRACE
+
+        logger = logging.getLogger("qh3.tls.test")
+        caplog.set_level(TRACE, logger=logger.name)
+        client = self.create_client(logger=logger)
+        server = self.create_server(logger=logger)
+        self._handshake(client, server)
+        assert "CLIENT_POST_HANDSHAKE" in caplog.text
+        assert "Advertising to peer post-quantum algorithm" in caplog.text
+        assert "Post-quantum safety achieved" in caplog.text
+
+    @pytest.mark.parametrize("algorithm", ["md5", "sha1", "sha256"])
+    def test_handshake_with_matching_fingerprint(self, algorithm):
+        server = self.create_server()
+        digest = hashlib.new(algorithm, server.certificate.public_bytes()).hexdigest()
+        fingerprint = ":".join(
+            digest[i : i + 2] for i in range(0, len(digest), 2)
+        ).upper()
+        client = self.create_client(assert_fingerprint=fingerprint)
+        self._handshake(client, server)
+
+    @pytest.mark.parametrize(
+        "fingerprint, reason",
+        [
+            ("00", "Fingerprint of invalid length"),
+            ("00" * 32, "Fingerprints did not match"),
+        ],
+    )
+    def test_handshake_rejects_bad_fingerprint(self, fingerprint, reason):
+        client = self.create_client(assert_fingerprint=fingerprint)
+        server = self.create_server()
+        with pytest.raises(tls.AlertBadCertificate, match=reason):
+            self._handshake(client, server)
+        assert client.state == State.CLIENT_EXPECT_CERTIFICATE_VERIFY
+
+    @pytest.mark.parametrize(
+        "field, value, reason",
+        [
+            ("compression_method", 1, "compression method we did not advertise"),
+            ("supported_version", tls.TLS_VERSION_1_2, "version we did not advertise"),
+        ],
+    )
+    def test_client_rejects_unadvertised_server_selection(self, field, value, reason):
+        client = self.create_client()
+        server = self.create_server()
+        client_buf, server_buf = create_buffers(), create_buffers()
+        client.handle_message(b"", client_buf)
+        server.handle_message(merge_buffers(client_buf), server_buf)
+        hello = pull_server_hello(Buffer(data=server_buf[tls.Epoch.INITIAL].data))
+        setattr(hello, field, value)
+        buf = Buffer(capacity=8192)
+        push_server_hello(buf, hello)
+        with pytest.raises(tls.AlertIllegalParameter, match=reason):
+            client.handle_message(buf.data, create_buffers())
+        assert client.state == State.CLIENT_EXPECT_SERVER_HELLO
+
+    def test_client_rejects_unadvertised_certificate_signature(self, monkeypatch):
+        original = tls.push_certificate_verify
+
+        def unsupported_signature(buf, verify):
+            verify.algorithm = tls.SignatureAlgorithm.ED448
+            original(buf, verify)
+
+        monkeypatch.setattr(tls, "push_certificate_verify", unsupported_signature)
+        client = self.create_client()
+        with pytest.raises(
+            tls.AlertDecryptError, match="signature algorithm we did not advertise"
+        ):
+            self._handshake(client, self.create_server())
+        assert client.state == State.CLIENT_EXPECT_CERTIFICATE_VERIFY
+
+    def test_handshake_without_certificate_compression(self, monkeypatch):
+        monkeypatch.setattr(tls, "_brotli", None)
+        client = self.create_client()
+        assert client._compress_certificate_algorithms is None
+        self._handshake(client, self.create_server())
+
+    def _ech_config_list(self, public_name="localhost"):
+        from cryptography.hazmat.primitives.asymmetric import x25519
+
+        key = x25519.X25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+        public_key = key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        buf = Buffer(capacity=256)
+        with push_block(buf, 2):
+            buf.push_uint16(tls.ECH_VERSION)
+            with push_block(buf, 2):
+                buf.push_uint8(1)
+                buf.push_uint16(0x0020)
+                push_opaque(buf, 2, public_key)
+                with push_block(buf, 2):
+                    buf.push_uint16(1)
+                    buf.push_uint16(1)
+                buf.push_uint8(64)
+                push_opaque(buf, 1, public_name.encode())
+                push_opaque(buf, 2, b"")
+        return buf.data
+
+    @pytest.mark.parametrize("config", [b"\x00", b"\x00\x04\xff\xff\x00\x00"])
+    def test_unusable_ech_config_falls_back_to_grease(self, config, caplog):
+        from qh3._compat import TRACE
+
+        logger = logging.getLogger("qh3.tls.test")
+        caplog.set_level(TRACE, logger=logger.name)
+        client = self.create_client(
+            server_name="localhost", ech_config_list=config, logger=logger
+        )
+        self._handshake(client, self.create_server())
+        assert not client._ech_offered
+        assert not client.ech_accepted
+        assert client._ech_config is None
+        assert "falling back to GREASE" in caplog.text
+
+    def test_ech_inner_preserves_extra_handshake_extensions(self):
+        client = self.create_client(
+            server_name="private.example",
+            alpn_protocols=["h3"],
+            ech_config_list=self._ech_config_list(),
+        )
+        client.handshake_extensions.append((0xFACE, b"custom settings"))
+        buf = create_buffers()
+        client.handle_message(b"", buf)
+        inner = pull_client_hello(Buffer(data=client._ech_inner_ch_bytes))
+        outer = pull_client_hello(Buffer(data=buf[tls.Epoch.INITIAL].data))
+        assert inner.server_name == "private.example"
+        assert outer.server_name == "localhost"
+        for hello in (inner, outer):
+            assert (0xFACE, b"custom settings") in hello.other_extensions
+            assert hello.alpn_protocols == ["h3"]
+
+    @pytest.mark.parametrize("retry_configs", [False, True])
+    def test_ech_rejection_authenticates_outer_name_before_alert(
+        self, retry_configs, caplog
+    ):
+        from qh3._compat import TRACE
+
+        logger = logging.getLogger("qh3.tls.test")
+        caplog.set_level(TRACE, logger=logger.name)
+        config = self._ech_config_list()
+        client = self.create_client(
+            server_name="private.example", ech_config_list=config, logger=logger
+        )
+        server = self.create_server()
+        if retry_configs:
+            server.handshake_extensions.append(
+                (tls.ExtensionType.ENCRYPTED_CLIENT_HELLO, config)
+            )
+        client_buf, server_buf = create_buffers(), create_buffers()
+        client.handle_message(b"", client_buf)
+        server.handle_message(merge_buffers(client_buf), server_buf)
+        reset_buffers(client_buf)
+        with pytest.raises(tls.AlertECHRequired):
+            client.handle_message(merge_buffers(server_buf), client_buf)
+        assert client.state == State.CLIENT_POST_HANDSHAKE
+        assert not client.ech_accepted
+        assert client.ech_retry_configs == (config if retry_configs else None)
+        assert "raising ech_required alert" in caplog.text
+        reset_buffers(server_buf)
+        server.handle_message(merge_buffers(client_buf), server_buf)
+        assert server.state == State.SERVER_POST_HANDSHAKE
+        assert client._enc_key == server._dec_key
+
+    def test_ech_rejection_requires_a_valid_outer_certificate(self):
+        client = self.create_client(
+            server_name="localhost",
+            ech_config_list=self._ech_config_list("wrong.example"),
+        )
+        with pytest.raises(tls.AlertBadCertificate):
+            self._handshake(client, self.create_server())
+        assert client.state == State.CLIENT_EXPECT_CERTIFICATE_VERIFY
+
+    @pytest.mark.parametrize("send_retry_configs", [False, True])
+    def test_ech_acceptance_uses_inner_transcript(
+        self, send_retry_configs, monkeypatch, caplog
+    ):
+        from qh3._compat import TRACE
+
+        logger = logging.getLogger("qh3.tls.test")
+        caplog.set_level(TRACE, logger=logger.name)
+        config = self._ech_config_list("outer.example")
+        client = self.create_client(
+            server_name="localhost", ech_config_list=config, logger=logger
+        )
+        server = self.create_server()
+        if send_retry_configs:
+            server.handshake_extensions.append(
+                (tls.ExtensionType.ENCRYPTED_CLIENT_HELLO, config)
+            )
+        client_buf, server_buf = create_buffers(), create_buffers()
+        client.handle_message(b"", client_buf)
+        reset_buffers(client_buf)
+        original = tls.push_server_hello
+
+        def confirm_acceptance(buf, hello):
+            # Compute the RFC 9849 signal independently over the raw ServerHello.
+            hello.random = hello.random[:24] + bytes(8)
+            encoded = Buffer(capacity=8192)
+            original(encoded, hello)
+            transcript = hashlib.sha256(
+                client._ech_inner_ch_bytes + encoded.data
+            ).digest()
+            prk = hmac.new(bytes(32), client._ech_inner_random, "sha256").digest()
+            label = b"tls13 ech accept confirmation"
+            info = (
+                b"\x00\x08"
+                + bytes([len(label)])
+                + label
+                + bytes([len(transcript)])
+                + transcript
+            )
+            signal = CryptoHKDFExpand(
+                algorithm=hashes.SHA256(), length=8, info=info
+            ).derive(prk)
+            hello.random = hello.random[:24] + signal
+            original(buf, hello)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(tls, "push_server_hello", confirm_acceptance)
+            # An ECH-capable server processes the reconstructed inner hello.
+            server.handle_message(client._ech_inner_ch_bytes, server_buf)
+        if send_retry_configs:
+            with pytest.raises(tls.AlertUnsupportedExtension):
+                client.handle_message(merge_buffers(server_buf), client_buf)
+            assert client.state == State.CLIENT_EXPECT_ENCRYPTED_EXTENSIONS
+        else:
+            client.handle_message(merge_buffers(server_buf), client_buf)
+            reset_buffers(server_buf)
+            server.handle_message(merge_buffers(client_buf), server_buf)
+            assert client.state == State.CLIENT_POST_HANDSHAKE
+            assert server.state == State.SERVER_POST_HANDSHAKE
+            assert client._enc_key == server._dec_key
+        assert client.ech_accepted
+        assert client.ech_retry_configs is None
+
+
+    def _server_flight_requesting_client_certificate(
+        self, client, server, algorithms, monkeypatch
+    ):
+        client_buf, server_buf = create_buffers(), create_buffers()
+        client.handle_message(b"", client_buf)
+        client_hello = merge_buffers(client_buf)
+        reset_buffers(client_buf)
+        original = tls.push_certificate
+
+        def request_then_certificate(buf, certificate):
+            # The server hashes both messages before signing CertificateVerify.
+            buf.push_uint8(tls.HandshakeType.CERTIFICATE_REQUEST)
+            with push_block(buf, 3):
+                push_opaque(buf, 1, b"")
+                with push_block(buf, 2):
+                    with tls.push_extension(
+                        buf, tls.ExtensionType.SIGNATURE_ALGORITHMS
+                    ):
+                        tls.push_list(buf, 2, buf.push_uint16, algorithms)
+            original(buf, certificate)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(tls, "push_certificate", request_then_certificate)
+            server.handle_message(client_hello, server_buf)
+        return client_buf, client_hello, merge_buffers(server_buf)
+
+    @pytest.mark.parametrize(
+        "key_type", [None, "rsa", "p256", "p384", "p521", "ed25519"]
+    )
+    def test_client_certificate_response(self, key_type, monkeypatch):
+        client, server = self.create_client(), self.create_server()
+        key = None
+        if key_type is not None:
+            if key_type == "rsa":
+                key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+                signature_algorithm = tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA256
+                algorithm = hashes.SHA256()
+            elif key_type == "ed25519":
+                key = ed25519.Ed25519PrivateKey.generate()
+                signature_algorithm = tls.SignatureAlgorithm.ED25519
+                algorithm = None
+            else:
+                curve, signature_algorithm, algorithm = {
+                    "p256": (
+                        ec.SECP256R1,
+                        tls.SignatureAlgorithm.ECDSA_SECP256R1_SHA256,
+                        hashes.SHA256(),
+                    ),
+                    "p384": (
+                        ec.SECP384R1,
+                        tls.SignatureAlgorithm.ECDSA_SECP384R1_SHA384,
+                        hashes.SHA384(),
+                    ),
+                    "p521": (
+                        ec.SECP521R1,
+                        tls.SignatureAlgorithm.ECDSA_SECP521R1_SHA512,
+                        hashes.SHA512(),
+                    ),
+                }[key_type]
+                key = ec.generate_private_key(curve())
+            certificate, _ = generate_certificate(
+                alternative_names=[],
+                common_name="client",
+                hash_algorithm=algorithm,
+                key=key,
+            )
+            client.certificate = InnerCertificate(
+                certificate.public_bytes(serialization.Encoding.DER)
+            )
+            client.certificate_private_key = load_pem_private_key(
+                key.private_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                )
+            )
+        else:
+            signature_algorithm = tls.SignatureAlgorithm.RSA_PSS_RSAE_SHA256
+
+        client_buf, client_hello, server_flight = (
+            self._server_flight_requesting_client_certificate(
+                client,
+                server,
+                [signature_algorithm],
+                monkeypatch,
+            )
+        )
+        client.handle_message(server_flight, client_buf)
+        assert client.state == State.CLIENT_POST_HANDSHAKE
+        response = merge_buffers(client_buf)
+        buf = Buffer(data=response)
+        certificate_message = pull_certificate(buf)
+        assert certificate_message.request_context == b""
+        assert certificate_message.certificates == (
+            [(client.certificate.public_bytes(), b"")] if key is not None else []
+        )
+        if key is not None:
+            transcript = client_hello + server_flight + response[: buf.tell()]
+            verify = pull_certificate_verify(buf)
+            assert verify.algorithm == signature_algorithm
+            signed = (
+                b" " * 64
+                + b"TLS 1.3, client CertificateVerify\x00"
+                + hashlib.sha256(transcript).digest()
+            )
+            # Verify independently of qh3's private-key wrapper.
+            if key_type == "rsa":
+                key.public_key().verify(
+                    verify.signature,
+                    signed,
+                    padding.PSS(
+                        mgf=padding.MGF1(algorithm), salt_length=algorithm.digest_size
+                    ),
+                    algorithm,
+                )
+            elif key_type == "ed25519":
+                key.public_key().verify(verify.signature, signed)
+            else:
+                key.public_key().verify(verify.signature, signed, ec.ECDSA(algorithm))
+        transcript = client_hello + server_flight + response[: buf.tell()]
+        finished = pull_finished(buf)
+        assert buf.eof()
+        finished_key = CryptoHKDFExpand(
+            algorithm=hashes.SHA256(),
+            length=32,
+            info=b"\x00\x20\x0etls13 finished\x00",
+        ).derive(server._dec_key)
+        assert (
+            finished.verify_data
+            == hmac.new(
+                finished_key, hashlib.sha256(transcript).digest(), "sha256"
+            ).digest()
+        )
+
+    def test_client_certificate_rejects_unsupported_signature(self, monkeypatch):
+        client, server = self.create_client(), self.create_server()
+        client.certificate = server.certificate
+        client.certificate_private_key = server.certificate_private_key
+        client_buf, _, server_flight = (
+            self._server_flight_requesting_client_certificate(
+                client,
+                server,
+                [tls.SignatureAlgorithm.ED448],
+                monkeypatch,
+            )
+        )
+        with pytest.raises(
+            tls.AlertHandshakeFailure, match="No supported signature algorithm"
+        ):
+            client.handle_message(server_flight, client_buf)
+        buf = Buffer(data=merge_buffers(client_buf))
+        assert pull_certificate(buf).certificates == [
+            (client.certificate.public_bytes(), b"")
+        ]
+        assert buf.eof()
+
     def test_handshake_with_alps(self):
         # ALPS: the client always offers application_settings.
         # A server that supports it echoes its own settings, which makes the
@@ -500,6 +926,9 @@ class TestContext:
         # each peer received the other's settings
         assert client._peer_alps_settings == b"\x00server-settings"
         assert server._peer_alps_settings == b"\x00client-settings"
+        assert client.alps_negotiated and server.alps_negotiated
+        assert client.peer_alps_settings == b"\x00server-settings"
+        assert server.peer_alps_settings == b"\x00client-settings"
 
     def _test_handshake_with_certificate(self, certificate, private_key):
         server = self.create_server()
@@ -599,6 +1028,38 @@ class TestContext:
         compressed = tls._brotli.compress(certificate_body)
         return certificate_body, compressed
 
+    def test_handshake_with_compressed_certificate(self, monkeypatch):
+        if tls._brotli is None:
+            pytest.skip("brotli/brotlicffi not available")
+        original = tls.push_certificate
+
+        def compress_certificate(buf, certificate):
+            encoded = Buffer(capacity=8192)
+            original(encoded, certificate)
+            body = encoded.data[4:]
+            buf.push_uint8(tls.HandshakeType.COMPRESSED_CERTIFICATE)
+            with push_block(buf, 3):
+                buf.push_uint16(tls.CERTIFICATE_COMPRESSION_BROTLI)
+                buf.push_bytes(len(body).to_bytes(3, "big"))
+                push_opaque(buf, 3, tls._brotli.compress(body))
+
+        client, server = self.create_client(), self.create_server()
+        client_buf, server_buf = create_buffers(), create_buffers()
+        client.handle_message(b"", client_buf)
+        with monkeypatch.context() as patch:
+            patch.setattr(tls, "push_certificate", compress_certificate)
+            server.handle_message(merge_buffers(client_buf), server_buf)
+        reset_buffers(client_buf)
+        client.handle_message(merge_buffers(server_buf), client_buf)
+        reset_buffers(server_buf)
+        server.handle_message(merge_buffers(client_buf), server_buf)
+        assert client.state == State.CLIENT_POST_HANDSHAKE
+        assert server.state == State.SERVER_POST_HANDSHAKE
+        assert client._enc_key == server._dec_key
+        assert (
+            client.peer_certificate.public_bytes() == server.certificate.public_bytes()
+        )
+
     def test_client_handle_compressed_certificate(self):
         client = self.create_client()
         server = self.create_server()
@@ -648,6 +1109,37 @@ class TestContext:
         )
         with pytest.raises(tls.AlertBadCertificate):
             client._client_handle_compressed_certificate(input_buf)
+
+    @pytest.mark.parametrize(
+        "prefix, expected",
+        [
+            (b"", b"ocsp response"),
+            (b"\x00\x05\x00\x03\x02ab", b"ocsp response"),
+            (b"\xbe\xef\x00\x00", None),
+            (b"\x00\x05\xff\xff\x02", None),
+        ],
+    )
+    def test_leaf_certificate_status_extension(self, prefix, expected):
+        client, server = self.create_client(), self.create_server()
+        response = b"ocsp response"
+        extensions = (
+            prefix
+            + b"\x00\x05"
+            + (len(response) + 4).to_bytes(2, "big")
+            + b"\x01"
+            + len(response).to_bytes(3, "big")
+            + response
+        )
+        client._process_certificate(
+            Certificate(
+                request_context=b"",
+                certificates=[(server.certificate.public_bytes(), extensions)],
+            )
+        )
+        assert (
+            client.peer_certificate.public_bytes() == server.certificate.public_bytes()
+        )
+        assert client._ocsp_response == expected
 
     def test_client_hello_with_certificate_status_request(self):
         client = self.create_client(offer_certificate_status_request=True)
@@ -873,6 +1365,51 @@ class TestContext:
 
 
 class TestTls:
+    @pytest.mark.parametrize(
+        "filename, parser",
+        [
+            ("tls_client_hello.bin", pull_client_hello),
+            ("tls_server_hello.bin", pull_server_hello),
+        ],
+    )
+    def test_hello_rejects_wrong_legacy_version(self, filename, parser):
+        data = bytearray(load(filename))
+        data[4:6] = b"\x03\x01"
+        with pytest.raises(tls.AlertDecodeError, match="version is not 1.2"):
+            parser(Buffer(data=bytes(data)))
+
+    def test_parser_rejects_wrong_handshake_type(self):
+        with pytest.raises(tls.AlertDecodeError, match="unexpected handshake type"):
+            pull_client_hello(Buffer(data=load("tls_server_hello.bin")))
+
+    def test_server_name_rejects_unknown_name_type(self):
+        buf = Buffer(capacity=64)
+        with push_block(buf, 2):
+            buf.push_uint8(1)
+            push_opaque(buf, 2, b"localhost")
+        with pytest.raises(tls.AlertIllegalParameter, match="unknown name type 1"):
+            tls.pull_server_name(Buffer(data=buf.data))
+
+    def test_client_hello_rejects_extension_after_psk(self):
+        hello = pull_client_hello(Buffer(data=load("tls_client_hello_with_psk.bin")))
+        buf = Buffer(capacity=8192)
+        push_client_hello(buf, hello)
+        data = bytearray(buf.data)
+        header = Buffer(data=bytes(data))
+        header.pull_bytes(4 + 2 + 32)
+        tls.pull_opaque(header, 1)
+        tls.pull_opaque(header, 2)
+        tls.pull_opaque(header, 1)
+        offset = header.tell()
+        length = header.pull_uint16()
+        data.extend(b"\xbe\xef\x00\x00")
+        data[1:4] = (len(data) - 4).to_bytes(3, "big")
+        data[offset : offset + 2] = (length + 4).to_bytes(2, "big")
+        with pytest.raises(
+            tls.AlertIllegalParameter, match="PreSharedKey is not the last extension"
+        ):
+            pull_client_hello(Buffer(data=bytes(data)))
+
     def test_pull_client_hello(self):
         buf = Buffer(data=load("tls_client_hello.bin"))
         hello = pull_client_hello(buf)
@@ -1741,6 +2278,173 @@ class TestContextProperties:
 class TestVerifyCertificate:
     """Tests for verify_certificate edge cases."""
 
+    def _make_chain(self, alternative_names):
+        import datetime
+
+        from cryptography import x509
+
+        keys = [ec.generate_private_key(ec.SECP256R1()) for _ in range(3)]
+        names = [
+            x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, name)])
+            for name in ("root", "intermediate", "leaf")
+        ]
+        now = datetime.datetime.now(datetime.timezone.utc)
+        certificates = []
+        for index in range(3):
+            issuer = max(index - 1, 0)
+            builder = (
+                x509.CertificateBuilder()
+                .subject_name(names[index])
+                .issuer_name(names[issuer])
+                .public_key(keys[index].public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(now - datetime.timedelta(days=1))
+                .not_valid_after(now + datetime.timedelta(days=10))
+                .add_extension(
+                    x509.BasicConstraints(ca=index < 2, path_length=None), critical=True
+                )
+            )
+            if index == 2:
+                builder = builder.add_extension(
+                    x509.SubjectAlternativeName(alternative_names), critical=False
+                )
+            certificates.append(builder.sign(keys[issuer], hashes.SHA256()))
+        return certificates
+
+    def test_missing_intermediate_is_rebuilt_from_ca_data(self):
+        from cryptography import x509
+
+        root, intermediate, leaf = self._make_chain([x509.DNSName("localhost")])
+        certificate = InnerCertificate(leaf.public_bytes(serialization.Encoding.DER))
+        root_pem = root.public_bytes(serialization.Encoding.PEM)
+        with pytest.raises(tls.AlertBadCertificate):
+            verify_certificate(
+                certificate=certificate, cadata=root_pem, server_name="localhost"
+            )
+
+        chain = []
+        verify_certificate(
+            certificate=certificate,
+            chain=chain,
+            server_name="localhost",
+            cadata=root_pem + intermediate.public_bytes(serialization.Encoding.PEM),
+        )
+        assert [cert.public_bytes() for cert in chain] == [
+            intermediate.public_bytes(serialization.Encoding.DER),
+        ]
+
+    def test_unrelated_intermediate_does_not_validate_leaf(self):
+        from cryptography import x509
+
+        root, intermediate, _ = self._make_chain([x509.DNSName("unrelated.example")])
+        chain = []
+        with pytest.raises(tls.AlertBadCertificate):
+            verify_certificate(
+                certificate=load_pem_x509_certificates(load("ssl_cert.pem"))[0],
+                cadata=root.public_bytes(serialization.Encoding.PEM)
+                + intermediate.public_bytes(serialization.Encoding.PEM),
+                chain=chain,
+                server_name="localhost",
+            )
+        assert chain == []
+
+    @pytest.mark.parametrize(
+        "address",
+        [
+            "8.8.8.8",
+            "127.0.0.1",
+            "16.32.48.64",
+            "::1",
+            "2001:4860:4860::64",
+            "2001:db8::abcd",
+        ],
+    )
+    def test_server_name_inferred_from_ip_san(self, address):
+        import ipaddress
+
+        from cryptography import x509
+
+        root, intermediate, leaf = self._make_chain(
+            [x509.IPAddress(ipaddress.ip_address(address))]
+        )
+        verify_certificate(
+            certificate=InnerCertificate(leaf.public_bytes(serialization.Encoding.DER)),
+            chain=[
+                InnerCertificate(intermediate.public_bytes(serialization.Encoding.DER))
+            ],
+            cadata=root.public_bytes(serialization.Encoding.PEM),
+            server_name=None,
+        )
+
+    def test_server_name_inference_uses_ipv6_before_dns_san(self, monkeypatch):
+        import ipaddress
+
+        from cryptography import x509
+
+        root, intermediate, leaf = self._make_chain(
+            [
+                x509.IPAddress(ipaddress.ip_address("2001:db8::1")),
+                x509.DNSName("localhost"),
+            ]
+        )
+        names = []
+        native_verifier = tls.ServerVerifier
+
+        class RecordingVerifier:
+            def __init__(self, anchors):
+                self.verifier = native_verifier(anchors)
+
+            def verify(self, certificate, chain, server_name, ocsp_response):
+                names.append(server_name)
+                return self.verifier.verify(
+                    certificate, chain, server_name, ocsp_response
+                )
+
+        monkeypatch.setattr(tls, "ServerVerifier", RecordingVerifier)
+        verify_certificate(
+            certificate=InnerCertificate(leaf.public_bytes(serialization.Encoding.DER)),
+            chain=[
+                InnerCertificate(intermediate.public_bytes(serialization.Encoding.DER))
+            ],
+            cadata=root.public_bytes(serialization.Encoding.PEM),
+            server_name=None,
+        )
+        assert names == ["2001:db8::1"]
+
+    def test_server_name_inference_skips_uri_before_dns_san(self):
+        from cryptography import x509
+
+        root, intermediate, leaf = self._make_chain(
+            [
+                x509.UniformResourceIdentifier("https://example.com"),
+                x509.DNSName("localhost"),
+            ]
+        )
+        verify_certificate(
+            certificate=InnerCertificate(leaf.public_bytes(serialization.Encoding.DER)),
+            chain=[
+                InnerCertificate(intermediate.public_bytes(serialization.Encoding.DER))
+            ],
+            cadata=root.public_bytes(serialization.Encoding.PEM),
+            server_name=None,
+        )
+
+    def test_verifier_construction_error_is_a_certificate_alert(self, monkeypatch):
+        def fail_store(anchors):
+            assert anchors
+            raise CryptoError("invalid native store")
+
+        monkeypatch.setattr(tls, "ServerVerifier", fail_store)
+        with pytest.raises(
+            tls.AlertBadCertificate, match="unable to create the verifier x509 store"
+        ) as caught:
+            verify_certificate(
+                certificate=load_pem_x509_certificates(load("ssl_cert.pem"))[0],
+                cadata=load("pycacert.pem"),
+                server_name="localhost",
+            )
+        assert isinstance(caught.value.__cause__, CryptoError)
+
     def test_chain_defaults_to_empty_list(self):
         # chain=None should default to [] internally
         # Using the test cert with its CA should verify successfully
@@ -1757,32 +2461,14 @@ class TestVerifyCertificate:
         )
 
     def test_raises_on_empty_ca_store(self):
-        # Generate a non-self-signed cert, then pass no CA store
-        from cryptography.hazmat.primitives.asymmetric import ec as crypto_ec
-        from qh3._hazmat import Certificate as X509Cert
-
-        cert_obj, _ = generate_ec_certificate(
-            common_name="test.example.com",
-            alternative_names=["test.example.com"],
-        )
-        cert = X509Cert(cert_obj.public_bytes(serialization.Encoding.DER))
-
-        # self-signed cert IS its own trust anchor, so use it
-        # to test the "empty CA store" path we need truly no certs loaded
-        # The generated cert above is self-signed so it will serve as trust anchor...
-        # We need a cert that is NOT self-signed. Instead, let's test by
-        # providing cadata that contains no parseable certificates.
         with pytest.raises(
             tls.AlertBadCertificate,
-            match="unable to get local issuer certificate",
+            match=r"unable to get local issuer certificate \(empty CA store\)",
         ):
             verify_certificate(
-                certificate=cert,
-                chain=None,
-                cadata=None,
-                cafile=None,
-                capath=None,
-                server_name="test.example.com",
+                certificate=load_pem_x509_certificates(load("ssl_cert.pem"))[0],
+                cadata=b"",
+                server_name="localhost",
             )
 
     def test_raises_on_missing_server_name(self):
@@ -1949,6 +2635,19 @@ class TestSelectEchConfig:
 
 class TestParseEchConfigList:
     """Tests for parse_ech_config_list with unknown version"""
+
+    def test_trailing_bytes_in_known_config_are_rejected(self):
+        contents = (
+            b"\x01\x00\x20\x00\x20"
+            + bytes(32)
+            + b"\x00\x04\x00\x01\x00\x01\x40\x09localhost\x00\x00extra"
+        )
+        config = b"\xfe\x0d" + len(contents).to_bytes(2, "big") + contents
+        with pytest.raises(
+            tls.AlertDecodeError,
+            match="extra bytes at the end of an ECHConfig contents",
+        ):
+            parse_ech_config_list(len(config).to_bytes(2, "big") + config)
 
     def test_unknown_version_skipped(self):
         # Build an ECHConfigList with one entry that has an unknown version

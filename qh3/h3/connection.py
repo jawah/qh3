@@ -3,19 +3,24 @@ from __future__ import annotations
 import logging
 from enum import Enum, IntEnum
 
-from .._compat import UINT_VAR_MAX_SIZE
+from .._compat import BufferProtocol, as_contiguous_buffer
 from .._hazmat import (
     Buffer,
     BufferReadError,
     DecoderStreamError,
     DecompressionFailed,
     EncoderStreamError,
+    HeaderTooLarge,
     QpackDecoder,
     QpackEncoder,
     StreamBlocked,
     encode_uint_var,
 )
-from ..quic.connection import QuicConnection, stream_is_unidirectional
+from ..quic.connection import (
+    QuicConnection,
+    stream_is_client_initiated,
+    stream_is_unidirectional,
+)
 from ..quic.events import (
     DatagramFrameReceived,
     QuicEvent,
@@ -178,6 +183,10 @@ class MessageError(ProtocolError):
     error_code = ErrorCode.H3_MESSAGE_ERROR
 
 
+class FieldSectionTooLarge(ProtocolError):
+    error_code = ErrorCode.H3_EXCESSIVE_LOAD
+
+
 class MissingSettingsError(ProtocolError):
     error_code = ErrorCode.H3_MISSING_SETTINGS
 
@@ -190,13 +199,16 @@ class StreamCreationError(ProtocolError):
     error_code = ErrorCode.H3_STREAM_CREATION_ERROR
 
 
-def encode_frame(frame_type: int, frame_data: bytes) -> bytes:
-    frame_length = len(frame_data)
-    buf = Buffer(capacity=frame_length + 2 * UINT_VAR_MAX_SIZE)
-    buf.push_uint_var(frame_type)
-    buf.push_uint_var(frame_length)
-    buf.push_bytes(frame_data)
-    return buf.data
+def encode_frame(frame_type: int, frame_data: BufferProtocol) -> bytes:
+    frame_data = as_contiguous_buffer(frame_data)
+    try:
+        # Allocate the final frame once, copying directly from the payload buffer.
+        return b"".join(
+            (encode_uint_var(frame_type), encode_uint_var(len(frame_data)), frame_data)
+        )
+    finally:
+        if isinstance(frame_data, memoryview):
+            frame_data.release()
 
 
 def encode_settings(settings: dict[int, int]) -> bytes:
@@ -306,16 +318,13 @@ def validate_request_headers(headers: Headers) -> None:
     )
 
 
-def validate_response_headers(headers: Headers) -> int | None:
+def validate_response_headers(headers: Headers) -> int:
     status_code: bytes | None = validate_headers(
         headers,
         allowed_pseudo_headers=_RESPONSE_ALLOWED_PSEUDO,
         required_pseudo_headers=_RESPONSE_REQUIRED_PSEUDO,
         extract_header=b":status",
     )
-
-    if status_code is None:
-        return None
 
     try:
         return int(status_code)
@@ -366,16 +375,24 @@ class H3Connection:
     """
 
     def __init__(self, quic: QuicConnection, enable_webtransport: bool = False) -> None:
+        self._is_client = quic.configuration.is_client
         # settings
         self._max_table_capacity = 65536
         self._blocked_streams = 100
+        self._max_field_section_size = 1048576 if self._is_client else 262144
+        # Huffman can use up to 30 bits per decoded octet. Keep a separate
+        # bounded allowance for encoded bytes, including the QPACK prefix.
+        self._max_encoded_field_section_size = self._max_field_section_size * 4 + 32
         self._enable_webtransport = enable_webtransport
 
-        self._is_client = quic.configuration.is_client
         self._is_done = False
         self._quic = quic
         self._quic_logger: QuicLoggerTrace | None = quic._quic_logger
-        self._decoder = QpackDecoder(self._max_table_capacity, self._blocked_streams)
+        self._decoder = QpackDecoder(
+            self._max_table_capacity,
+            self._blocked_streams,
+            max_field_section_size=self._max_field_section_size,
+        )
         self._decoder_bytes_received = 0
         self._decoder_bytes_sent = 0
         self._encoder = QpackEncoder()
@@ -465,6 +482,16 @@ class H3Connection:
             self._local_encoder_stream_id,
         )
 
+    def _check_server_critical_stream_end(self, stream: H3Stream) -> None:
+        if (
+            not self._is_client
+            and stream.receiving_ended
+            and self._is_critical_stream(stream.stream_id)
+        ):
+            raise ClosedCriticalStream(
+                f"Critical stream {stream.stream_id} closed by peer"
+            )
+
     def _receive_stream_reset(self, stream_id: int, error_code: int) -> list[H3Event]:
         # RFC 9114 6.2.1: a peer-initiated reset of a critical stream is a
         # connection error of type H3_CLOSED_CRITICAL_STREAM.
@@ -545,7 +572,7 @@ class H3Connection:
 
         return push_stream_id
 
-    def send_data(self, stream_id: int, data: bytes, end_stream: bool) -> None:
+    def send_data(self, stream_id: int, data: BufferProtocol, end_stream: bool) -> None:
         """
         Send data on the given stream.
 
@@ -554,13 +581,25 @@ class H3Connection:
         method.
 
         :param stream_id: The stream ID on which to send the data.
-        :param data: The data to send.
+        :param data: A C-contiguous buffer, such as bytes, bytearray, memoryview,
+            or a CPU-backed Arrow buffer. Its raw bytes are copied by the existing
+            framing and send queue; no intermediate bytes conversion is made.
+            Do not mutate it during this call. It may be reused after return.
         :param end_stream: Whether to end the stream.
         """
-        # check DATA frame is allowed
-        stream = self._get_or_create_stream(stream_id)
-        if stream.headers_send_state != HeadersState.AFTER_HEADERS:
-            raise FrameUnexpected("DATA frame is not allowed in this state")
+        data = as_contiguous_buffer(data)
+        try:
+            # check DATA frame is allowed
+            stream = self._get_or_create_stream(stream_id)
+            if stream.headers_send_state != HeadersState.AFTER_HEADERS:
+                raise FrameUnexpected("DATA frame is not allowed in this state")
+
+            # Validate and frame the buffer before committing FIN to stream state.
+            data_length = len(data)
+            frame = encode_frame(FrameType.DATA, data)
+        finally:
+            if isinstance(data, memoryview):
+                data.release()
 
         if end_stream:
             stream.finish_sending()
@@ -573,13 +612,11 @@ class H3Connection:
                 category="http",
                 event="frame_created",
                 data=self._quic_logger.encode_http3_data_frame(
-                    length=len(data), stream_id=stream_id
+                    length=data_length, stream_id=stream_id
                 ),
             )
 
-        self._quic.send_stream_data(
-            stream_id, encode_frame(FrameType.DATA, data), end_stream
-        )
+        self._quic.send_stream_data(stream_id, frame, end_stream)
 
     def send_headers(
         self, stream_id: int, headers: Headers, end_stream: bool = False
@@ -663,7 +700,14 @@ class H3Connection:
         self._quic.send_stream_data(stream_id, encode_uint_var(stream_type))
         return stream_id
 
-    def _decode_headers(self, stream_id: int, frame_data: bytes | None) -> Headers:
+    def _decode_headers(
+        self,
+        stream_id: int,
+        frame_data: bytes | None,
+        *,
+        offset: int = 0,
+        length: int | None = None,
+    ) -> Headers:
         """
         Decode a HEADERS block and send decoder updates on the decoder stream.
 
@@ -676,13 +720,17 @@ class H3Connection:
             else:
                 # todo: investigate why the underlying implementation
                 #  seems to ignore bad frames..
-                if not frame_data:
+                if not frame_data or length == 0:
                     raise DecompressionFailed()
-                decoder, headers = self._decoder.feed_header(stream_id, frame_data)
+                decoder, headers = self._decoder.feed_header(
+                    stream_id, frame_data, offset=offset, length=length
+                )
             self._decoder_bytes_sent += len(decoder)
             self._quic.send_stream_data(self._local_decoder_stream_id, decoder)
-        except DecompressionFailed as exc:
+        except (DecompressionFailed, DecoderStreamError) as exc:
             raise QpackDecompressionFailed() from exc
+        except HeaderTooLarge as exc:
+            raise FieldSectionTooLarge(str(exc)) from exc
 
         return headers
 
@@ -703,6 +751,13 @@ class H3Connection:
         stream = self._stream.get(stream_id)
         if stream is None:
             stream = H3Stream(stream_id)
+            if stream_is_unidirectional(stream_id):
+                # The nonexistent half is already ended. Otherwise a peer can
+                # leak one H3Stream per completed unknown unidirectional stream.
+                if stream_is_client_initiated(stream_id) == self._is_client:
+                    stream.receiving_ended = True
+                else:
+                    stream.sending_ended = True
             self._stream[stream_id] = stream
         return stream
 
@@ -719,7 +774,7 @@ class H3Connection:
         """
         settings: dict[int, int] = {
             Setting.QPACK_MAX_TABLE_CAPACITY: self._max_table_capacity,
-            Setting.MAX_FIELD_SECTION_SIZE: 262144,
+            Setting.MAX_FIELD_SECTION_SIZE: self._max_field_section_size,
             Setting.QPACK_BLOCKED_STREAMS: self._blocked_streams,
             Setting.H3_DATAGRAM: 1,
             Setting.DUMMY: 1,
@@ -775,6 +830,9 @@ class H3Connection:
         frame_data: bytes | None,
         stream: H3Stream,
         stream_ended: bool,
+        *,
+        frame_offset: int = 0,
+        frame_length: int | None = None,
     ) -> list[H3Event]:
         """
         Handle a frame received on a request or push stream.
@@ -803,7 +861,9 @@ class H3Connection:
                 raise FrameUnexpected("HEADERS frame is not allowed in this state")
 
             # try to decode HEADERS, may raise pylsqpack.StreamBlocked
-            headers = self._decode_headers(stream.stream_id, frame_data)
+            headers = self._decode_headers(
+                stream.stream_id, frame_data, offset=frame_offset, length=frame_length
+            )
 
             status_code: int | None = None
 
@@ -818,15 +878,15 @@ class H3Connection:
 
             # log frame
             if self._quic_logger is not None:
+                if frame_data is None:
+                    frame_length = stream.blocked_frame_size
+                elif frame_length is None:
+                    frame_length = len(frame_data)
                 self._quic_logger.log_event(
                     category="http",
                     event="frame_parsed",
                     data=self._quic_logger.encode_http3_headers_frame(
-                        length=(
-                            stream.blocked_frame_size
-                            if frame_data is None
-                            else len(frame_data)
-                        ),
+                        length=frame_length,
                         headers=headers,
                         stream_id=stream.stream_id,
                     ),
@@ -994,6 +1054,8 @@ class H3Connection:
         if stream_ended:
             stream.receiving_ended = True
         if stream.blocked:
+            if len(s_buffer) + len(data) > self._max_encoded_field_section_size:
+                raise FieldSectionTooLarge("QPACK-blocked stream buffer limit exceeded")
             s_buffer.extend(data)
             return http_events
 
@@ -1043,7 +1105,13 @@ class H3Connection:
                     )
                     stream.frame_size -= data_len
                     return http_events
-                # data completes or exceeds frame - fall through to general path
+                if data_len == stream.frame_size:
+                    stream.frame_size = None
+                    stream.frame_type = None
+                    return self._handle_request_or_push_frame(
+                        FrameType.DATA, data, stream, stream.receiving_ended
+                    )
+                # data also contains another frame - use the general parser
             else:
                 s_buffer.extend(data)
                 buf_len = len(s_buffer)
@@ -1077,10 +1145,17 @@ class H3Connection:
                 ]
             return []
 
-        if data:
-            s_buffer.extend(data)
+        buffered = bool(s_buffer)
+        if buffered:
+            if data:
+                s_buffer.extend(data)
+            parse_data = bytes(s_buffer)
+        else:
+            # Buffer borrows these immutable bytes. Only an incomplete suffix
+            # needs to be copied into stream.buffer for the next receive call.
+            parse_data = data
 
-        buf = Buffer(data=bytes(s_buffer))
+        buf = Buffer(data=parse_data)
         consumed = 0
         buf_tell = buf.tell
         buf_eof = buf.eof
@@ -1098,12 +1173,23 @@ class H3Connection:
                     break
                 consumed = buf_tell()
 
+                if stream.frame_type in (FrameType.HEADERS, FrameType.PUSH_PROMISE):
+                    # PUSH_PROMISE also carries a QUIC-varint push ID (at most
+                    # eight bytes) before its QPACK field section.
+                    limit = self._max_encoded_field_section_size
+                    if stream.frame_type == FrameType.PUSH_PROMISE:
+                        limit += 8
+                    if stream.frame_size > limit:
+                        raise FieldSectionTooLarge(
+                            "Encoded field section exceeds the configured limit"
+                        )
+
                 # WEBTRANSPORT_STREAM frames last until the end of the stream
                 if stream.frame_type == FrameType.WEBTRANSPORT_STREAM:
                     stream.session_id = stream.frame_size
                     stream.frame_size = None
 
-                    frame_data = bytes(s_buffer[consumed:])
+                    frame_data = parse_data[consumed:]
                     s_buffer.clear()
 
                     self._log_stream_type(
@@ -1141,8 +1227,16 @@ class H3Connection:
                 break
 
             # read available data
-            frame_data = buf_pull_bytes(chunk_size)
             frame_type = stream.frame_type
+            frame_offset = 0
+            if frame_type == FrameType.HEADERS:
+                # QPACK retains its own copy if decoding blocks; avoid first
+                # making a separate Python bytes object for the encoded block.
+                frame_data = parse_data
+                frame_offset = consumed
+                buf.seek(frame_offset + chunk_size)
+            else:
+                frame_data = buf_pull_bytes(chunk_size)
             consumed = buf_tell()
 
             # detect end of frame
@@ -1154,15 +1248,17 @@ class H3Connection:
             try:
                 http_events.extend(
                     handle_frame(
-                        frame_type=frame_type,
-                        frame_data=frame_data,
-                        stream=stream,
-                        stream_ended=stream.receiving_ended and buf_eof(),
+                        frame_type,
+                        frame_data,
+                        stream,
+                        stream.receiving_ended and buf_eof(),
+                        frame_offset=frame_offset,
+                        frame_length=chunk_size,
                     )
                 )
             except StreamBlocked:
                 stream.blocked = True
-                stream.blocked_frame_size = len(frame_data)
+                stream.blocked_frame_size = chunk_size
                 self._blocked_stream_map[s_stream_id] = stream
                 break
 
@@ -1172,12 +1268,15 @@ class H3Connection:
                 stream.headers_recv_state is HeadersState.AFTER_TRAILERS
                 and stream.receiving_ended
             ):
-                consumed = len(s_buffer)
+                consumed = buf.capacity
                 break
 
-        # remove processed data from buffer
-        if consumed:
-            del s_buffer[:consumed]
+        # Keep only unparsed data, including a partially received frame header.
+        if buffered:
+            if consumed:
+                del s_buffer[:consumed]
+        elif consumed < buf.capacity:
+            s_buffer.extend(memoryview(parse_data)[consumed:])
 
         # If the stream ended but no event carried stream_ended=True
         # (e.g. the last frame was GREASE or PUSH_PROMISE after DATA),
@@ -1205,13 +1304,23 @@ class H3Connection:
     ) -> list[H3Event]:
         http_events: list[H3Event] = []
 
-        stream.buffer.extend(data)
         if stream_ended:
             stream.receiving_ended = True
+            # Reject FIN before the QPACK fast path can process more input.
+            self._check_server_critical_stream_end(stream)
+
+        if (
+            data
+            and not stream.buffer
+            and stream.stream_type
+            in (StreamType.QPACK_ENCODER, StreamType.QPACK_DECODER)
+        ):
+            return self._receive_qpack_data(stream.stream_type, data)
+
+        stream.buffer.extend(data)
 
         buf = Buffer(data=bytes(stream.buffer))
         consumed = 0
-        unblocked_streams: set[int] = set()
 
         while (
             stream.stream_type
@@ -1243,6 +1352,10 @@ class H3Connection:
                             "Only one QPACK encoder stream is allowed"
                         )
                     self._peer_encoder_stream_id = stream.stream_id
+
+                # FIN can arrive with the type, including a fragmented varint.
+                # The peer IDs above remain reserved for this connection's life.
+                self._check_server_critical_stream_end(stream)
 
                 # for PUSH, logging is performed once the push_id is known
                 if stream.stream_type != StreamType.PUSH:
@@ -1305,36 +1418,14 @@ class H3Connection:
                         )
                     )
                 return http_events
-            elif stream.stream_type == StreamType.QPACK_DECODER:
-                # feed unframed data to decoder
+            elif stream.stream_type in (
+                StreamType.QPACK_ENCODER,
+                StreamType.QPACK_DECODER,
+            ):
+                # The first receive may also contain the stream-type prefix.
                 data = buf.pull_bytes(buf.capacity - buf.tell())
                 consumed = buf.tell()
-                try:
-                    self._encoder.feed_decoder(data)
-                except DecoderStreamError as exc:
-                    raise QpackDecoderStreamError() from exc
-                self._decoder_bytes_received += len(data)
-            elif stream.stream_type == StreamType.QPACK_ENCODER:
-                # feed unframed data to encoder
-                data = buf.pull_bytes(buf.capacity - buf.tell())
-                consumed = buf.tell()
-                try:
-                    self._decoder.feed_encoder(data)
-                except EncoderStreamError as exc:
-                    raise QpackEncoderStreamError() from exc
-
-                for blocked_id, blocked_stream in self._blocked_stream_map.items():
-                    try:
-                        stream_data, headers = self._decoder.resume_header(blocked_id)
-                        blocked_stream._pending = (  # type: ignore[attr-defined]
-                            stream_data,
-                            headers,
-                        )
-                        unblocked_streams.add(blocked_id)
-                    except StreamBlocked:
-                        continue
-
-                self._encoder_bytes_received += len(data)
+                http_events.extend(self._receive_qpack_data(stream.stream_type, data))
             else:
                 # unknown stream type, discard data
                 buf.seek(buf.capacity)
@@ -1344,7 +1435,40 @@ class H3Connection:
         if consumed:
             del stream.buffer[:consumed]
 
-        # process unblocked streams
+        return http_events
+
+    def _receive_qpack_data(self, stream_type: int, data: bytes) -> list[H3Event]:
+        """Feed unframed bytes directly; QPACK handles partial instructions."""
+        if stream_type == StreamType.QPACK_DECODER:
+            try:
+                self._encoder.feed_decoder(data)
+            except DecoderStreamError as exc:
+                raise QpackDecoderStreamError() from exc
+            self._decoder_bytes_received += len(data)
+            return []
+
+        try:
+            self._decoder.feed_encoder(data)
+        except HeaderTooLarge as exc:
+            raise FieldSectionTooLarge(str(exc)) from exc
+        except EncoderStreamError as exc:
+            raise QpackEncoderStreamError() from exc
+        self._encoder_bytes_received += len(data)
+
+        unblocked_streams: set[int] = set()
+        for blocked_id, blocked_stream in self._blocked_stream_map.items():
+            try:
+                stream_data, headers = self._decoder.resume_header(blocked_id)
+                blocked_stream._pending = (stream_data, headers)  # type: ignore[attr-defined]
+                unblocked_streams.add(blocked_id)
+            except StreamBlocked:
+                continue
+            except HeaderTooLarge as exc:
+                raise FieldSectionTooLarge(str(exc)) from exc
+            except DecoderStreamError as exc:
+                raise QpackDecompressionFailed() from exc
+
+        http_events: list[H3Event] = []
         for stream_id in unblocked_streams:
             stream = self._stream[stream_id]
 

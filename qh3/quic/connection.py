@@ -9,6 +9,7 @@ from hmac import compare_digest
 from typing import Any, Callable, TypeVar
 
 from .. import tls
+from .._compat import BufferProtocol, as_contiguous_buffer
 from .._hazmat import Buffer, QuicConnectionCore
 from .._hazmat import Certificate as X509Certificate
 from .._hazmat import pull_quic_header as _pull_quic_header
@@ -343,7 +344,8 @@ class QuicConnection:
     def should_wait_for_ack(self, now: float) -> bool:
         """Return whether the peer is expected to send an ACK soon.
 
-        This is a flow-control scheduling heuristic. It returns ``True`` when
+        This is an ACK scheduling heuristic, not a flow-control credit check.
+        It returns ``True`` when
         at least two ACK-eliciting packets are outstanding, or when one has
         remained outstanding for the peer's negotiated maximum ACK delay.
         ``now`` must use the same clock as the other connection methods.
@@ -351,6 +353,33 @@ class QuicConnection:
         return self._core is not None and self._call_core(
             self._core.should_wait_for_ack, now
         )
+
+    def get_send_buffer_size(self, stream_id: int | None = None) -> int:
+        """Return stream bytes queued for their first transmission.
+
+        Omit ``stream_id`` to total all streams, including HTTP/3 control and
+        QPACK streams. Unknown, reset, and finished streams return zero.
+        Already transmitted bytes awaiting ACKs or retransmission are excluded,
+        as are FIN-only and other QUIC control frames.
+
+        After ``datagrams_to_send()``, a nonzero size indicates a send backlog
+        (for example, flow control, congestion, pacing, or unavailable keys).
+        Callers can pause feeding more data while continuing to receive packets,
+        service QUIC timers, and collect outgoing datagrams. Handle responses,
+        resets, and connection termination while waiting. This is a snapshot of
+        queued bytes, not a promise of writable capacity or peer receipt.
+        """
+        if stream_id is not None and not 0 <= stream_id < (1 << 62):
+            raise ValueError("stream_id must be a QUIC variable-length integer")
+        if self._close_event is not None:
+            return 0
+        if self._core is None or not self._pre_handshake_state_replayed:
+            return sum(
+                len(data)
+                for sid, data, _ in self._pre_handshake_writes
+                if stream_id is None or sid == stream_id
+            )
+        return self._call_core(self._core.get_send_buffer_size, stream_id)
 
     def next_event(self) -> events.QuicEvent | None:
         return self._events.popleft() if self._events else None
@@ -376,21 +405,34 @@ class QuicConnection:
         return stream_id
 
     def send_stream_data(
-        self, stream_id: int, data: bytes, end_stream: bool = False
+        self, stream_id: int, data: BufferProtocol, end_stream: bool = False
     ) -> None:
-        self._record_local_stream(stream_id)
-        if not self._handshake_complete:
-            self._pre_handshake_writes.append((stream_id, bytes(data), end_stream))
-            if self._core is None or (
-                not self._transport_parameters_applied
-                and self._remembered_transport_parameters() is None
-            ):
-                return
-            if not self._pre_handshake_state_replayed:
-                self._replay_pre_handshake_state("connection start")
-                return
-        core = self._require_core()
-        self._call_core(core.send_stream, stream_id, data, end_stream)
+        """Queue raw bytes from a C-contiguous buffer.
+
+        Accepts bytes, bytearray, memoryview, and other buffer exporters. The
+        existing send queue (or pre-handshake staging) owns a copy after return;
+        callers must not mutate the source during the call. Buffer inputs are
+        passed directly to native code without an intermediate bytes conversion.
+        Non-contiguous views raise BufferError.
+        """
+        data = as_contiguous_buffer(data)
+        try:
+            self._record_local_stream(stream_id)
+            if not self._handshake_complete:
+                self._pre_handshake_writes.append((stream_id, bytes(data), end_stream))
+                if self._core is None or (
+                    not self._transport_parameters_applied
+                    and self._remembered_transport_parameters() is None
+                ):
+                    return
+                if not self._pre_handshake_state_replayed:
+                    self._replay_pre_handshake_state("connection start")
+                    return
+            core = self._require_core()
+            self._call_core(core.send_stream, stream_id, data, end_stream)
+        finally:
+            if isinstance(data, memoryview):
+                data.release()
 
     def _stream_can_send(self, stream_id: int) -> bool:
         if self._core is None:

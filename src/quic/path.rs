@@ -1273,6 +1273,22 @@ impl FlowController {
         Ok(())
     }
 
+    /// Largest stream end offset permitted by both limits, including reservations.
+    pub fn send_limit(&self, stream: StreamId) -> Result<u64, FlowError> {
+        let state = self
+            .streams
+            .get(&stream)
+            .ok_or(FlowError::StreamNotFound(stream))?;
+        let remaining = self
+            .connection_send_maximum
+            .saturating_sub(self.provisional_connection_sent());
+        // Retransmissions below the accounted offset do not consume credit.
+        Ok(state.send_maximum().min(
+            self.provisional_send_offset(stream)
+                .saturating_add(remaining),
+        ))
+    }
+
     /// Checks an exclusive stream end offset without reserving or consuming credit.
     pub fn check_send(&self, stream: StreamId, end_offset: u64) -> Result<(), FlowError> {
         validate_flow_value(end_offset)?;
@@ -1335,7 +1351,6 @@ impl FlowController {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn cancel_send(&mut self, reservation: SendReservation) -> Result<(), FlowError> {
         let before = self.provisional_send_offset(reservation.stream);
         self.pending_sends
@@ -1921,6 +1936,28 @@ mod tests {
         flow.reserve_send(StreamId::new(4).unwrap(), 31).unwrap();
         assert_eq!(flow.connection_sent(), 31);
         assert_eq!(flow.stream(stream).unwrap().sent(), 0);
+    }
+
+    #[test]
+    fn stream_send_limit_includes_shared_reservations_and_retransmissions() {
+        let mut flow = flow_controller();
+        let first = StreamId::new(0).unwrap();
+        let second = StreamId::new(4).unwrap();
+        assert_eq!(flow.send_limit(first).unwrap(), 70);
+        let reservation = flow.prepare_send(first, 60).unwrap();
+        assert_eq!(flow.send_limit(second).unwrap(), 40);
+        let other = flow.prepare_send(second, 40).unwrap();
+        assert_eq!(flow.send_limit(first).unwrap(), 60);
+        assert_eq!(flow.send_limit(second).unwrap(), 40);
+        flow.commit_send(reservation).unwrap();
+        // Even with no fresh credit, an already sent prefix may be retransmitted.
+        assert_eq!(flow.send_limit(first).unwrap(), 60);
+        let retry = flow.prepare_send(first, 50).unwrap();
+        assert_eq!(retry.new_bytes(), 0);
+        flow.commit_send(retry).unwrap();
+        flow.cancel_send(other).unwrap();
+        assert_eq!(flow.send_limit(second).unwrap(), 40);
+        assert_eq!(flow.send_limit(first).unwrap(), 70);
     }
 
     #[test]

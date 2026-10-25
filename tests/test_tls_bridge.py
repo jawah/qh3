@@ -4,6 +4,8 @@ import io
 from types import SimpleNamespace
 
 import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDFExpand
 
 from qh3 import tls
 from qh3._hazmat import Buffer
@@ -598,28 +600,50 @@ def test_tls_handshake_outputs_events_and_derived_secrets() -> None:
             assert secret.version == QuicProtocolVersion.VERSION_1
 
 
-def test_traffic_secret_record_uses_existing_derivation() -> None:
+@pytest.mark.parametrize(
+    "version", [QuicProtocolVersion.VERSION_1, QuicProtocolVersion.VERSION_2]
+)
+@pytest.mark.parametrize(
+    "cipher_suite, algorithm, key_size",
+    [
+        (tls.CipherSuite.AES_128_GCM_SHA256, hashes.SHA256, 16),
+        (tls.CipherSuite.AES_256_GCM_SHA384, hashes.SHA384, 32),
+        (tls.CipherSuite.CHACHA20_POLY1305_SHA256, hashes.SHA256, 32),
+    ],
+)
+def test_traffic_secret_record_uses_existing_derivation(
+    version, cipher_suite, algorithm, key_size
+) -> None:
     bridge = QuicTlsBridge(
         make_client_configuration(),
-        version=QuicProtocolVersion.VERSION_2,
+        version=version,
         local_initial_source_connection_id=b"client",
     )
-    secret = bytes(range(32))
+    secret = bytes(range(algorithm().digest_size))
     bridge._on_traffic_secret(
         tls.Direction.ENCRYPT,
         tls.Epoch.HANDSHAKE,
-        tls.CipherSuite.AES_128_GCM_SHA256,
+        cipher_suite,
         secret,
     )
     record = bridge.next_traffic_secret()
     key, iv, hp = derive_key_iv_hp(
-        cipher_suite=tls.CipherSuite.AES_128_GCM_SHA256,
+        cipher_suite=cipher_suite,
         secret=secret,
-        version=QuicProtocolVersion.VERSION_2,
+        version=version,
     )
     assert record is not None
     assert (record.key, record.iv, record.hp) == (key, iv, hp)
     assert record.secret == secret
+    prefix = b"quicv2" if version == QuicProtocolVersion.VERSION_2 else b"quic"
+    expected = []
+    for label, size in ((b"key", key_size), (b"iv", 12), (b"hp", key_size)):
+        label = b"tls13 " + prefix + b" " + label
+        info = size.to_bytes(2, "big") + bytes([len(label)]) + label + b"\x00"
+        expected.append(
+            HKDFExpand(algorithm=algorithm(), length=size, info=info).derive(secret)
+        )
+    assert (key, iv, hp) == tuple(expected)
 
 
 def test_crypto_input_must_be_contiguous_and_output_has_offset() -> None:

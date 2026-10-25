@@ -56,6 +56,25 @@ while (event := connection.next_event()) is not None:
 
 Pass each event to `H3Connection.handle_event()` when HTTP/3 is in use.
 
+## Upload backpressure
+
+`send_stream_data()` queues data. Packet generation sends as much as permitted
+by stream and connection flow control, congestion control, and pacing, retaining
+the remainder until it can make progress.
+
+After the normal `datagrams_to_send()` call, inspect
+`get_send_buffer_size(stream_id)` before feeding another body chunk. A nonzero
+size means bytes remain queued for their first transmission. Callers can pause
+the producer until that backlog drains, or use a bounded buffer threshold.
+Continue receiving packets, servicing timers, and collecting generated datagrams
+while waiting. Process early HTTP responses, stream resets, and connection
+termination too: waiting for credit is not appropriate after an upload is canceled.
+
+Omit the stream ID to query all streams, including HTTP/3 control and QPACK
+streams. Bytes already transmitted but awaiting ACKs or retransmission are not
+included. The result does not measure peer receipt or available send credit.
+`should_wait_for_ack()` remains an ACK scheduling hint, not a flow-control check.
+
 ## Batched UDP
 
 `receive_many_datagrams()` and `receive_gro_buffer()` are optional optimized

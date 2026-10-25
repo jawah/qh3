@@ -1,7 +1,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::types::PyBytes;
 use pyo3::types::PyBytesMethods;
-use pyo3::{pyclass, pyfunction, Bound, Py};
+use pyo3::{pyclass, pyfunction, Bound, Py, PyAny};
 use pyo3::{pymethods, PyResult, Python};
 
 pyo3::create_exception!(_hazmat, BufferReadError, PyValueError);
@@ -303,19 +303,18 @@ impl Buffer {
     }
 
     #[inline]
-    pub fn push_bytes(&mut self, data: Bound<'_, PyBytes>) -> PyResult<()> {
-        let data_to_be_pushed = data.as_bytes();
-        let end_pos = self.pos + data_to_be_pushed.len();
-
-        if self.capacity < end_pos {
-            return Err(BufferWriteError::new_err("Write out of bounds"));
-        }
-
-        let buf = self.storage.as_mut_slice().map_err(|e| e.unwrap_err())?;
-        buf[self.pos..end_pos].copy_from_slice(data_to_be_pushed);
-        self.pos = end_pos;
-
-        Ok(())
+    pub fn push_bytes(&mut self, data: &Bound<'_, PyAny>) -> PyResult<()> {
+        crate::pybuffer::with_buffer(data, |data| {
+            let end_pos = self
+                .pos
+                .checked_add(data.len())
+                .filter(|end| *end <= self.capacity)
+                .ok_or_else(|| BufferWriteError::new_err("Write out of bounds"))?;
+            let buf = self.storage.as_mut_slice().map_err(|e| e.unwrap_err())?;
+            buf[self.pos..end_pos].copy_from_slice(data);
+            self.pos = end_pos;
+            Ok(())
+        })
     }
 
     #[inline]

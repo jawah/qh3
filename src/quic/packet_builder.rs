@@ -275,6 +275,13 @@ impl PacketBuilder {
         self.queues[space_index(space)].len()
     }
 
+    /// Remove an unbuilt frame when its stream reservation is canceled.
+    pub fn discard_delivery(&mut self, delivery: DeliveryId) {
+        for queue in &mut self.queues {
+            queue.retain(|frame| frame.action.delivery_id() != Some(delivery));
+        }
+    }
+
     pub fn discard_space(&mut self, space: PacketSpace) {
         self.queues[space_index(space)].clear();
         if self.pending.as_ref().is_some_and(|datagram| {

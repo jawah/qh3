@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-import socket
+from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,7 @@ from qh3 import tls
 from qh3._hazmat import pull_quic_header
 from qh3.asyncio import client as asyncio_client
 from qh3.asyncio import server as asyncio_server
+from qh3.h3 import events as h3_events
 from qh3.h3.connection import H3Connection
 from qh3.quic import events
 from qh3.quic.configuration import QuicConfiguration
@@ -373,6 +375,148 @@ def test_native_stream_recording_and_replay_guards() -> None:
     client._replay_pre_handshake_state("already replayed")
 
 
+def test_native_stream_allocation_mismatch_is_reported() -> None:
+    client = make_client()
+
+    class StreamCore:
+        def open_stream(self, is_unidirectional):
+            return 4
+
+    client._core = StreamCore()
+    client._handshake_complete = True
+    with pytest.raises(QuicConnectionError, match="allocation is out of sync"):
+        client._open_stream()
+
+
+def test_native_invalid_packet_end_does_not_stall_receive_or_logging(
+    monkeypatch,
+) -> None:
+    from qh3.quic import connection as connection_module
+
+    client, server = make_pair()
+    _, _, now = handshake(client, server)
+    client.send_stream_data(0, b"payload", end_stream=True)
+    datagrams = client.datagrams_to_send(now)
+    native_header = connection_module._pull_quic_header
+
+    def nonadvancing_header(data, offset, cid_length):
+        fields = list(native_header(data, offset, cid_length))
+        fields[9] = offset
+        return tuple(fields)
+
+    monkeypatch.setattr(connection_module, "_pull_quic_header", nonadvancing_header)
+    logged = []
+    monkeypatch.setattr(server, "_log_packet", lambda *args: logged.append(args))
+    for data, _ in datagrams:
+        server.receive_datagram(data, CLIENT_ADDR, now)
+        logged.clear()
+        server._log_packets("packet_received", data)
+        assert logged == []
+    assert drain_events(server) == [events.StreamDataReceived(b"payload", True, 0)]
+    assert logged == []
+
+
+def test_native_tls_version_is_synchronized_before_drain() -> None:
+    client = make_client()
+    versions = []
+
+    class Core:
+        version = QuicProtocolVersion.VERSION_1
+
+        def set_version(self, value):
+            self.version = value
+            versions.append(value)
+
+    client._core = Core()
+    client._tls = SimpleNamespace(
+        version=QuicProtocolVersion.VERSION_2,
+        next_traffic_secret=lambda: None,
+        next_crypto_data=lambda: None,
+        next_event=lambda: None,
+        remote_transport_parameters=None,
+        handshake_complete=False,
+    )
+    client._drain_tls()
+    client._drain_tls()
+    assert versions == [QuicProtocolVersion.VERSION_2]
+    assert client._version == QuicProtocolVersion.VERSION_2
+
+
+def test_native_handshake_completion_resolves_outstanding_zero_rtt() -> None:
+    client = make_client()
+    calls = []
+
+    class Core:
+        version = QuicProtocolVersion.VERSION_1
+
+        def handshake_complete(self):
+            calls.append("handshake")
+
+        def reject_zero_rtt(self):
+            calls.append("reject")
+
+    client._core = Core()
+    client._tls = SimpleNamespace(
+        version=QuicProtocolVersion.VERSION_1,
+        next_traffic_secret=lambda: None,
+        next_crypto_data=lambda: None,
+        next_event=lambda: None,
+        remote_transport_parameters=None,
+        handshake_complete=True,
+        tls=SimpleNamespace(early_data_accepted=False),
+    )
+    client._early_data_attempted = True
+    client._zero_rtt_resolved = False
+    client._drain_tls()
+    client._drain_tls()
+    assert calls == ["handshake", "reject"]
+    assert client._zero_rtt_resolved
+    assert client._state == QuicConnectionState.CONNECTED
+
+
+@pytest.mark.parametrize(
+    "extensions", [[], [(tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS, b"\x00")]]
+)
+def test_native_unusable_ticket_parameters_are_not_used_for_early_credit(
+    extensions,
+) -> None:
+    ticket, _ = issue_session_ticket()
+    client, server = make_resumption_pair(replace(ticket, other_extensions=extensions))
+    assert client._remembered_transport_parameters() is None
+    client.send_stream_data(0, b"staged request", end_stream=True)
+    if extensions:
+        from qh3.quic.tls_bridge import QuicTlsBridgeError
+
+        with pytest.raises(
+            QuicTlsBridgeError, match="Could not parse QUIC transport parameters"
+        ):
+            client.connect(SERVER_ADDR, 1.0)
+        assert not client._handshake_complete
+        return
+    _, received, _ = handshake(client, server)
+    assert [
+        event for event in received if isinstance(event, events.StreamDataReceived)
+    ] == [
+        events.StreamDataReceived(b"staged request", True, 0),
+    ]
+
+
+def test_native_send_replays_pending_pre_handshake_state_once() -> None:
+    ticket, store = issue_session_ticket()
+    client, server = make_resumption_pair(ticket, store.pop)
+    client.connect(SERVER_ADDR, 2.0)
+    client._pre_handshake_state_replayed = False
+    client.send_stream_data(0, b"first")
+    assert client._pre_handshake_state_replayed
+    client.send_stream_data(0, b"second", end_stream=True)
+    _, received, _ = handshake(client, server)
+    payloads = [
+        event for event in received if isinstance(event, events.StreamDataReceived)
+    ]
+    assert b"".join(event.data for event in payloads) == b"firstsecond"
+    assert sum(event.end_stream for event in payloads) == 1
+
+
 def test_native_version_negotiation_outcomes() -> None:
     client = make_client()
     client.configuration.supported_versions = [
@@ -514,9 +658,7 @@ def test_native_v1_v2_compatible_negotiation_handshake() -> None:
     assert events.HandshakeCompleted("h3", False, False) in server_events
     client.send_stream_data(0, b"negotiated v2", end_stream=True)
     transfer(client, server, CLIENT_ADDR, now)
-    assert server.next_event() == events.StreamDataReceived(
-        b"negotiated v2", True, 0
-    )
+    assert server.next_event() == events.StreamDataReceived(b"negotiated v2", True, 0)
 
 
 def test_native_rejects_oversized_outbound_varints_transactionally() -> None:
@@ -1198,6 +1340,247 @@ def test_native_retransmits_lost_flow_control_updates() -> None:
     client.send_stream_data(0, b"b" * 10, end_stream=True)
     transfer(client, server, CLIENT_ADDR, deadline + 0.001)
     assert server.next_event() == events.StreamDataReceived(b"b" * 10, True, 0)
+
+
+def make_flow_control_pair(connection_credit, stream_credit):
+    client, server = make_pair()
+    client.configuration.probe_datagram_size = False
+    server.configuration.probe_datagram_size = False
+    server.configuration.max_data = connection_credit
+    server.configuration.max_stream_data = stream_credit
+    _, _, now = handshake(client, server)
+    return client, server, now
+
+
+def transfer_core(source, destination, source_addr, now):
+    # Leave events unconsumed so ACK and credit updates can arrive separately.
+    count = 0
+    while True:
+        transmit = source._core.poll_transmit(now)
+        if transmit is None:
+            break
+        destination._core.receive_datagram(transmit[0], source_addr, now)
+        count += 1
+    return count
+
+
+def drain_core_events(connection):
+    result = []
+    while True:
+        event = connection._core.next_event()
+        if event is None:
+            break
+        result.append(event)
+    return result
+
+
+def test_native_send_buffer_size_before_connect_and_after_handshake():
+    client, server = make_pair()
+    assert client.get_send_buffer_size() == 0
+    assert client.get_send_buffer_size(0) == 0
+    client.send_stream_data(0, b"request", end_stream=True)
+    client.send_stream_data(2, b"control", end_stream=True)
+    assert client.get_send_buffer_size() == 14
+    assert client.get_send_buffer_size(0) == 7
+    assert client.get_send_buffer_size(2) == 7
+    assert client.get_send_buffer_size(4) == 0
+    client.connect(SERVER_ADDR, 1.0)
+    assert client.get_send_buffer_size() == 14
+    handshake(client, server)
+    assert client.get_send_buffer_size() == 0
+    for invalid in [-1, 1 << 62]:
+        with pytest.raises(ValueError):
+            client.get_send_buffer_size(invalid)
+
+
+def test_native_stream_is_split_at_connection_credit():
+    client, server, now = make_flow_control_pair(10, 1024)
+    client.send_stream_data(0, b"abcdefghijk", end_stream=True)
+    assert client.get_send_buffer_size(0) == 11
+    assert transfer_core(client, server, CLIENT_ADDR, now) == 1
+    assert client.get_send_buffer_size() == 1
+    assert client.get_send_buffer_size(0) == 1
+    assert drain_core_events(server) == [("stream_data", 0, b"abcdefghij", False)]
+    transfer_core(server, client, SERVER_ADDR, now + 0.01)
+    assert ("connection_credit", 20) in drain_core_events(client)
+    transfer_core(client, server, CLIENT_ADDR, now + 0.02)
+    assert drain_core_events(server) == [("stream_data", 0, b"k", True)]
+    # ACKs have not arrived for the tail, but all bytes have been transmitted.
+    assert client.get_send_buffer_size() == 0
+    assert client._core.outstanding_application_packets
+
+
+def test_native_streams_reserve_shared_connection_credit():
+    client, server, now = make_flow_control_pair(10, 1024)
+    client.send_stream_data(0, b"abcdef", end_stream=True)
+    client.send_stream_data(4, b"ghijkl", end_stream=True)
+    assert client.get_send_buffer_size() == 12
+    transfer_core(client, server, CLIENT_ADDR, now)
+    assert drain_core_events(server) == [
+        ("stream_data", 0, b"abcdef", True),
+        ("stream_data", 4, b"ghij", False),
+    ]
+    assert client.get_send_buffer_size(0) == 0
+    assert client.get_send_buffer_size(4) == 2
+    assert client.get_send_buffer_size() == 2
+    transfer_core(server, client, SERVER_ADDR, now + 0.01)
+    transfer_core(client, server, CLIENT_ADDR, now + 0.02)
+    assert drain_core_events(server) == [("stream_data", 4, b"kl", True)]
+    assert client.get_send_buffer_size() == 0
+
+
+@pytest.mark.parametrize("connection_credit,stream_credit", [(10, 10), (100, 10)])
+def test_native_credit_update_wakes_stream_after_ack(connection_credit, stream_credit):
+    client, server, now = make_flow_control_pair(connection_credit, stream_credit)
+    client.send_stream_data(0, b"abcdefghijk", end_stream=True)
+    transfer_core(client, server, CLIENT_ADDR, now)
+    # ACK without consuming the data, so no new credit is available yet.
+    transfer_core(server, client, SERVER_ADDR, now + 0.01)
+    transfer_core(client, server, CLIENT_ADDR, now + 0.02)
+    assert client.get_send_buffer_size(0) == 1
+    assert not client.should_wait_for_ack(now + 0.02)
+    assert drain_core_events(server) == [("stream_data", 0, b"abcdefghij", False)]
+    transfer_core(server, client, SERVER_ADDR, now + 0.03)
+    assert ("stream_credit", 0, 20) in drain_core_events(client)
+    transfer_core(client, server, CLIENT_ADDR, now + 0.04)
+    assert drain_core_events(server) == [("stream_data", 0, b"k", True)]
+    assert client.get_send_buffer_size(0) == 0
+
+
+def test_native_retransmits_with_exhausted_credit():
+    client, server, now = make_flow_control_pair(10, 1024)
+    client.send_stream_data(0, b"abcdefghijk", end_stream=True)
+    assert client.datagrams_to_send(now)  # Drop the first ten bytes.
+    assert client.get_send_buffer_size(0) == 1
+    for _ in range(10):
+        deadline = client.get_timer()
+        assert deadline is not None
+        now = max(now, deadline)
+        client.handle_timer(now)
+        transfer_core(client, server, CLIENT_ADDR, now)
+        received = drain_core_events(server)
+        if received:
+            break
+    assert received == [("stream_data", 0, b"abcdefghij", False)]
+    assert client.get_send_buffer_size() == 1
+    transfer_core(server, client, SERVER_ADDR, now + 0.01)
+    transfer_core(client, server, CLIENT_ADDR, now + 0.02)
+    assert drain_core_events(server) == [("stream_data", 0, b"k", True)]
+    assert client.get_send_buffer_size() == 0
+
+
+def test_native_fin_only_with_exhausted_credit():
+    client, server, now = make_flow_control_pair(10, 1024)
+    client.send_stream_data(0, b"abcdefghij")
+    transfer_core(client, server, CLIENT_ADDR, now)
+    client.send_stream_data(0, b"", end_stream=True)
+    assert client.get_send_buffer_size() == 0
+    transfer_core(client, server, CLIENT_ADDR, now + 0.01)
+    assert drain_core_events(server) == [("stream_data", 0, b"abcdefghij", True)]
+
+
+@pytest.mark.parametrize("stop_by_peer", [False, True])
+def test_native_reset_discards_flow_blocked_upload(stop_by_peer):
+    client, server, now = make_flow_control_pair(10, 1024)
+    client.send_stream_data(0, b"a" * 100)
+    transfer(client, server, CLIENT_ADDR, now)
+    assert client.get_send_buffer_size() == 90
+    if stop_by_peer:
+        server.stop_stream(0, 0x100)
+        transfer(server, client, SERVER_ADDR, now + 0.01)
+    else:
+        client.reset_stream(0, 0x100)
+    assert client.get_send_buffer_size() == 0
+    transfer(client, server, CLIENT_ADDR, now + 0.02)
+    assert events.StreamReset(0x100, 0) in drain_events(server)
+    assert client.get_send_buffer_size(0) == 0
+
+
+def test_native_send_buffer_size_clears_on_close():
+    client, server, now = make_flow_control_pair(10, 1024)
+    client.send_stream_data(0, b"a" * 100)
+    transfer(client, server, CLIENT_ADDR, now)
+    assert client.get_send_buffer_size() == 90
+    client.close()
+    assert client.get_send_buffer_size() == 0
+
+
+def test_native_http3_early_rejections_allow_connection_reuse():
+    client, server = make_pair()
+    for connection in (client, server):
+        connection.configuration.probe_datagram_size = False
+        connection.configuration.max_datagram_frame_size = 65536
+    server.configuration.max_data = 4096
+    server.configuration.max_stream_data = 1024 * 1024
+    _, _, now = handshake(client, server)
+    client_h3 = H3Connection(client)
+    server_h3 = H3Connection(server)
+    # Connection-wide backlog includes the HTTP/3 control streams.
+    assert client.get_send_buffer_size() > 0
+    body = b"a" * (300 * 1024)
+
+    for _ in range(6):
+        stream_id = client.get_next_available_stream_id()
+        client_h3.send_headers(
+            stream_id,
+            [
+                (b":method", b"POST"),
+                (b":scheme", b"https"),
+                (b":authority", b"localhost"),
+                (b":path", b"/reject"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        )
+        client_h3.send_data(stream_id, body, end_stream=True)
+        assert client.get_send_buffer_size(stream_id) > len(body)
+        received_body = 0
+        response = None
+        stop_received = False
+
+        for tick in range(100):
+            transfer(client, server, CLIENT_ADDR, now)
+            if tick == 0:
+                assert client.get_send_buffer_size(stream_id) > 0
+            for event in drain_events(server):
+                for http_event in server_h3.handle_event(event):
+                    if isinstance(http_event, h3_events.HeadersReceived):
+                        assert http_event.stream_id == stream_id
+                        server_h3.send_headers(
+                            stream_id, [(b":status", b"400")], end_stream=True
+                        )
+                        server.stop_stream(stream_id, 0x100)
+                    elif isinstance(http_event, h3_events.DataReceived):
+                        received_body += len(http_event.data)
+            transfer(server, client, SERVER_ADDR, now + 0.001)
+            for event in drain_events(client):
+                if isinstance(event, events.StopSendingReceived):
+                    stop_received = True
+                for http_event in client_h3.handle_event(event):
+                    if isinstance(http_event, h3_events.HeadersReceived):
+                        response = http_event
+            now += 0.01
+            for connection in (client, server):
+                deadline = connection.get_timer()
+                if deadline is not None and deadline <= now:
+                    connection.handle_timer(now)
+            if response is not None and stop_received:
+                break
+
+        assert response is not None
+        assert response.headers == [(b":status", b"400")]
+        assert response.stream_ended
+        assert stop_received
+        assert received_body < len(body)
+        assert client.get_send_buffer_size(stream_id) == 0
+        # Deliver RESET_STREAM and ACK, including the peer's resulting credit.
+        transfer(client, server, CLIENT_ADDR, now)
+        for event in drain_events(server):
+            server_h3.handle_event(event)
+        transfer(server, client, SERVER_ADDR, now + 0.001)
+        for event in drain_events(client):
+            client_h3.handle_event(event)
+        now += 0.01
+        assert client._state == QuicConnectionState.CONNECTED
 
 
 def test_native_reset_final_sizes_replenish_connection_credit() -> None:

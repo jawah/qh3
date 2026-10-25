@@ -38,7 +38,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-14, windows-latest]
-        python_version: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11']
+        python_version: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14', '3.15', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11']
         exclude:
           # circumvent wierd issue with qh3.asyncio+windows+proactor loop...
           - python_version: pypy-3.9
@@ -116,7 +116,7 @@ jobs:
         run: |
           python -m coverage combine
           python -m coverage html --skip-covered --skip-empty
-          python -m coverage report --ignore-errors --show-missing --fail-under=96
+          python -m coverage report --ignore-errors --show-missing --fail-under=100
 
       - name: "Upload report"
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
@@ -166,7 +166,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [ x86_64, s390x, aarch64, armv7l, ppc64le, ppc64, i686 ]
-        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t', '3.14t' ]
+        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t', '3.14t', '3.15t' ]
         manylinux: [ 'manylinux2014', 'musllinux_1_1' ]
         exclude:
           - manylinux: musllinux_1_1
@@ -185,6 +185,9 @@ jobs:
           - manylinux: manylinux_2_39
             target: riscv64gc-unknown-linux-gnu
             python_version: '3.14t'
+          - manylinux: manylinux_2_39
+            target: riscv64gc-unknown-linux-gnu
+            python_version: '3.15t'
           - manylinux: musllinux_1_1
             target: riscv64gc-unknown-linux-musl
             python_version: '3.10'
@@ -194,6 +197,9 @@ jobs:
           - manylinux: musllinux_1_1
             target: riscv64gc-unknown-linux-musl
             python_version: '3.14t'
+          - manylinux: musllinux_1_1
+            target: riscv64gc-unknown-linux-musl
+            python_version: '3.15t'
 
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
@@ -203,6 +209,71 @@ jobs:
         with:
           python-version: ${{ matrix.python_version }}
           allow-prereleases: true
+      # Older PyPy builds rely on UNSAFE_PYO3_SKIP_VERSION_CHECK=1.
+      # Keep that compatibility bypass; only 3.15t selects the newer build tools.
+      - &prepare-cpython315t
+        name: Prepare CPython 3.15t build
+        if: matrix.python_version == '3.15t'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - 3.15t <<'PYTHON'
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          if sys.argv[1:] != ["3.15t"]:
+              raise SystemExit("The modern build is only enabled for CPython 3.15t")
+
+          cargo = Path("Cargo.toml")
+          text = cargo.read_text()
+          text, count = re.subn(
+              r'(?m)^(pyo3(?:-build-config)?\s*=\s*(?:\{\s*version\s*=\s*)?)"[^"]+"',
+              r'\1"=0.30.1"',
+              text,
+          )
+          if count not in (1, 2):
+              raise SystemExit("Expected pyo3 and optional pyo3-build-config dependencies")
+          text = text.replace('"abi3-py37", ', '')
+          cargo.write_text(text)
+
+          pyproject = Path("pyproject.toml")
+          text = pyproject.read_text()
+          old_requirement = "maturin>=1.2,<1.14"
+          maturin_requirement = "maturin>=1.14.1,<1.15"
+          if old_requirement not in text and maturin_requirement not in text:
+              raise SystemExit("Unexpected Maturin build requirement")
+          pyproject.write_text(text.replace(old_requirement, maturin_requirement))
+
+          # PyO3 0.29 removed implicit Utf8Error -> PyErr conversion. Keep these
+          # compatibility edits in the disposable CI checkout with the dependency edits.
+          for filename, old, new in [
+              (
+                  "src/intldomain.rs",
+                  "std::str::from_utf8(src.as_bytes())?",
+                  "std::str::from_utf8(src.as_bytes()).map_err(|err| "
+                  "pyo3::exceptions::PyUnicodeDecodeError::new_err_from_utf8(py, src.as_bytes(), err))?",
+              ),
+              (
+                  "src/pkcs8.rs",
+                  "std::str::from_utf8(pem_content)?",
+                  "std::str::from_utf8(pem_content).map_err(|err| "
+                  "pyo3::exceptions::PyUnicodeDecodeError::new_err_from_utf8(raw_pem_content.py(), pem_content, err))?",
+              ),
+          ]:
+              path = Path(filename)
+              text = path.read_text()
+              if old not in text and new not in text:
+                  raise SystemExit("Unexpected UTF-8 conversion in " + filename)
+              path.write_text(text.replace(old, new))
+          subprocess.check_call([
+              sys.executable, "-m", "pip", "install", "--upgrade", maturin_requirement,
+          ])
+          PYTHON
+          python -m maturin --version
+          cargo update -p pyo3 -p pyo3-build-config
+
       - name: Build wheels (no workarounds)
         if: matrix.target == 'x86_64'
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
@@ -479,6 +550,32 @@ jobs:
             sudo wget https://gist.githubusercontent.com/Ousret/ae53d8c725a2ad48c133afce313ffdcc/raw/3671b2081742f3d5152cd67f1d813ea3cbd84d50/queue.h -O /usr/local/musl/i686-unknown-linux-musl/include/sys/queue.h || echo "compat fail"
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/local/musl/i686-unknown-linux-musl"
 
+      - name: Verify installed CPython 3.15t wheel
+        if: >-
+          matrix.python_version == '3.15t' && matrix.target == 'x86_64' &&
+          matrix.manylinux == 'manylinux2014'
+        shell: bash
+        run: &verify-cpython315t |
+          python - <<'PYTHON'
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          wheels = list(Path("dist").glob("*-cp315-cp315t-*.whl"))
+          if len(wheels) != 1:
+              raise SystemExit("Expected exactly one CPython 3.15t wheel")
+          subprocess.check_call([
+              sys.executable, "-m", "pip", "install", "--force-reinstall",
+              "--no-deps", str(wheels[0]),
+          ])
+          subprocess.check_call([
+              sys.executable, "-I", "-c",
+              "import sys; assert sys.version_info[:2] == (3, 15); "
+              "assert not sys._is_gil_enabled(); import qh3; "
+              "assert not sys._is_gil_enabled(); print(qh3.__file__)",
+          ])
+          PYTHON
+
       - name: Upload wheels
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
@@ -495,7 +592,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [ x64, aarch64, x86 ]
-        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t', '3.14t' ]
+        python_version: [ '3.10', 'pypy-3.7', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t', '3.14t', '3.15t' ]
         exclude:
           - target: aarch64
             python_version: pypy-3.7
@@ -533,6 +630,8 @@ jobs:
       - name: Add Ninja (aarch64 build requirement)
         if: matrix.target == 'aarch64'
         run: choco install ninja -y
+      - *prepare-cpython315t
+
       - name: Build wheels
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         if: matrix.target != 'aarch64'
@@ -553,6 +652,11 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist -i ${{ matrix.python_version }}
           sccache: 'false'
+      - name: Verify installed CPython 3.15t wheel
+        if: matrix.python_version == '3.15t' && matrix.target != 'aarch64'
+        shell: bash
+        run: *verify-cpython315t
+
       - name: Upload wheels
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
@@ -569,7 +673,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [ universal2 ]
-        python_version: [ '3.10', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t', '3.14t' ]
+        python_version: [ '3.10', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10', 'pypy-3.11', '3.13t', '3.14t', '3.15t' ]
     steps:
       - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
         with:
@@ -578,6 +682,8 @@ jobs:
         with:
           python-version: ${{ matrix.python_version }}
           allow-prereleases: true
+      - *prepare-cpython315t
+
       - name: Build wheels
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         env:
@@ -586,6 +692,11 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter ${{ matrix.python_version }}
           sccache: 'false'
+      - name: Verify installed CPython 3.15t wheel
+        if: matrix.python_version == '3.15t'
+        shell: bash
+        run: *verify-cpython315t
+
       - name: Upload wheels
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:

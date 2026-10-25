@@ -572,6 +572,24 @@ impl ConnectionCore {
         self.recovery.should_wait_for_ack(now)
     }
 
+    pub fn send_buffer_size(&self, stream_id: Option<StreamId>) -> u64 {
+        if matches!(
+            self.state,
+            ConnectionState::Closing | ConnectionState::Draining | ConnectionState::Terminated
+        ) {
+            return 0;
+        }
+        match stream_id {
+            Some(id) => self
+                .streams
+                .get(id)
+                .map_or(0, |stream| stream.send.send_buffer_size()),
+            None => self.streams.iter().fold(0_u64, |total, (_, stream)| {
+                total.saturating_add(stream.send.send_buffer_size())
+            }),
+        }
+    }
+
     pub fn outstanding_application_packets(&self) -> Vec<(u64, u64, usize)> {
         self.recovery
             .outstanding_packets(PacketNumberSpace::ApplicationData)
@@ -792,6 +810,7 @@ impl ConnectionCore {
             if let Some(flow) = self.flow.stream_mut(id) {
                 flow.increase_send_maximum(maximum)?;
             }
+            self.schedule_stream(id);
         }
         self.config.connection_send_limit = connection_send_limit;
         self.config.stream_send_limit_bidi_local = stream_send_limit_bidi_local;
@@ -1393,6 +1412,14 @@ impl ConnectionCore {
                     if self.stream_tombstones.contains_key(&stream_id) {
                         continue;
                     }
+                    self.cancel_pending_stream_data(stream_id)
+                        .map_err(|error| {
+                            protocol(
+                                frame_type,
+                                TransportErrorCode::INTERNAL_ERROR,
+                                error.to_string(),
+                            )
+                        })?;
                     let send = self
                         .streams
                         .get_or_create_send(stream_id)
@@ -1491,6 +1518,7 @@ impl ConnectionCore {
                     {
                         self.events
                             .push_back(ConnectionEvent::ConnectionCredit(maximum.into_inner()));
+                        self.schedule_pending_streams();
                     }
                 }
                 Frame::MaxStreamData { stream_id, maximum } => {
@@ -1515,6 +1543,7 @@ impl ConnectionCore {
                             stream_id,
                             maximum: maximum.into_inner(),
                         });
+                        self.schedule_stream(stream_id);
                     }
                 }
                 Frame::MaxStreams {
@@ -1798,6 +1827,7 @@ impl ConnectionCore {
                 error_code,
             } => {
                 self.ensure_send_stream_core(stream_id)?;
+                self.cancel_pending_stream_data(stream_id)?;
                 self.streams
                     .get_or_create_send(stream_id)?
                     .request_reset(error_code);
@@ -2934,13 +2964,30 @@ impl ConnectionCore {
             }
         }
         if stream.send.has_pending() {
-            let flow_limit = self.flow.stream(id).map_or(0, |state| state.send_maximum());
+            let flow_limit = self.flow.send_limit(id)?;
             if let Some(reservation) = stream
                 .send
                 .reserve(self.config.max_datagram_size.saturating_sub(64), flow_limit)?
             {
-                self.flow.check_send(id, reservation.end_offset())?;
-                let body = encode_stream(&reservation, stream.send.reserved_data(&reservation)?)?;
+                let body = match stream
+                    .send
+                    .reserved_data(&reservation)
+                    .map_err(ConnectionCoreError::from)
+                    .and_then(|data| encode_stream(&reservation, data))
+                {
+                    Ok(body) => body,
+                    Err(error) => {
+                        stream.send.cancel(&reservation)?;
+                        return Err(error);
+                    }
+                };
+                let flow = match self.flow.prepare_send(id, reservation.end_offset()) {
+                    Ok(flow) => flow,
+                    Err(error) => {
+                        stream.send.cancel(&reservation)?;
+                        return Err(error.into());
+                    }
+                };
                 let delivery = self.new_delivery(DeliveryTarget::Stream {
                     stream: id,
                     offset: reservation.offset,
@@ -2955,7 +3002,7 @@ impl ConnectionCore {
                         FrameAction::Notify(delivery),
                     ),
                 );
-                return Ok(Some(PendingStream::Data(id, reservation, delivery)));
+                return Ok(Some(PendingStream::Data(id, reservation, flow, delivery)));
             }
         }
         Ok(None)
@@ -2972,6 +3019,42 @@ impl ConnectionCore {
         if self.streams.get(stream_id).is_some() && self.streams_queued.insert(stream_id) {
             self.stream_send_queue.push_back(stream_id);
         }
+    }
+
+    fn schedule_pending_streams(&mut self) {
+        let ids: Vec<_> = self
+            .streams
+            .iter()
+            .filter_map(|(&id, stream)| stream.has_pending().then_some(id))
+            .collect();
+        for id in ids {
+            self.schedule_stream(id);
+        }
+    }
+
+    fn cancel_pending_stream_data(
+        &mut self,
+        stream_id: StreamId,
+    ) -> Result<(), ConnectionCoreError> {
+        let mut canceled = false;
+        for pending in std::mem::take(&mut self.pending_streams) {
+            match pending {
+                PendingStream::Data(id, reservation, flow, delivery) if id == stream_id => {
+                    self.builder.discard_delivery(delivery);
+                    self.delivery.remove(&delivery);
+                    if let Some(stream) = self.streams.get_mut(id) {
+                        stream.send.cancel(&reservation)?;
+                    }
+                    self.flow.cancel_send(flow)?;
+                    canceled = true;
+                }
+                pending => self.pending_streams.push(pending),
+            }
+        }
+        if canceled {
+            self.schedule_pending_streams();
+        }
+        Ok(())
     }
 
     fn refresh_stream_completion(&mut self, stream_id: StreamId) {
@@ -3056,8 +3139,7 @@ impl ConnectionCore {
         pending: Option<PendingStream>,
     ) -> Result<(), ConnectionCoreError> {
         match pending {
-            Some(PendingStream::Data(id, reservation, _)) => {
-                let flow = self.flow.prepare_send(id, reservation.end_offset())?;
+            Some(PendingStream::Data(id, reservation, flow, _)) => {
                 self.streams
                     .get_mut(id)
                     .ok_or(StreamError::StreamState("reserved stream is missing"))?
@@ -3363,7 +3445,12 @@ impl ConnectionCore {
 }
 
 enum PendingStream {
-    Data(StreamId, super::stream::SendReservation, DeliveryId),
+    Data(
+        StreamId,
+        super::stream::SendReservation,
+        super::path::SendReservation,
+        DeliveryId,
+    ),
     Reset(StreamId, super::stream::ActionReservation, DeliveryId),
     Stop(StreamId, super::stream::ActionReservation, DeliveryId),
 }
@@ -3371,7 +3458,7 @@ enum PendingStream {
 impl PendingStream {
     fn delivery_id(&self) -> DeliveryId {
         match self {
-            Self::Data(_, _, id) | Self::Reset(_, _, id) | Self::Stop(_, _, id) => *id,
+            Self::Data(_, _, _, id) | Self::Reset(_, _, id) | Self::Stop(_, _, id) => *id,
         }
     }
 }
@@ -4368,6 +4455,63 @@ mod tests {
             server.poll_event(),
             Some(ConnectionEvent::StreamData { data, .. }) if data == b" again"
         ));
+    }
+
+    #[test]
+    fn reset_cancels_unbuilt_frames_and_releases_reserved_connection_credit() {
+        let (mut client, mut server) = pair();
+        client.flow.replace_connection_send_maximum(10).unwrap();
+        let first = StreamId::new(0).unwrap();
+        let second = StreamId::new(4).unwrap();
+        client.send_stream(first, b"abcdefghij", false).unwrap();
+        client.send_stream(second, b"0123456789", true).unwrap();
+        assert!(client
+            .poll_transmit(Duration::from_millis(1))
+            .unwrap()
+            .is_none());
+        assert_eq!(client.pending_streams.len(), 1);
+        assert_eq!(client.send_buffer_size(None), 20);
+        assert_eq!(client.flow.send_limit(second).unwrap(), 0);
+
+        client
+            .command(ConnectionCommand::ResetStream {
+                stream_id: first,
+                error_code: 0,
+            })
+            .unwrap();
+        assert!(client.pending_streams.is_empty());
+        assert_eq!(client.send_buffer_size(None), 10);
+        assert_eq!(client.flow.send_limit(second).unwrap(), 10);
+        install_application_pair(&mut client, &mut server);
+        transfer(&mut client, &mut server, Duration::from_millis(2));
+        let mut data = Vec::new();
+        let mut reset = false;
+        while let Some(event) = server.poll_event() {
+            match event {
+                ConnectionEvent::StreamData {
+                    stream_id,
+                    data: bytes,
+                    ..
+                } => {
+                    assert_eq!(stream_id, second);
+                    data.extend(bytes);
+                }
+                ConnectionEvent::StreamReset {
+                    stream_id,
+                    final_size,
+                    ..
+                } => {
+                    assert_eq!(stream_id, first);
+                    assert_eq!(final_size, 0);
+                    reset = true;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(data, b"0123456789");
+        assert!(reset);
+        assert_eq!(client.flow.connection_sent(), 10);
+        assert_eq!(client.send_buffer_size(None), 0);
     }
 
     #[test]
