@@ -1024,6 +1024,48 @@ class TestGroupForGso:
 class TestEnableGroHasGso:
     """Unit tests for enable_gro and has_gso on Linux."""
 
+    def test_capability_checks_do_not_touch_non_linux_socket(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from qh3.asyncio import _transport
+
+        monkeypatch.setattr(_transport, "_IS_LINUX", False)
+        sock = MagicMock()
+        assert not enable_gro(sock)
+        assert not has_gso(sock)
+        sock.setsockopt.assert_not_called()
+        sock.getsockopt.assert_not_called()
+
+    @pytest.mark.parametrize("read_error", [False, True])
+    def test_gso_probe_always_resets_socket_default(self, read_error, monkeypatch):
+        from unittest.mock import MagicMock, call
+
+        from qh3.asyncio import _transport
+
+        monkeypatch.setattr(_transport, "_IS_LINUX", True)
+        sock = MagicMock()
+        if read_error:
+            sock.getsockopt.side_effect = OSError(errno.EIO, "read failed")
+        else:
+            sock.getsockopt.return_value = 1280
+        assert has_gso(sock) is not read_error
+        assert sock.setsockopt.call_args_list == [
+            call(_transport._SOL_UDP, _transport.UDP_SEGMENT, 1280),
+            call(_transport._SOL_UDP, _transport.UDP_SEGMENT, 0),
+        ]
+
+    def test_gso_reset_failure_is_not_reported_as_safe_fallback(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from qh3.asyncio import _transport
+
+        monkeypatch.setattr(_transport, "_IS_LINUX", True)
+        sock = MagicMock()
+        sock.setsockopt.side_effect = [None, OSError(errno.EPERM, "reset failed")]
+        sock.getsockopt.return_value = 1280
+        with pytest.raises(OSError, match="reset failed"):
+            has_gso(sock)
+
     @pytest.mark.skipif(not hasattr(socket.socket, "recvmsg"), reason="Unix only")
     def test_enable_gro_on_udp_socket(self):
         sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
@@ -1066,7 +1108,15 @@ class TestEnableGroHasGso:
 class TestOptimizedDatagramTransportUnit:
     """Unit tests for OptimizedDatagramTransport methods using mocks."""
 
-    def _make_transport(self, *, gro=False, gso=False, connected_addr=None):
+    def _make_transport(
+        self,
+        *,
+        gro=False,
+        gso=False,
+        connected_addr=None,
+        connected=False,
+        sockname_error=False,
+    ):
         """Create a transport with a mock socket and event loop."""
         from unittest.mock import MagicMock
 
@@ -1082,11 +1132,19 @@ class TestOptimizedDatagramTransportUnit:
         sock.family = socket.AF_INET6
         sock.type = socket.SOCK_DGRAM
         sock.getsockname.return_value = ("::1", 12345, 0, 0)
+        if sockname_error:
+            sock.getsockname.side_effect = OSError(errno.EBADF, "metadata unavailable")
+        if connected:
+            sock.getpeername.return_value = connected_addr
+        else:
+            sock.getpeername.side_effect = OSError(errno.ENOTCONN, "not connected")
 
         protocol = MagicMock()
         protocol.datagrams_received = MagicMock()
 
-        with patch("qh3.asyncio._transport._UdpSocketState", side_effect=NotImplementedError):
+        with patch(
+            "qh3.asyncio._transport._UdpSocketState", side_effect=NotImplementedError
+        ):
             transport = OptimizedDatagramTransport(
                 loop=loop,
                 sock=sock,
@@ -1098,6 +1156,389 @@ class TestOptimizedDatagramTransportUnit:
             )
 
         return transport, loop, sock, protocol
+
+    def test_socket_metadata_error_does_not_prevent_cleanup(self):
+        transport, _, sock, _ = self._make_transport(sockname_error=True)
+        assert transport.get_extra_info("sockname") is None
+        sock.close.side_effect = OSError(errno.EBADF, "already closed")
+        transport._call_connection_lost(None)
+        assert transport._closed
+        sock.close.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "callback",
+        ["connection_lost", "pause_writing", "resume_writing", "error_received"],
+    )
+    @pytest.mark.parametrize(
+        "error_type", [RuntimeError, KeyboardInterrupt, SystemExit]
+    )
+    def test_callback_failure_preserves_transport_bookkeeping(
+        self, callback, error_type
+    ):
+        transport, _, sock, protocol = self._make_transport(
+            connected_addr=("::1", 9999)
+        )
+        getattr(protocol, callback).side_effect = error_type("callback failed")
+        if callback == "resume_writing":
+            transport._protocol_paused = True
+        elif callback == "error_received":
+            sock.sendto.side_effect = OSError(errno.ECONNREFUSED, "refused")
+
+        def action():
+            if callback == "connection_lost":
+                transport._call_connection_lost(None)
+            elif callback == "pause_writing":
+                transport._queue_write(b"x" * _HIGH_WATERMARK, None)
+            elif callback == "resume_writing":
+                transport._maybe_resume_protocol()
+            else:
+                transport.sendto(b"data")
+
+        if error_type is RuntimeError:
+            action()
+        else:
+            with pytest.raises(error_type):
+                action()
+        if callback == "connection_lost":
+            assert transport._closed
+            assert transport._udp_state is None
+            sock.close.assert_called_once()
+        elif callback == "pause_writing":
+            assert transport._protocol_paused
+            assert transport.get_write_buffer_size() == _HIGH_WATERMARK
+        elif callback == "resume_writing":
+            assert not transport._protocol_paused
+        else:
+            assert transport.get_write_buffer_size() == 0
+
+    @pytest.mark.parametrize("kind", ["reader", "writer"])
+    @pytest.mark.parametrize("error_type", [OSError, ValueError])
+    def test_registration_errors_and_repeated_registration(self, kind, error_type):
+        transport, loop, _, _ = self._make_transport()
+        register = getattr(transport, "_register_" + kind)
+        unregister = getattr(transport, "_unregister_" + kind)
+        add = getattr(loop, "add_" + kind)
+        remove = getattr(loop, "remove_" + kind)
+        register()
+        register()
+        assert add.call_count == 1
+        remove.side_effect = error_type("descriptor removed")
+        unregister()
+        assert not getattr(transport, "_" + kind + "_registered")
+        add.side_effect = error_type("loop closed")
+        register()
+        assert not getattr(transport, "_" + kind + "_registered")
+        transport._closed = True
+        register()
+        assert add.call_count == 2
+
+    def test_single_gso_group_stops_when_error_callback_closes(self):
+        transport, _, sock, protocol = self._make_transport(
+            gso=True, connected_addr=("::1", 9999)
+        )
+        sock.sendto.side_effect = OSError(errno.ECONNREFUSED, "refused")
+        protocol.error_received.side_effect = lambda exc: transport.close()
+        transport.sendto_many([b"a", b"longer"])
+        assert sock.sendto.call_count == 1
+        assert transport.is_closing()
+
+    def test_queued_error_callback_can_abort_remaining_queue(self):
+        transport, _, sock, protocol = self._make_transport(
+            connected_addr=("::1", 9999)
+        )
+        transport._queue_datagrams([b"first", b"last"], None)
+        sock.sendto.side_effect = OSError(errno.ECONNREFUSED, "refused")
+        protocol.error_received.side_effect = lambda exc: transport.abort()
+        transport._on_write_ready()
+        assert sock.sendto.call_count == 1
+        assert transport.get_write_buffer_size() == 0
+        assert transport.is_closing()
+
+    @pytest.mark.parametrize("batch", [False, True])
+    def test_native_receive_would_block_is_not_an_error(self, batch):
+        from unittest.mock import MagicMock
+
+        transport, _, _, protocol = self._make_transport()
+        transport._protocol_supports_batch = batch
+        state = MagicMock()
+        state.recv.side_effect = BlockingIOError()
+        transport._recv_rust(state)
+        protocol.error_received.assert_not_called()
+        protocol.datagram_received.assert_not_called()
+        protocol.datagrams_received.assert_not_called()
+
+    @pytest.mark.parametrize("batch", [False, True])
+    def test_native_receive_burst_yields_to_event_loop(self, batch):
+        from unittest.mock import MagicMock
+
+        from qh3.asyncio import _transport
+
+        transport, loop, _, protocol = self._make_transport()
+        transport._protocol_supports_batch = batch
+        transport._reader_registered = True
+        state = MagicMock()
+        state.recv.return_value = [(b"data", ("::1", 1))]
+        transport._recv_rust(state)
+        assert state.recv.call_count == _transport._RECV_BURST_LIMIT
+        if batch:
+            protocol.datagrams_received.assert_called_once_with(
+                [b"data"] * _transport._RECV_BURST_LIMIT, ("::1", 1)
+            )
+        else:
+            assert protocol.datagram_received.call_count == _transport._RECV_BURST_LIMIT
+        loop.call_soon.assert_called_once_with(transport._on_readable)
+
+    def test_native_receive_stops_delivering_groups_after_close(self):
+        from unittest.mock import MagicMock
+
+        transport, _, _, protocol = self._make_transport()
+        state = MagicMock()
+        state.recv.side_effect = [[(b"first", ("::1", 1)), (b"last", ("::1", 2))], []]
+        protocol.datagrams_received.side_effect = lambda *args: transport.close()
+        transport._recv_rust(state)
+        protocol.datagrams_received.assert_called_once_with([b"first"], ("::1", 1))
+
+    def test_plain_readiness_dispatch_and_burst_budget(self):
+        from qh3.asyncio import _transport
+
+        transport, loop, sock, protocol = self._make_transport()
+        transport._reader_registered = True
+        sock.recvfrom.return_value = (b"data", ("::1", 1))
+        transport._on_readable()
+        assert protocol.datagram_received.call_count == _transport._RECV_BURST_LIMIT
+        loop.call_soon.assert_called_once_with(transport._on_readable)
+
+    @pytest.mark.parametrize("gro", [False, True])
+    def test_python_receive_stops_after_protocol_pauses(self, gro):
+        transport, _, sock, protocol = self._make_transport(gro=gro)
+        protocol.datagram_received.side_effect = lambda *args: transport.pause_reading()
+        sock.recvfrom.return_value = (b"data", ("::1", 1))
+        sock.recvmsg.return_value = (b"data", [], 0, ("::1", 1))
+        transport._on_readable()
+        protocol.datagram_received.assert_called_once_with(b"data", ("::1", 1))
+
+    def test_gro_metadata_on_single_segment_preserves_datagram(self):
+        from qh3.asyncio import _transport
+
+        transport, _, sock, protocol = self._make_transport(gro=True)
+        sock.recvmsg.side_effect = [
+            (
+                b"data",
+                [(_transport._SOL_UDP, UDP_GRO, _GRO_CMSG.pack(1280))],
+                0,
+                ("::1", 1),
+            ),
+            BlockingIOError(),
+        ]
+        transport._recv_gro_python()
+        protocol.datagram_received.assert_called_once_with(b"data", ("::1", 1))
+
+    def test_gro_split_delivery_stops_after_protocol_closes(self):
+        from qh3.asyncio import _transport
+
+        transport, _, sock, protocol = self._make_transport(gro=True)
+        transport._protocol_supports_batch = False
+        protocol.datagram_received.side_effect = lambda *args: transport.close()
+        sock.recvmsg.return_value = (
+            b"aabb",
+            [(_transport._SOL_UDP, UDP_GRO, _GRO_CMSG.pack(2))],
+            0,
+            ("::1", 1),
+        )
+        transport._recv_gro_python()
+        protocol.datagram_received.assert_called_once_with(b"aa", ("::1", 1))
+
+    @pytest.mark.parametrize(
+        "gso_error", [errno.EIO, errno.EINVAL, errno.EOPNOTSUPP, errno.ENOPROTOOPT]
+    )
+    def test_gso_rejection_disables_future_offload(self, gso_error):
+        transport, _, sock, protocol = self._make_transport(
+            gso=True, connected_addr=("::1", 9999)
+        )
+        sock.sendmsg.side_effect = OSError(gso_error, "GSO rejected")
+        transport.sendto_many([b"same", b"same", b"xx", b"another", b"another"])
+        transport.sendto_many([b"more", b"data"])
+        assert not transport._gso_enabled
+        assert sock.sendmsg.call_count == 1
+        assert [call[0][0] for call in sock.sendto.call_args_list] == [
+            b"same",
+            b"same",
+            b"xx",
+            b"another",
+            b"another",
+            b"more",
+            b"data",
+        ]
+        protocol.error_received.assert_not_called()
+
+    @pytest.mark.parametrize("gso_error", [errno.EIO, errno.EMSGSIZE])
+    @pytest.mark.parametrize("send_error", [BlockingIOError, InterruptedError])
+    def test_gso_fallback_preserves_duplicate_suffix(self, gso_error, send_error):
+        transport, _, sock, _ = self._make_transport(
+            gso=True, connected_addr=("::1", 9999)
+        )
+        sock.sendmsg.side_effect = OSError(gso_error, "rejected batch")
+        sock.sendto.side_effect = [4, send_error(), None, None, None, None]
+        transport.sendto_many([b"same", b"same", b"last", b"xx", b"nextgroup"])
+        assert list(transport._send_queue) == [
+            (data, None) for data in [b"same", b"last", b"xx", b"nextgroup"]
+        ]
+        assert transport.get_write_buffer_size() == 19
+        transport._on_write_ready()
+        assert not transport._send_queue
+        assert transport.get_write_buffer_size() == 0
+        assert transport._gso_enabled == (gso_error != errno.EIO)
+
+    @pytest.mark.parametrize("send_error", [BlockingIOError, InterruptedError])
+    def test_gso_busy_send_queues_remaining_groups_once(self, send_error):
+        transport, _, sock, _ = self._make_transport(
+            gso=True, connected_addr=("::1", 9999)
+        )
+        sock.sendmsg.side_effect = send_error()
+        messages = [b"a", b"same", b"same", b"tail", b"nextgroup"]
+        transport.sendto_many(messages)
+        transport.sendto_many([b"after"])
+        assert list(transport._send_queue) == [
+            (data, None) for data in messages[1:] + [b"after"]
+        ]
+        transport._on_write_ready()
+        assert transport._gso_enabled
+        assert sock.sendmsg.call_count == 1
+        assert transport.get_write_buffer_size() == 0
+
+    @pytest.mark.parametrize(
+        "retry_error",
+        [None, errno.EINTR, errno.EAGAIN, errno.EMSGSIZE, errno.ECONNREFUSED],
+    )
+    def test_interrupted_immediate_send_retries_or_queues(self, retry_error):
+        transport, _, sock, protocol = self._make_transport(
+            connected_addr=("::1", 9999)
+        )
+        sock.sendto.side_effect = [
+            InterruptedError(),
+            OSError(retry_error, "retry") if retry_error else None,
+        ]
+        transport.sendto(b"payload")
+        assert sock.sendto.call_count == 2
+        if retry_error in (errno.EAGAIN, errno.EINTR):
+            assert list(transport._send_queue) == [(b"payload", None)]
+            sock.sendto.side_effect = None
+            transport._on_write_ready()
+            assert transport.get_write_buffer_size() == 0
+        else:
+            assert not transport._send_queue
+        assert protocol.error_received.call_count == (retry_error == errno.ECONNREFUSED)
+
+    def test_connected_send_uses_send_without_losing_explicit_destinations(self):
+        peer = ("::1", 9999, 0, 0)
+        other = ("fe80::1", 8888, 123, 4)
+        transport, _, sock, _ = self._make_transport(
+            connected_addr=peer, connected=True
+        )
+        transport.sendto(b"default")
+        transport.sendto(b"peer", peer)
+        transport.sendto(b"other", other)
+        assert [call[0][0] for call in sock.send.call_args_list] == [
+            b"default",
+            b"peer",
+        ]
+        sock.sendto.assert_called_once_with(b"other", other)
+
+    def test_connected_gso_preserves_explicit_destination(self):
+        peer, other = ("::1", 9999), ("::1", 8888)
+        transport, _, sock, _ = self._make_transport(
+            gso=True, connected_addr=peer, connected=True
+        )
+        transport.sendto_many([b"same", b"same"], peer)
+        transport.sendto_many([b"more", b"data"], other)
+        assert len(sock.sendmsg.call_args_list[0][0]) == 2
+        assert sock.sendmsg.call_args_list[1][0][3] == other
+
+    def test_native_error_recovers_only_unsent_suffix(self):
+        from unittest.mock import MagicMock
+
+        transport, _, sock, _ = self._make_transport(
+            gso=True, connected_addr=("::1", 9999)
+        )
+        state = MagicMock()
+        error = OSError(errno.EIO, "GSO rejected after progress")
+        error.datagrams_sent = 1
+        state.send.side_effect = error
+        transport._udp_state = state
+        transport.sendto_many([b"first", b"second", b"last"])
+        assert [call[0][0] for call in sock.sendto.call_args_list] == [
+            b"second",
+            b"last",
+        ]
+        state.disable_gso.assert_called_once()
+        assert not transport._gso_enabled
+        sock.sendmsg.assert_not_called()
+
+    def test_native_mtu_error_drops_only_oversized_packet(self):
+        from unittest.mock import MagicMock
+
+        transport, _, sock, protocol = self._make_transport(
+            gso=True, connected_addr=("::1", 9999)
+        )
+        state = MagicMock()
+        error = OSError(errno.EMSGSIZE, "too big")
+        error.datagrams_sent = 1
+        state.send.side_effect = error
+        transport._udp_state = state
+        sock.sendto.side_effect = [OSError(errno.EMSGSIZE, "too big"), None]
+        transport.sendto_many([b"first", b"oversized", b"last"])
+        assert [call[0][0] for call in sock.sendto.call_args_list] == [
+            b"oversized",
+            b"last",
+        ]
+        assert transport._gso_enabled
+        state.disable_gso.assert_not_called()
+        protocol.error_received.assert_not_called()
+
+    def test_callback_exception_does_not_drop_following_datagrams(self):
+        transport, _, sock, protocol = self._make_transport(
+            gso=True, connected_addr=("::1", 9999)
+        )
+        sock.sendmsg.side_effect = OSError(errno.EIO, "unsupported")
+        sock.sendto.side_effect = [OSError(errno.ECONNREFUSED, "refused"), None]
+        protocol.error_received.side_effect = RuntimeError("callback failed")
+        transport.sendto_many([b"fail", b"last"])
+        assert [call[0][0] for call in sock.sendto.call_args_list] == [b"fail", b"last"]
+
+    @pytest.mark.parametrize("gso", [False, True])
+    def test_abort_during_queue_pause_does_not_requeue_batch_tail(self, gso):
+        transport, _, sock, protocol = self._make_transport(
+            gso=gso, connected_addr=("::1", 9999)
+        )
+        sock.sendto.side_effect = BlockingIOError()
+        protocol.pause_writing.side_effect = transport.abort
+        transport.sendto_many([b"a" * 33000, b"b" * 33000, b"tail"])
+        assert transport.is_closing()
+        assert transport.get_write_buffer_size() == 0
+        assert not transport._send_queue
+
+    @pytest.mark.parametrize("reaction", ["close", "abort"])
+    def test_gso_fallback_stops_after_error_callback_closes(self, reaction):
+        transport, _, sock, protocol = self._make_transport(
+            gso=True, connected_addr=("::1", 9999)
+        )
+        sock.sendmsg.side_effect = OSError(errno.EIO, "GSO rejected")
+        sock.sendto.side_effect = OSError(errno.ECONNREFUSED, "refused")
+        protocol.error_received.side_effect = lambda exc: getattr(transport, reaction)()
+        transport.sendto_many([b"first", b"later", b"tail"])
+        assert transport.is_closing()
+        assert sock.sendto.call_count == 1
+        assert transport.get_write_buffer_size() == 0
+
+    def test_queued_readiness_does_not_read_while_paused(self):
+        from unittest.mock import MagicMock
+
+        transport, _, _, _ = self._make_transport()
+        state = MagicMock()
+        transport._udp_state = state
+        transport.pause_reading()
+        transport._on_readable()
+        state.recv.assert_not_called()
 
     def test_get_extra_info(self):
         transport, _, _, _ = self._make_transport()
@@ -1156,6 +1597,96 @@ class TestOptimizedDatagramTransportUnit:
         transport._closing = True
         transport.abort()
         loop.call_soon.assert_not_called()
+
+    def test_abort_discards_queue_after_graceful_close(self):
+        transport, loop, sock, _ = self._make_transport(connected_addr=("::1", 9999))
+        sock.sendto.side_effect = BlockingIOError()
+        transport.sendto(b"queued")
+        transport.close()
+        assert transport.get_write_buffer_size() == 6
+        transport.abort()
+        assert transport.get_write_buffer_size() == 0
+        assert not transport._send_queue
+        loop.call_soon.assert_called_once_with(transport._call_connection_lost, None)
+
+    def test_cancelled_start_waiter_is_not_completed_again(self):
+        transport, _, _, _ = self._make_transport()
+        loop = asyncio.new_event_loop()
+        try:
+            waiter = loop.create_future()
+            waiter.cancel()
+            transport._finish_start(waiter)
+            assert waiter.cancelled()
+        finally:
+            loop.close()
+
+    def test_native_receive_error_follows_already_received_data(self):
+        from unittest.mock import MagicMock
+
+        transport, _, _, protocol = self._make_transport()
+        calls = []
+        protocol.datagrams_received.side_effect = lambda data, addr: calls.append(
+            ("data", data)
+        )
+        protocol.error_received.side_effect = lambda exc: calls.append(
+            ("error", exc.errno)
+        )
+        state = MagicMock()
+        state.recv.side_effect = [
+            [(b"first", ("::1", 1))],
+            OSError(errno.ECONNREFUSED, "refused"),
+        ]
+        transport._recv_rust(state)
+        assert calls == [("data", [b"first"]), ("error", errno.ECONNREFUSED)]
+
+    @pytest.mark.parametrize("batch", [False, True])
+    def test_native_receive_interruption_then_data(self, batch):
+        from unittest.mock import MagicMock
+
+        transport, _, _, protocol = self._make_transport()
+        transport._protocol_supports_batch = batch
+        state = MagicMock()
+        state.recv.side_effect = [InterruptedError(), [(b"data", ("::1", 1))], []]
+        transport._recv_rust(state)
+        if batch:
+            protocol.datagrams_received.assert_called_once_with([b"data"], ("::1", 1))
+        else:
+            protocol.datagram_received.assert_called_once_with(b"data", ("::1", 1))
+        protocol.error_received.assert_not_called()
+
+    @pytest.mark.parametrize("reaction", ["close", "pause_reading"])
+    def test_receive_stops_when_protocol_changes_transport_state(self, reaction):
+        from unittest.mock import MagicMock
+
+        transport, _, _, protocol = self._make_transport()
+        transport._protocol_supports_batch = False
+        protocol.datagram_received.side_effect = lambda *args: getattr(
+            transport, reaction
+        )()
+        state = MagicMock()
+        state.recv.side_effect = [[(b"first", ("::1", 1)), (b"last", ("::1", 1))], []]
+        transport._recv_rust(state)
+        expected = [b"first"] if reaction == "close" else [b"first", b"last"]
+        assert [
+            call[0][0] for call in protocol.datagram_received.call_args_list
+        ] == expected
+        assert state.recv.call_count == 1
+
+    def test_gro_payload_truncation_reports_error_and_recovers(self, monkeypatch):
+        from qh3.asyncio import _transport
+
+        monkeypatch.setattr(_transport, "_MSG_TRUNC", 32)
+        transport, _, sock, protocol = self._make_transport(gro=True)
+        initial_size = transport._recv_buf_size
+        sock.recvmsg.side_effect = [
+            (b"truncated", [], 32, ("::1", 1)),
+            (b"valid", [], 0, ("::1", 1)),
+            BlockingIOError(),
+        ]
+        transport._recv_gro_python()
+        assert transport._recv_buf_size == initial_size * 2
+        assert "payload truncated" in str(protocol.error_received.call_args[0][0])
+        protocol.datagram_received.assert_called_once_with(b"valid", ("::1", 1))
 
     def test_pause_resume_reading(self):
         transport, loop, _, _ = self._make_transport()
@@ -1905,3 +2436,279 @@ class TestQuicConnectionProtocolUnit:
         assert protocol._stream_readers == {}
         assert protocol._stream_readers_done == set()
         writer.close()
+
+
+@pytest.mark.skipif(not hasattr(socket.socket, "recvmsg"), reason="Unix datagram I/O")
+class TestDatagramTransportRecovery:
+    class Protocol(asyncio.DatagramProtocol):
+        def __init__(self):
+            self.errors = []
+            self.closed = asyncio.Event()
+
+        def error_received(self, exc):
+            self.errors.append(exc)
+
+        def connection_lost(self, exc):
+            self.closed.set()
+
+    @contextlib.asynccontextmanager
+    async def _pair(
+        self, *, native=True, connected=False, sender_type=socket.socket, gso=None
+    ):
+        receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sender = sender_type(socket.AF_INET, socket.SOCK_DGRAM)
+        transport = None
+        protocol = self.Protocol()
+        loop = asyncio.get_running_loop()
+        try:
+            receiver.bind(("127.0.0.1", 0))
+            receiver.setblocking(False)
+            sender.setblocking(False)
+            peer = receiver.getsockname()
+            if connected:
+                sender.connect(peer)
+            if gso is None:
+                gso = has_gso(sender)
+            with contextlib.ExitStack() as stack:
+                if not native:
+                    stack.enter_context(
+                        patch(
+                            "qh3.asyncio._transport._UdpSocketState",
+                            new=_raise_not_implemented,
+                        )
+                    )
+                transport = OptimizedDatagramTransport(
+                    loop=loop,
+                    sock=sender,
+                    protocol=protocol,
+                    address=peer if connected else None,
+                    gro_enabled=False,
+                    gso_enabled=gso,
+                    gro_segment_size=1280,
+                )
+            if native and transport._udp_state is None:
+                pytest.skip("Native UDP state unavailable")
+            transport._start()
+            await asyncio.sleep(0)
+            yield transport, receiver, protocol
+        finally:
+            if transport is not None:
+                transport.abort()
+                await asyncio.wait_for(protocol.closed.wait(), 2)
+            else:
+                sender.close()
+            receiver.close()
+
+    async def _receive(self, receiver, count):
+        loop = asyncio.get_running_loop()
+        received = []
+        for _ in range(count):
+            received.append(await asyncio.wait_for(loop.sock_recv(receiver, 65536), 2))
+        return received
+
+    @pytest.mark.asyncio
+    async def test_non_linux_factory_uses_standard_datagram_transport(
+        self, monkeypatch
+    ):
+        from qh3.asyncio import _transport
+
+        monkeypatch.setattr(_transport, "_IS_LINUX", False)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        transport, protocol = await _transport.create_optimized_datagram_transport(
+            asyncio.get_running_loop(), self.Protocol, sock
+        )
+        assert not isinstance(transport, OptimizedDatagramTransport)
+        transport.close()
+        await asyncio.wait_for(protocol.closed.wait(), 2)
+        assert sock.fileno() == -1
+
+    @pytest.mark.asyncio
+    async def test_cancelled_factory_releases_socket_without_waiter_error(
+        self, monkeypatch
+    ):
+        from qh3.asyncio import _transport
+
+        if not _transport._IS_LINUX:
+            pytest.skip("Optimized transport factory is Linux-only")
+        loop = asyncio.get_running_loop()
+        protocol = self.Protocol()
+        errors = []
+        previous_handler = loop.get_exception_handler()
+        original = OptimizedDatagramTransport._start
+
+        def cancel_start(transport, waiter=None):
+            original(transport, waiter)
+            waiter.cancel()
+
+        monkeypatch.setattr(OptimizedDatagramTransport, "_start", cancel_start)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        loop.set_exception_handler(lambda loop, context: errors.append(context))
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await _transport.create_optimized_datagram_transport(
+                    loop, lambda: protocol, sock
+                )
+            await asyncio.wait_for(protocol.closed.wait(), 2)
+            assert sock.fileno() == -1
+            assert errors == []
+        finally:
+            loop.set_exception_handler(previous_handler)
+
+    @pytest.mark.asyncio
+    async def test_gso_probe_preserves_plain_datagram_boundary(self):
+        from qh3.asyncio import _transport
+
+        if not _transport._IS_LINUX:
+            pytest.skip("Linux UDP_SEGMENT")
+        async with self._pair(native=False) as (transport, receiver, _):
+            if not transport._gso_enabled:
+                pytest.skip("Kernel GSO unavailable")
+            assert (
+                transport._sock.getsockopt(socket.IPPROTO_UDP, _transport.UDP_SEGMENT)
+                == 0
+            )
+            transport.sendto(b"x" * 1400, receiver.getsockname())
+            assert await self._receive(receiver, 1) == [b"x" * 1400]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("native", [False, True])
+    @pytest.mark.parametrize("gso", [False, True])
+    async def test_oversized_datagram_does_not_replay_prior_success(self, native, gso):
+        async with self._pair(native=native, gso=gso) as (
+            transport,
+            receiver,
+            protocol,
+        ):
+            transport.sendto_many(
+                [b"first", bytes(70000), b"last"], receiver.getsockname()
+            )
+            assert await self._receive(receiver, 2) == [b"first", b"last"]
+            assert protocol.errors == []
+            assert transport.get_write_buffer_size() == 0
+            transport.sendto_many([b"after"], receiver.getsockname())
+            assert await self._receive(receiver, 1) == [b"after"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("gso", [False, True])
+    async def test_native_send_error_preserves_errno_and_progress(self, gso):
+        async with self._pair(gso=gso) as (transport, receiver, _):
+            state = transport._udp_state
+            with pytest.raises(OSError) as caught:
+                state.send([b"first", bytes(70000), b"last"], receiver.getsockname())
+            assert caught.value.errno == errno.EMSGSIZE
+            assert caught.value.datagrams_sent == 1
+            assert await self._receive(receiver, 1) == [b"first"]
+            assert state.send([b"last"], receiver.getsockname()) == 1
+            assert await self._receive(receiver, 1) == [b"last"]
+
+    @pytest.mark.asyncio
+    async def test_native_gso_limit_tracks_quinn_downgrade(self):
+        from qh3.asyncio import _transport
+
+        if not _transport._IS_LINUX:
+            pytest.skip("Linux GSO downgrade")
+        async with self._pair(gso=True) as (transport, _, _):
+            state = transport._udp_state
+            if state.max_gso_segments <= 1:
+                pytest.skip("Kernel GSO unavailable")
+            # A zero destination port reliably makes Linux return EINVAL,
+            # exercising quinn-udp's live downgrade without special hardware.
+            with pytest.raises(OSError) as caught:
+                state.send([b"packet"], ("127.0.0.1", 0))
+            assert caught.value.errno == errno.EINVAL
+            assert caught.value.datagrams_sent == 0
+            assert state.max_gso_segments == 1
+
+    @pytest.mark.asyncio
+    async def test_native_gso_can_be_disabled_permanently(self):
+        async with self._pair() as (transport, receiver, _):
+            state = transport._udp_state
+            state.disable_gso()
+            state.disable_gso()
+            assert state.max_gso_segments == 1
+            assert state.send([b"same", b"same"], receiver.getsockname()) == 2
+            assert await self._receive(receiver, 2) == [b"same", b"same"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("gso_error", [errno.EIO, errno.EMSGSIZE])
+    async def test_rejected_gso_recovers_at_unsent_duplicate(self, gso_error):
+        from qh3.asyncio import _transport
+
+        if not _transport._IS_LINUX:
+            pytest.skip("Linux GSO")
+
+        class RejectedSocket(socket.socket):
+            sends = 0
+            batches = 0
+
+            def sendmsg(self, *args, **kwargs):
+                self.batches += 1
+                raise OSError(gso_error, "GSO rejected")
+
+            def send(self, data, *args, **kwargs):
+                self.sends += 1
+                if self.sends == 2:
+                    raise BlockingIOError(errno.EAGAIN, "busy")
+                return super().send(data, *args, **kwargs)
+
+        async with self._pair(
+            native=False, connected=True, sender_type=RejectedSocket
+        ) as (transport, receiver, protocol):
+            if not transport._gso_enabled:
+                pytest.skip("Kernel GSO unavailable")
+            messages = [b"same", b"same", b"tail", b"nextgroup"]
+            transport.sendto_many(messages)
+            assert await self._receive(receiver, len(messages)) == messages
+            assert transport.get_write_buffer_size() == 0
+            assert transport._gso_enabled == (gso_error != errno.EIO)
+            before = transport._sock.batches
+            transport.sendto_many([b"more", b"data"])
+            assert await self._receive(receiver, 2) == [b"more", b"data"]
+            assert transport._sock.batches == before + (gso_error != errno.EIO)
+            assert protocol.errors == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", [errno.EAGAIN, errno.EINTR, errno.EMSGSIZE])
+    async def test_graceful_close_drains_after_queued_send_failure(self, failure):
+        class BusySocket(socket.socket):
+            sends = 0
+
+            def send(self, data, *args, **kwargs):
+                self.sends += 1
+                if self.sends == 1:
+                    raise BlockingIOError(errno.EAGAIN, "busy")
+                if self.sends == 2:
+                    raise OSError(failure, "queued send failure")
+                return super().send(data, *args, **kwargs)
+
+        async with self._pair(native=False, connected=True, sender_type=BusySocket) as (
+            transport,
+            receiver,
+            protocol,
+        ):
+            messages = [b"first", b"second", b"last"]
+            for data in messages:
+                transport.sendto(data)
+            transport.close()
+            await asyncio.wait_for(protocol.closed.wait(), 2)
+            expected = messages[1:] if failure == errno.EMSGSIZE else messages
+            assert await self._receive(receiver, len(expected)) == expected
+            assert transport.get_write_buffer_size() == 0
+            assert protocol.errors == []
+
+    @pytest.mark.asyncio
+    async def test_factory_closes_socket_if_gso_reset_fails(self, monkeypatch):
+        from qh3.asyncio import _transport
+
+        def reset_failed(sock):
+            raise OSError(errno.EPERM, "GSO reset failed")
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        monkeypatch.setattr(_transport, "has_gso", reset_failed)
+        with pytest.raises(OSError, match="GSO reset failed"):
+            await _transport.create_optimized_datagram_transport(
+                asyncio.get_running_loop(), self.Protocol, sock
+            )
+        assert sock.fileno() == -1

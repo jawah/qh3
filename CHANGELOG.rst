@@ -11,6 +11,9 @@
 **Fixed**
 - QUIC sends now respect shared connection credit, retain blocked stream data,
   and resume when peer flow-control limits increase.
+- UDP/GSO fallback now preserves datagram boundaries and partial-send progress,
+  disables rejected offload, and retains valid traffic after oversized or
+  interrupted sends. Hardened receive error reporting and transport cleanup.
 
 **Added**
 - ``QuicConnection.get_send_buffer_size(stream_id=None)`` reports stream bytes

@@ -36,14 +36,27 @@ _LOW_WATERMARK: typing.Final = 16 * 1024
 _GSO_MAX_SEGMENTS: typing.Final = 64
 _GSO_MAX_PAYLOAD: typing.Final = 65000
 
+# Kernel support does not imply that the NIC / routing path supports GSO.
+_GSO_UNSUPPORTED_ERRNOS: typing.Final = frozenset(
+    e
+    for e in (
+        getattr(errno, "EIO", None),
+        getattr(errno, "EINVAL", None),
+        getattr(errno, "ENOTSUP", None),
+        getattr(errno, "EOPNOTSUPP", None),
+        getattr(errno, "ENOPROTOOPT", None),
+    )
+    if e is not None
+)
+
 # Bound recv burst per readiness callback.
 _RECV_BURST_LIMIT: typing.Final = 32
 
 _IS_LINUX: typing.Final = sys.platform == "linux"
 _IS_UNIX: typing.Final = sys.platform != "win32"
-_SOL_UDP: typing.Final = socket.SOL_UDP
-_MSG_TRUNC: typing.Final = getattr(socket, "MSG_TRUNC", 0)
-_MSG_CTRUNC: typing.Final = getattr(socket, "MSG_CTRUNC", 0)
+_SOL_UDP: typing.Final = getattr(socket, "SOL_UDP", 17)
+_MSG_TRUNC: typing.Final = int(getattr(socket, "MSG_TRUNC", 0))
+_MSG_CTRUNC: typing.Final = int(getattr(socket, "MSG_CTRUNC", 0))
 _ANCBUFSIZE: typing.Final = (
     socket.CMSG_SPACE(_GRO_CMSG.size) if hasattr(socket, "CMSG_SPACE") else 0
 )
@@ -90,9 +103,17 @@ def has_gso(sock: socket.socket) -> bool:
         return False
     try:
         sock.setsockopt(_SOL_UDP, UDP_SEGMENT, 1280)
+    except OSError:
+        return False
+    try:
         return bool(sock.getsockopt(_SOL_UDP, UDP_SEGMENT))
     except OSError:
         return False
+    finally:
+        # Only per-message cmsgs may enable segmentation. A socket-wide value
+        # would also split plain sends, including the fallback after a failure.
+        # If resetting fails, propagate it instead of using an unsafe socket.
+        sock.setsockopt(_SOL_UDP, UDP_SEGMENT, 0)
 
 
 def _parse_gro_segment_size(ancdata: list[tuple[int, int, bytes]]) -> int | None:
@@ -178,6 +199,7 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
         "_sock_fd",
         "_protocol",
         "_address",
+        "_connected_addr",
         "_gro_enabled",
         "_gso_enabled",
         "_gro_segment_size",
@@ -190,6 +212,7 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
         "_buffer_size",
         "_protocol_paused",
         "_writer_registered",
+        "_write_ready",
         "_reader_registered",
         "_protocol_supports_batch",
         "_udp_state",
@@ -211,6 +234,10 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
         self._sock_fd = sock.fileno()
         self._protocol = protocol
         self._address = address
+        try:
+            self._connected_addr = sock.getpeername()
+        except OSError:
+            self._connected_addr = None
         self._gro_enabled = gro_enabled
         self._gso_enabled = gso_enabled
         self._gro_segment_size = gro_segment_size
@@ -218,6 +245,7 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
         self._closed = False
         self._paused = False
         self._writer_registered = False
+        self._write_ready = True
         self._reader_registered = False
         self._send_queue: deque[tuple[bytes, typing.Any]] = deque()
         self._buffer_size = 0
@@ -236,6 +264,8 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
             self._udp_state = _UdpSocketState(self._sock_fd)
         except Exception:
             pass
+        if _IS_LINUX and not gso_enabled and self._udp_state is not None:
+            self._udp_state.disable_gso()
 
         try:
             sockname = sock.getsockname()
@@ -243,7 +273,7 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
             sockname = None
 
         self._extra = {
-            "peername": address,
+            "peername": self._connected_addr or address,
             "socket": sock,
             "sockname": sockname,
             "family": sock.family,
@@ -275,7 +305,7 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
             self._loop.call_soon(self._call_connection_lost, None)
 
     def abort(self) -> None:
-        if self._closing:
+        if self._closed or (self._closing and not self._send_queue):
             return
         self._closing = True
         self._send_queue.clear()
@@ -348,39 +378,79 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
             self._register_reader()
 
     def _raw_send(self, data: bytes, addr: typing.Any) -> None:
+        target = self._send_address(addr)
         try:
-            if addr is not None:
-                self._sock.sendto(data, addr)
-            elif self._address is not None:
-                self._sock.sendto(data, self._address)
-            else:
+            if target is None:
                 self._sock.send(data)
+            else:
+                self._sock.sendto(data, target)
         except OSError as e:  # Defensive: guard against msg too long error.
             if not _is_msg_too_big(e):
                 raise
+
+    def _send_address(self, addr: typing.Any) -> typing.Any:
+        target = addr if addr is not None else self._address
+        if self._connected_addr is not None and (
+            target is None or target == self._connected_addr
+        ):
+            return None
+        return target
+
+    def _disable_gso(self) -> None:
+        self._gso_enabled = False
+        if self._udp_state is not None:
+            self._udp_state.disable_gso()
+
+    def _report_error(self, exc: Exception) -> None:
+        try:
+            self._protocol.error_received(exc)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            pass
+
+    def _queue_datagrams(
+        self, datagrams: typing.Iterable[bytes], addr: typing.Any
+    ) -> None:
+        self._write_ready = False
+        self._register_writer()
+        for datagram in datagrams:
+            self._queue_write(datagram, addr)
 
     def sendto(self, data: bytes, addr: typing.Any = None) -> None:
         if self._closing:
             return
 
-        if self._send_queue:
+        if not self._write_ready or self._send_queue:
             self._queue_write(data, addr)
             return
 
         try:
             self._raw_send(data, addr)
+            return
         except BlockingIOError:
-            self._register_writer()
-            self._queue_write(data, addr)
+            pass
+        except InterruptedError:
+            # Retry once, then yield through the write queue on interruption.
+            try:
+                self._raw_send(data, addr)
+                return
+            except (BlockingIOError, InterruptedError):
+                pass
+            except OSError as exc:
+                self._report_error(exc)
+                return
         except OSError as exc:
-            self._protocol.error_received(exc)
+            self._report_error(exc)
+            return
+        self._queue_datagrams((data,), addr)
 
     def sendto_many(self, datagrams: list[bytes], addr: typing.Any = None) -> None:
         """Send multiple datagrams, using GSO when available."""
         if self._closing or not datagrams:
             return
 
-        if self._send_queue:
+        if not self._write_ready or self._send_queue:
             for dgram in datagrams:
                 self._queue_write(dgram, addr)
             return
@@ -394,34 +464,47 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
                 try:
                     sent = state.send(datagrams, target)
                     if sent < len(datagrams):
-                        self._register_writer()
-                        for dgram in datagrams[sent:]:
-                            self._queue_write(dgram, addr)
+                        self._queue_datagrams(datagrams[sent:], addr)
                     return
-                except BlockingIOError:
-                    self._register_writer()
-                    for dgram in datagrams:
-                        self._queue_write(dgram, addr)
+                except (BlockingIOError, InterruptedError) as exc:
+                    sent = getattr(exc, "datagrams_sent", 0)
+                    self._queue_datagrams(datagrams[sent:], addr)
                     return
-                except OSError:
-                    # Fall through to Python path.
-                    pass
+                except OSError as exc:
+                    sent = getattr(exc, "datagrams_sent", 0)
+                    if exc.errno in _GSO_UNSUPPORTED_ERRNOS:
+                        self._disable_gso()
+                    # The native batch may have already sent a prefix. Retry
+                    # only its unsent suffix, without repeating a rejected GSO
+                    # request. Individual oversized probes are dropped below.
+                    self._send_plain_many(datagrams[sent:], addr)
+                    return
 
         if self._gso_enabled:
             self._send_gso_python(datagrams, addr)
         else:
-            for dgram in datagrams:
-                self.sendto(dgram, addr)
-                if self._closing or self._closed:
-                    return
+            self._send_plain_many(datagrams, addr)
+
+    def _send_plain_many(
+        self, datagrams: typing.Iterable[bytes], addr: typing.Any
+    ) -> None:
+        for dgram in datagrams:
+            self.sendto(dgram, addr)
+            if self._closing or self._closed:
+                return
 
     def _send_gso_python(self, datagrams: list[bytes], addr: typing.Any) -> None:
         """Python fallback: sendmsg with UDP_SEGMENT cmsg."""
         groups = _group_for_gso(datagrams)
         sock = self._sock
-        target = addr if addr is not None else self._address
+        target = self._send_address(addr)
 
         for i, (segment_size, group) in enumerate(groups):
+            if not self._gso_enabled:
+                self._send_plain_many(
+                    (dgram for _, remaining in groups[i:] for dgram in remaining), addr
+                )
+                return
             try:
                 if len(group) == 1:
                     self._raw_send(group[0], addr)
@@ -438,37 +521,37 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
                             group,
                             [(_SOL_UDP, UDP_SEGMENT, _UINT16.pack(segment_size))],
                         )
-            except BlockingIOError:
-                self._register_writer()
-                for _sz, g in groups[i:]:
-                    for dgram in g:
-                        self._queue_write(dgram, addr)
+            except (BlockingIOError, InterruptedError):
+                self._queue_datagrams(
+                    (dgram for _, remaining in groups[i:] for dgram in remaining), addr
+                )
                 return
             except OSError as exc:
                 if len(group) > 1:
-                    for dgram in group:
+                    if exc.errno in _GSO_UNSUPPORTED_ERRNOS:
+                        self._disable_gso()
+                    for idx, dgram in enumerate(group):
                         try:
                             self._raw_send(dgram, addr)
-                        except BlockingIOError:
-                            self._register_writer()
-                            self._queue_write(dgram, addr)
-                            idx = group.index(dgram) + 1
-                            for tail in group[idx:]:
-                                self._queue_write(tail, addr)
+                        except (BlockingIOError, InterruptedError):
+                            self._queue_datagrams(group[idx:], addr)
                             for _sz, g in groups[i + 1 :]:
                                 for d in g:
                                     self._queue_write(d, addr)
                             return
                         except OSError as inner:
-                            self._protocol.error_received(inner)
+                            self._report_error(inner)
                             if self._closing or self._closed:
                                 return
                 else:
-                    self._protocol.error_received(exc)
+                    self._report_error(exc)
                     if self._closing or self._closed:
                         return
 
     def _queue_write(self, data: bytes, addr: typing.Any) -> None:
+        # A pause_writing callback may abort while a batch is being queued.
+        if self._closed or (self._closing and not self._send_queue):
+            return
         self._send_queue.append((data, addr))
         self._buffer_size += len(data)
         if self._buffer_size >= _HIGH_WATERMARK and not self._protocol_paused:
@@ -496,12 +579,7 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
                 queue.popleft()
                 self._buffer_size -= len(data)
                 self._maybe_resume_protocol()
-                try:
-                    self._protocol.error_received(exc)
-                except (KeyboardInterrupt, SystemExit):
-                    raise
-                except BaseException:
-                    pass
+                self._report_error(exc)
                 if self._closing or self._closed:
                     break
                 continue
@@ -511,6 +589,7 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
             self._maybe_resume_protocol()
 
         if not queue:
+            self._write_ready = True
             self._unregister_writer()
             if self._closing and not self._closed:
                 self._loop.call_soon(self._call_connection_lost, None)
@@ -529,10 +608,14 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
         self._loop.call_soon(self._protocol.connection_made, self)
         self._loop.call_soon(self._register_reader)
         if waiter is not None:
-            self._loop.call_soon(waiter.set_result, None)
+            self._loop.call_soon(self._finish_start, waiter)
+
+    def _finish_start(self, waiter: asyncio.Future[None]) -> None:
+        if not waiter.done():
+            waiter.set_result(None)
 
     def _on_readable(self) -> None:
-        if self._closing:
+        if self._closing or self._paused:
             return
         # Prefer Rust quinn-udp
         state = self._udp_state
@@ -557,10 +640,16 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
         if batch_cb is not None:
             # Accumulate adjacent datagrams by source without reordering them.
             groups: list[tuple[list[bytes], typing.Any]] = []
+            error = None
             for _ in range(_RECV_BURST_LIMIT):
                 try:
                     received = _recv()
-                except OSError:
+                except BlockingIOError:
+                    break
+                except InterruptedError:
+                    continue
+                except OSError as exc:
+                    error = exc
                     break
                 if not received:
                     break
@@ -572,30 +661,50 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
             else:
                 hit_limit = True
             for segments, addr in groups:
+                if self._closing:
+                    return
                 batch_cb(segments, addr)
+            if error is not None and not self._closing:
+                self._report_error(error)
         else:
             datagram_received = protocol.datagram_received
             for _ in range(_RECV_BURST_LIMIT):
+                if self._closing or self._paused:
+                    return
                 try:
                     received = _recv()
-                except OSError:
+                except BlockingIOError:
+                    return
+                except InterruptedError:
+                    continue
+                except OSError as exc:
+                    self._report_error(exc)
                     return
                 if not received:
                     return
                 for segment, addr in received:
+                    if self._closing:
+                        return
                     datagram_received(segment, addr)
             else:
                 hit_limit = True
 
         # Hit burst limit
         # yield and reschedule.
-        if hit_limit and not self._closing and self._reader_registered:
+        if (
+            hit_limit
+            and not self._closing
+            and not self._paused
+            and self._reader_registered
+        ):
             self._loop.call_soon(self._on_readable)
 
     def _recv_plain(self) -> None:
         sock = self._sock
         protocol = self._protocol
         for _ in range(_RECV_BURST_LIMIT):
+            if self._closing or self._paused:
+                return
             try:
                 data, addr = sock.recvfrom(65536)
             except BlockingIOError:
@@ -603,11 +712,13 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
             except InterruptedError:
                 continue
             except OSError as exc:
-                protocol.error_received(exc)
+                self._report_error(exc)
                 return
             if not data:
                 return
             protocol.datagram_received(data, addr)
+        if not self._closing and not self._paused and self._reader_registered:
+            self._loop.call_soon(self._on_readable)
 
     def _recv_gro_python(self) -> None:
         """Python fallback: recvmsg with GRO cmsg parsing."""
@@ -623,6 +734,8 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
         ancbufsize = _ANCBUFSIZE
 
         for _ in range(_RECV_BURST_LIMIT):
+            if self._closing or self._paused:
+                return
             try:
                 data, ancdata, flags, addr = sock_recvmsg(
                     self._recv_buf_size, ancbufsize
@@ -632,12 +745,7 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
             except InterruptedError:
                 continue
             except OSError as exc:
-                try:
-                    protocol.error_received(exc)
-                except (KeyboardInterrupt, SystemExit):
-                    raise
-                except BaseException:
-                    pass
+                self._report_error(exc)
                 return
 
             if not data:
@@ -647,6 +755,12 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
                 bufsize = self._recv_buf_size
                 if bufsize < _MAX_GRO_BUF:
                     self._recv_buf_size = min(bufsize * 2, _MAX_GRO_BUF)
+                self._report_error(
+                    OSError(
+                        f"recvmsg payload truncated; recv buffer ({bufsize}) is too "
+                        "small for the coalesced GRO buffer"
+                    )
+                )
                 continue
 
             if flags & _MSG_CTRUNC:
@@ -668,9 +782,11 @@ class OptimizedDatagramTransport(asyncio.DatagramTransport):
                 batch_cb(segments, addr)
             else:
                 for seg in segments:
+                    if self._closing:
+                        return
                     datagram_received(seg, addr)
 
-        if not self._closing and self._reader_registered:
+        if not self._closing and not self._paused and self._reader_registered:
             self._loop.call_soon(self._on_readable)
 
 
@@ -681,24 +797,32 @@ async def create_optimized_datagram_transport(
     gro_segment_size: int = 1280,
 ) -> tuple[asyncio.DatagramTransport, asyncio.DatagramProtocol]:
     """Create a DatagramTransport with optimized UDP I/O if available."""
-    gro_enabled = enable_gro(sock)
-    gso_enabled = has_gso(sock)
+    transport = None
+    try:
+        gro_enabled = enable_gro(sock)
+        gso_enabled = has_gso(sock)
 
-    if not _IS_LINUX:
-        return await loop.create_datagram_endpoint(protocol_factory, sock=sock)
+        if not _IS_LINUX:
+            return await loop.create_datagram_endpoint(protocol_factory, sock=sock)
 
-    sock.setblocking(False)
-    protocol = protocol_factory()
-    transport = OptimizedDatagramTransport(
-        loop=loop,
-        sock=sock,
-        protocol=protocol,
-        address=None,
-        gro_enabled=gro_enabled,
-        gso_enabled=gso_enabled,
-        gro_segment_size=gro_segment_size,
-    )
-    waiter = loop.create_future()
-    transport._start(waiter)
-    await waiter
-    return transport, protocol
+        sock.setblocking(False)
+        protocol = protocol_factory()
+        transport = OptimizedDatagramTransport(
+            loop=loop,
+            sock=sock,
+            protocol=protocol,
+            address=None,
+            gro_enabled=gro_enabled,
+            gso_enabled=gso_enabled,
+            gro_segment_size=gro_segment_size,
+        )
+        waiter = loop.create_future()
+        transport._start(waiter)
+        await waiter
+        return transport, protocol
+    except BaseException:
+        if transport is not None:
+            transport.abort()
+        else:
+            sock.close()
+        raise
