@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from qh3.h3.connection import H3_ALPN, ErrorCode, H3Connection
+from qh3.h3.connection import H3_ALPN, ErrorCode, FrameType, H3Connection
 from qh3.h3.events import (
     DatagramReceived,
     HeadersReceived,
     WebTransportStreamDataReceived,
 )
 from qh3.quic.configuration import QuicConfiguration
-from qh3.quic.events import DatagramFrameReceived
+from qh3.quic.events import DatagramFrameReceived, StreamDataReceived
 
 from .test_h3 import (
     FakeQuicConnection,
@@ -23,6 +23,21 @@ QUIC_CONFIGURATION_OPTIONS = {
 
 
 class TestWebTransport:
+    def test_buffered_stream_data_is_delivered_with_fin(self):
+        quic = FakeQuicConnection(configuration=QuicConfiguration(is_client=True))
+        h3 = H3Connection(quic, enable_webtransport=True)
+        stream = h3._get_or_create_stream(4)
+        stream.frame_type = FrameType.WEBTRANSPORT_STREAM
+        stream.session_id = 0
+        stream.buffer.extend(b"pending")
+        events = h3.handle_event(StreamDataReceived(b"tail", True, 4))
+        assert events == [
+            WebTransportStreamDataReceived(
+                data=b"pendingtail", session_id=0, stream_id=4, stream_ended=True
+            )
+        ]
+        assert not stream.buffer
+
     def _make_session(self, h3_client, h3_server):
         quic_client = h3_client._quic
         quic_server = h3_server._quic

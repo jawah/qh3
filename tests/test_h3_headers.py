@@ -2,20 +2,60 @@ from __future__ import annotations
 
 import pytest
 
-from qh3._hazmat import DecoderStreamError, QpackDecoder, QpackEncoder
+from qh3._hazmat import (
+    DecoderStreamError,
+    EncoderStreamError,
+    QpackDecoder,
+    QpackEncoder,
+)
 from qh3.h3.connection import (
     FrameType,
     H3Connection,
+    HeadersState,
+    QpackEncoderStreamError,
     StreamType,
     encode_frame,
 )
 from qh3.h3.events import DataReceived, HeadersReceived
 from qh3.quic.configuration import QuicConfiguration
 from qh3.quic.events import StreamDataReceived
+from qh3.quic.logger import QuicLogger
 
 from .test_h3 import FakeQuicConnection
 
 HEADERS = [(b":status", b"200"), (b"x-name", b"header value")]
+
+
+def test_encoder_error_is_translated():
+    h3 = receiver()
+
+    class FailedEncoder:
+        def encode(self, stream_id, headers):
+            raise EncoderStreamError("encoding failed")
+
+    h3._encoder = FailedEncoder()
+    with pytest.raises(QpackEncoderStreamError) as caught:
+        h3.send_headers(0, HEADERS, end_stream=True)
+    assert isinstance(caught.value.__cause__, EncoderStreamError)
+    stream = h3._get_or_create_stream(0)
+    assert stream.headers_send_state is HeadersState.INITIAL
+
+
+def test_header_handler_logs_default_encoded_length():
+    h3 = receiver()
+    logger = QuicLogger()
+    h3._quic_logger = logger.start_trace(is_client=True, odcid=b"test")
+    data = encoded_headers()
+    events = h3._handle_request_or_push_frame(
+        FrameType.HEADERS, data, h3._get_or_create_stream(0), False
+    )
+    assert events == [HeadersReceived(HEADERS, 0, False)]
+    frames = [
+        event["data"]
+        for event in logger.to_dict()["traces"][0]["events"]
+        if event["name"] == "http:frame_parsed"
+    ]
+    assert frames[0]["length"] == len(data)
 
 
 def encoded_headers():

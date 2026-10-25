@@ -51,6 +51,19 @@ def client():
     return quic, H3Connection(quic)
 
 
+def test_encoder_feed_limit_error_closes_connection():
+    quic, h3 = server()
+
+    class LimitedDecoder:
+        def feed_encoder(self, data):
+            raise HeaderTooLarge("field section limit")
+
+    h3._decoder = LimitedDecoder()
+    assert h3.handle_event(StreamDataReceived(b"\x02\x20", False, 2)) == []
+    assert h3._is_done
+    assert quic.closed[0] == ErrorCode.H3_EXCESSIVE_LOAD
+
+
 def prefixed_integer(value, bits, prefix):
     mask = (1 << bits) - 1
     if value < mask:

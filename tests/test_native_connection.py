@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -371,6 +373,148 @@ def test_native_stream_recording_and_replay_guards() -> None:
 
     client._pre_handshake_state_replayed = True
     client._replay_pre_handshake_state("already replayed")
+
+
+def test_native_stream_allocation_mismatch_is_reported() -> None:
+    client = make_client()
+
+    class StreamCore:
+        def open_stream(self, is_unidirectional):
+            return 4
+
+    client._core = StreamCore()
+    client._handshake_complete = True
+    with pytest.raises(QuicConnectionError, match="allocation is out of sync"):
+        client._open_stream()
+
+
+def test_native_invalid_packet_end_does_not_stall_receive_or_logging(
+    monkeypatch,
+) -> None:
+    from qh3.quic import connection as connection_module
+
+    client, server = make_pair()
+    _, _, now = handshake(client, server)
+    client.send_stream_data(0, b"payload", end_stream=True)
+    datagrams = client.datagrams_to_send(now)
+    native_header = connection_module._pull_quic_header
+
+    def nonadvancing_header(data, offset, cid_length):
+        fields = list(native_header(data, offset, cid_length))
+        fields[9] = offset
+        return tuple(fields)
+
+    monkeypatch.setattr(connection_module, "_pull_quic_header", nonadvancing_header)
+    logged = []
+    monkeypatch.setattr(server, "_log_packet", lambda *args: logged.append(args))
+    for data, _ in datagrams:
+        server.receive_datagram(data, CLIENT_ADDR, now)
+        logged.clear()
+        server._log_packets("packet_received", data)
+        assert logged == []
+    assert drain_events(server) == [events.StreamDataReceived(b"payload", True, 0)]
+    assert logged == []
+
+
+def test_native_tls_version_is_synchronized_before_drain() -> None:
+    client = make_client()
+    versions = []
+
+    class Core:
+        version = QuicProtocolVersion.VERSION_1
+
+        def set_version(self, value):
+            self.version = value
+            versions.append(value)
+
+    client._core = Core()
+    client._tls = SimpleNamespace(
+        version=QuicProtocolVersion.VERSION_2,
+        next_traffic_secret=lambda: None,
+        next_crypto_data=lambda: None,
+        next_event=lambda: None,
+        remote_transport_parameters=None,
+        handshake_complete=False,
+    )
+    client._drain_tls()
+    client._drain_tls()
+    assert versions == [QuicProtocolVersion.VERSION_2]
+    assert client._version == QuicProtocolVersion.VERSION_2
+
+
+def test_native_handshake_completion_resolves_outstanding_zero_rtt() -> None:
+    client = make_client()
+    calls = []
+
+    class Core:
+        version = QuicProtocolVersion.VERSION_1
+
+        def handshake_complete(self):
+            calls.append("handshake")
+
+        def reject_zero_rtt(self):
+            calls.append("reject")
+
+    client._core = Core()
+    client._tls = SimpleNamespace(
+        version=QuicProtocolVersion.VERSION_1,
+        next_traffic_secret=lambda: None,
+        next_crypto_data=lambda: None,
+        next_event=lambda: None,
+        remote_transport_parameters=None,
+        handshake_complete=True,
+        tls=SimpleNamespace(early_data_accepted=False),
+    )
+    client._early_data_attempted = True
+    client._zero_rtt_resolved = False
+    client._drain_tls()
+    client._drain_tls()
+    assert calls == ["handshake", "reject"]
+    assert client._zero_rtt_resolved
+    assert client._state == QuicConnectionState.CONNECTED
+
+
+@pytest.mark.parametrize(
+    "extensions", [[], [(tls.ExtensionType.QUIC_TRANSPORT_PARAMETERS, b"\x00")]]
+)
+def test_native_unusable_ticket_parameters_are_not_used_for_early_credit(
+    extensions,
+) -> None:
+    ticket, _ = issue_session_ticket()
+    client, server = make_resumption_pair(replace(ticket, other_extensions=extensions))
+    assert client._remembered_transport_parameters() is None
+    client.send_stream_data(0, b"staged request", end_stream=True)
+    if extensions:
+        from qh3.quic.tls_bridge import QuicTlsBridgeError
+
+        with pytest.raises(
+            QuicTlsBridgeError, match="Could not parse QUIC transport parameters"
+        ):
+            client.connect(SERVER_ADDR, 1.0)
+        assert not client._handshake_complete
+        return
+    _, received, _ = handshake(client, server)
+    assert [
+        event for event in received if isinstance(event, events.StreamDataReceived)
+    ] == [
+        events.StreamDataReceived(b"staged request", True, 0),
+    ]
+
+
+def test_native_send_replays_pending_pre_handshake_state_once() -> None:
+    ticket, store = issue_session_ticket()
+    client, server = make_resumption_pair(ticket, store.pop)
+    client.connect(SERVER_ADDR, 2.0)
+    client._pre_handshake_state_replayed = False
+    client.send_stream_data(0, b"first")
+    assert client._pre_handshake_state_replayed
+    client.send_stream_data(0, b"second", end_stream=True)
+    _, received, _ = handshake(client, server)
+    payloads = [
+        event for event in received if isinstance(event, events.StreamDataReceived)
+    ]
+    assert b"".join(event.data for event in payloads) == b"firstsecond"
+    assert sum(event.end_stream for event in payloads) == 1
 
 
 def test_native_version_negotiation_outcomes() -> None:

@@ -42,6 +42,65 @@ SERVER_INITIAL_V2 = binascii.unhexlify(
 
 
 class TestPacket:
+    @pytest.mark.parametrize("encode_packet", [False, True])
+    def test_retry_rejects_incomplete_native_buffer(self, encode_packet, monkeypatch):
+        from qh3.quic import packet
+
+        native_buffer = packet.Buffer
+
+        class IncompleteBuffer:
+            def __init__(self, *args, **kwargs):
+                self.buffer = native_buffer(*args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self.buffer, name)
+
+            def eof(self):
+                return False
+
+        allocations = []
+
+        def make_buffer(*args, **kwargs):
+            allocations.append(1)
+            return (IncompleteBuffer if len(allocations) == 1 else native_buffer)(
+                *args, **kwargs
+            )
+
+        monkeypatch.setattr(packet, "Buffer", make_buffer)
+        reason = "Retry packet" if encode_packet else "Retry pseudo packet"
+        with pytest.raises(ValueError, match=reason + " was not fully built"):
+            if encode_packet:
+                encode_quic_retry(
+                    version=QuicProtocolVersion.VERSION_1,
+                    source_cid=b"s",
+                    destination_cid=b"d",
+                    original_destination_cid=b"original",
+                    retry_token=b"token",
+                )
+            else:
+                get_retry_integrity_tag(
+                    b"packet", b"original", QuicProtocolVersion.VERSION_1
+                )
+
+    def test_retry_rejects_wrong_native_tag_length(self, monkeypatch):
+        from qh3.quic import packet
+
+        class InvalidTag:
+            def __init__(self, *args):
+                pass
+
+            def encrypt_with_nonce(self, nonce, plaintext, associated_data):
+                assert plaintext == b""
+                return b"short"
+
+        monkeypatch.setattr(packet, "AeadAes128Gcm", InvalidTag)
+        with pytest.raises(
+            ValueError, match="Retry integrity tag has an unexpected size"
+        ):
+            get_retry_integrity_tag(
+                b"packet", b"original", QuicProtocolVersion.VERSION_1
+            )
+
     @pytest.mark.parametrize(
         ("stream_id", "client_initiated", "unidirectional"),
         [(0, True, False), (1, False, False), (2, True, True), (3, False, True)],

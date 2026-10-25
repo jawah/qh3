@@ -122,6 +122,24 @@ def test_data_completion_with_following_frame_uses_general_parser():
     assert not stream.buffer
 
 
+def test_buffered_data_truncated_by_fin_closes_connection():
+    h3, stream = data_receiver()
+    stream.frame_type = FrameType.DATA
+    stream.frame_size = 6
+    stream.buffer.extend(b"ab")
+    assert receive(h3, b"c", True) == []
+    assert h3._is_done
+    assert h3._quic.closed[0] == ErrorCode.H3_FRAME_ERROR
+
+
+def test_empty_fin_before_headers_does_not_emit_data():
+    h3, stream = data_receiver()
+    stream.headers_recv_state = HeadersState.INITIAL
+    assert receive(h3, b"", True) == []
+    assert stream.receiving_ended
+    assert h3._quic.closed is None
+
+
 def test_data_completion_still_validates_header_state():
     h3, stream = data_receiver()
     stream.headers_recv_state = HeadersState.AFTER_TRAILERS
