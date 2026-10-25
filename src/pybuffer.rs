@@ -1,5 +1,6 @@
 //! Borrow contiguous Python buffers for a synchronous copy into owned storage.
 
+#[cfg(any(PyPy, not(Py_3_11)))]
 use std::ffi::{c_int, c_void};
 
 use pyo3::exceptions::PyBufferError;
@@ -7,6 +8,7 @@ use pyo3::sync::critical_section::with_critical_section;
 use pyo3::types::{PyAnyMethods, PyBytes, PyBytesMethods, PyMemoryView};
 use pyo3::{ffi, Bound, PyAny, PyErr, PyResult};
 
+#[cfg(any(PyPy, not(Py_3_11)))]
 extern "C" {
     // This function remains in the stable ABI, including Python 3.7. The
     // modern Py_buffer API only joined the stable ABI in Python 3.11.
@@ -16,6 +18,17 @@ extern "C" {
         buffer: *mut *const c_void,
         length: *mut ffi::Py_ssize_t,
     ) -> c_int;
+}
+
+#[cfg(all(Py_3_11, not(PyPy)))]
+struct BufferExport<'a>(&'a mut ffi::Py_buffer);
+
+#[cfg(all(Py_3_11, not(PyPy)))]
+impl Drop for BufferExport<'_> {
+    fn drop(&mut self) {
+        // SAFETY: the guard owns one successful export and releases it once.
+        unsafe { ffi::PyBuffer_Release(self.0) };
+    }
 }
 
 /// The callback must copy synchronously and must not retain the slice or call
@@ -51,15 +64,32 @@ pub fn with_buffer<R>(
         ));
     }
     let owner = view.getattr("obj")?;
-    let mut pointer = std::ptr::null();
-    let mut length = 0;
-    // SAFETY: the object is a live memoryview and both output pointers are valid.
-    // Its export outlives this call, including after AsReadBuffer releases its
-    // temporary export. CPython rejects non-contiguous views here; PyPy's
-    // layout was checked explicitly above.
-    if unsafe { PyObject_AsReadBuffer(view.as_ptr(), &mut pointer, &mut length) } != 0 {
+
+    // Use PyO3's FFI declarations on modern CPython. PyO3 0.30 generates
+    // Windows DLL imports for these, but not for our legacy extern declaration.
+    #[cfg(all(Py_3_11, not(PyPy)))]
+    let mut buffer = ffi::Py_buffer::new();
+    #[cfg(all(Py_3_11, not(PyPy)))]
+    // SAFETY: both the memoryview and output buffer remain alive until release.
+    if unsafe { ffi::PyObject_GetBuffer(view.as_ptr(), &mut buffer, ffi::PyBUF_SIMPLE) } != 0 {
         return Err(PyErr::fetch(value.py()));
     }
+    #[cfg(all(Py_3_11, not(PyPy)))]
+    let export = BufferExport(&mut buffer);
+    #[cfg(all(Py_3_11, not(PyPy)))]
+    let (pointer, length) = (export.0.buf.cast_const(), export.0.len);
+
+    #[cfg(any(PyPy, not(Py_3_11)))]
+    let (pointer, length) = {
+        let mut pointer = std::ptr::null();
+        let mut length = 0;
+        // SAFETY: the private view pins the export after AsReadBuffer releases
+        // its temporary export. PyPy's layout was checked explicitly above.
+        if unsafe { PyObject_AsReadBuffer(view.as_ptr(), &mut pointer, &mut length) } != 0 {
+            return Err(PyErr::fetch(value.py()));
+        }
+        (pointer, length)
+    };
     let length =
         usize::try_from(length).map_err(|_| PyBufferError::new_err("Invalid buffer length"))?;
     if length != 0 && pointer.is_null() {
