@@ -1,4 +1,4 @@
-2.1.0 (2026-10-24)
+2.1.0 (2026-10-25)
 ==================
 
 **Security**
@@ -18,6 +18,7 @@
 - ``H3Connection.send_data()`` and ``QuicConnection.send_stream_data()`` accept
   C-contiguous buffer objects, including ``bytearray``, ``memoryview``, and Arrow
   buffers, without extra payload conversion copies.
+- Explicit support for Python 3.15
 
 **Changed**
 - (Perf) Reduced receive-side copying for in-order QUIC data and HTTP/3 DATA frames.
