@@ -318,16 +318,13 @@ def validate_request_headers(headers: Headers) -> None:
     )
 
 
-def validate_response_headers(headers: Headers) -> int | None:
+def validate_response_headers(headers: Headers) -> int:
     status_code: bytes | None = validate_headers(
         headers,
         allowed_pseudo_headers=_RESPONSE_ALLOWED_PSEUDO,
         required_pseudo_headers=_RESPONSE_REQUIRED_PSEUDO,
         extract_header=b":status",
     )
-
-    if status_code is None:
-        return None
 
     try:
         return int(status_code)
